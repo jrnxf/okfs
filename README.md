@@ -94,7 +94,7 @@ A folder is shown as its listing. With `--index`, a folder that holds a file of 
 okfs --index index.html
 ```
 
-The page is shown the way any HTML file is: full width under the thin bar, sandboxed. A link in it to another folder opens that folder's index page too. Closing it shows the folder's listing with the page under the cursor. A dotfile, a folder of that name or a link that leaves the served folder is not an index page.
+The page is shown the way any HTML file is: full width under the thin bar, sandboxed. A link in it to another folder opens that folder's index page too. Closing it shows the folder's listing with the page under the cursor. A folder of that name is not an index page. Neither is a file okfs does not serve: a dotfile without `--hidden`, or a link that leaves the served folder.
 
 ### Behind a proxy or a tunnel
 

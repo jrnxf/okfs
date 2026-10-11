@@ -432,8 +432,8 @@ async fn archive_list(State(app): State<Arc<App>>, Query(query): Query<PathQuery
     }
 }
 
-/// A folder's `--index` file. A name `resolve` refuses is not one: a dotfile, or a link
-/// that leaves the served folder. Neither is a folder of that name.
+/// A folder's `--index` file. A name `resolve` refuses is not one: a dotfile without
+/// `--hidden`, or a link that leaves the served folder. Neither is a folder of that name.
 fn index_page(app: &App, folder: &str) -> Option<Resolved> {
     let index = app.options.index.as_deref()?;
     app.root
