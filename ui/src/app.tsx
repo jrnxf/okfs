@@ -385,7 +385,8 @@ export function App() {
   const total = s.all.length;
   const info =
     (s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
-    ` · ${fmt.size(s.bytes)} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
+    // The size is of the files right here; a folder of folders has none to add up.
+    `${s.all.some((entry) => !entry.dir) ? ` · ${fmt.size(s.bytes)}` : ""} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
 
   let header: ComponentChildren = null;
   if (shown) {

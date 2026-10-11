@@ -3,7 +3,6 @@ name = "okfs"
 version = "0.1.0"
 edition = "2024"
 description = "A web file browser. Run it in a folder and flip through every file inside."
-repository = "https://github.com/jrnxf/okfs"
 readme = "README.md"
 keywords = ["file-server", "file-browser", "http", "preview"]
 categories = ["command-line-utilities", "web-programming::http-server"]

@@ -102,7 +102,7 @@ body.has-note.open .note { display: none; }
 .row, .tile { position: absolute; }
 .readme { border-top: var(--border); }
 .rows:empty + .readme { border-top: 0; }
-.readme-hd { display: flex; align-items: center; gap: 8px; height: calc(30px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); }
+.readme-hd { text-transform: none; display: flex; align-items: center; gap: 8px; height: calc(30px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); }
 .readme .md { margin: 0; max-width: 46em; padding: calc(var(--pad) * 1.6) calc(var(--pad) * 1.25) 48px; font-size: var(--text); }
 .empty .btn { margin-top: 10px; }
 .json .more { margin: 4px 0 4px 1.3em; }
