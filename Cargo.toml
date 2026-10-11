@@ -1,0 +1,47 @@
+[package]
+name = "okfs"
+version = "0.1.0"
+edition = "2024"
+description = "A web file browser. Run it in a folder and flip through every file inside."
+repository = "https://github.com/jrnxf/okfs"
+readme = "README.md"
+keywords = ["file-server", "file-browser", "http", "preview"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+
+# Image decoding and syntax highlighting are far too slow unoptimised to test against.
+[profile.dev.package."*"]
+opt-level = 2
+
+[dependencies]
+ammonia = "4.2.3"
+axum = "0.8.9"
+bytes = "1.12.1"
+clap = { version = "4.6.7", features = ["derive"] }
+csv = "1.4.0"
+dirs = "7.0.0"
+futures-util = "0.3.34"
+httpdate = "1.0.3"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico"] }
+mime_guess = "2.0.5"
+notify = "8.2.0"
+nucleo-matcher = "0.3.1"
+percent-encoding = "2.3.2"
+pulldown-cmark = "0.13.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "sync", "signal", "time"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
+tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-fancy"] }
+zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tempfile = "3.27.0"
+tower = { version = "0.5.3", features = ["util"] }
