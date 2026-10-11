@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A web file browser. Run it in a folder and flip through every file inside."
 readme = "README.md"
+license = "MIT"
 keywords = ["file-server", "file-browser", "http", "preview"]
 categories = ["command-line-utilities", "web-programming::http-server"]
 
