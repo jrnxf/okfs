@@ -20,7 +20,7 @@ use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::Index;
-use crate::paths::{self, Root};
+use crate::paths::{self, Resolved, Root};
 use crate::render::{self, encode_path, view_url};
 use crate::theme::{self, Swatch, Theme};
 use crate::thumb::{self, Thumbs};
@@ -180,6 +180,7 @@ pub fn router(app: Arc<App>) -> Router {
     // Sent as they are: ranges and compression do not mix, and images are packed already.
     let plain = Router::new()
         .route("/api/thumb", get(thumbnail))
+        .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
         .route("/zip", get(zip_folder))
         .route("/zip/", get(zip_folder))
@@ -288,19 +289,12 @@ struct Listing {
     entries: Vec<Item>,
     total: usize,
     readme: Option<Readme>,
-    /// The folder holds the `--index` file, so the page opens it in place of the listing.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    index: bool,
 }
 
 fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
     let found = app.root.resolve(&query.path).filter(|found| found.meta.is_dir())?;
     let mut seen = app.root.scan(&found.abs).ok()?;
     let total = seen.len();
-    // What `scan` kept is shown and inside the served folder; a folder of that name is no page.
-    let index = app.options.index.as_deref().is_some_and(|index| {
-        seen.iter().any(|entry| !entry.dir && entry.name == index) && found.abs.join(index).is_file()
-    });
     seen.sort_by(|a, b| paths::natural_cmp(&a.name, &b.name));
     if let Some(limit) = query.limit {
         seen.sort_by_key(|entry| !entry.dir);
@@ -346,7 +340,6 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
         entries,
         total,
         readme,
-        index,
     })
 }
 
@@ -439,9 +432,44 @@ async fn archive_list(State(app): State<Arc<App>>, Query(query): Query<PathQuery
     }
 }
 
-async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, headers: HeaderMap) -> Response {
-    let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_file()) else {
-        return not_found();
+/// A folder's `--index` file. A name `resolve` refuses is not one: a dotfile, or a link
+/// that leaves the served folder. Neither is a folder of that name.
+fn index_page(app: &App, folder: &str) -> Option<Resolved> {
+    let index = app.options.index.as_deref()?;
+    app.root
+        .resolve(&paths::join(folder, index))
+        .filter(|found| found.meta.is_file())
+}
+
+async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
+    let found = match app.root.resolve(&path) {
+        Some(found) if found.meta.is_file() => found,
+        Some(folder) if folder.meta.is_dir() => {
+            let Some(found) = index_page(&app, &folder.rel) else {
+                return not_found();
+            };
+            // A folder's address ends with a slash, so links inside its index page resolve.
+            if !uri.path().ends_with('/') {
+                let mut to = format!("/raw/{}/", encode_path(&folder.rel));
+                if let Some(query) = uri.query() {
+                    to = format!("{to}?{query}");
+                }
+                return (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response();
+            }
+            found
+        }
+        _ => return not_found(),
+    };
+    match raw::serve(found, &headers).await {
+        Ok(response) => response,
+        Err(_) => not_found(),
+    }
+}
+
+/// `/raw/` is the served folder itself: its `--index` file, and without one the page as ever.
+async fn raw_root(state: State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Response {
+    let Some(found) = index_page(&state, "") else {
+        return page(state, uri).await;
     };
     match raw::serve(found, &headers).await {
         Ok(response) => response,

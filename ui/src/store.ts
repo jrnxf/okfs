@@ -110,8 +110,6 @@ export class Store {
   private turn = 0;
   /** Where the cursor was in each folder visited, by name. */
   private readonly remembered = new Map<string, string>();
-  /** The folder being shown holds the `--index` file. */
-  private hasIndex = false;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -129,6 +127,11 @@ export class Store {
   /** The files of the current list, in order: what next and previous step through. */
   files(): Entry[] {
     return this.s.entries.filter((entry) => !entry.dir);
+  }
+
+  /** The folder being shown holds the `--index` file, whatever the filter hides. */
+  private hasIndex(): boolean {
+    return this.s.all.some((entry) => !entry.dir && entry.name === config.index);
   }
 
   private compute(): void {
@@ -193,11 +196,10 @@ export class Store {
     s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.readme = listing.readme;
-    this.hasIndex = listing.index === true && config.index !== undefined;
     if (changed) s.filter = "";
     this.compute();
     const asked = opts.open !== undefined || opts.select !== undefined || opts.listing === true;
-    const index = this.hasIndex && !asked ? config.index : undefined;
+    const index = this.hasIndex() && !asked ? config.index : undefined;
     const open = opts.open ?? index;
     const wanted = open ?? opts.select ?? (changed ? this.remembered.get(listing.path) : this.cur()?.name);
     if (open !== undefined && !s.entries.some((entry) => entry.name === open)) {
@@ -243,7 +245,7 @@ export class Store {
     const listing = mark().listing === true;
     if (s.status !== "ready" || folder !== s.path) return this.go(path, dir, "none", listing);
     // A folder's address means its index page, unless the entry was left on the listing.
-    const index = this.hasIndex && !listing ? joinPath(path, config.index ?? "") : null;
+    const index = this.hasIndex() && !listing ? joinPath(path, config.index ?? "") : null;
     const file = dir ? index : path;
     const at = file === null ? -1 : s.entries.findIndex((entry) => entry.path === file);
     if (file !== null && at < 0) return this.go(path, dir, "none", listing);

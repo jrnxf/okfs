@@ -18,8 +18,6 @@ export interface Listing {
   entries: Item[];
   total: number;
   readme: Readme | null;
-  /** The folder holds the `--index` file. */
-  index?: boolean;
 }
 
 export type TextPreview =
