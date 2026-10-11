@@ -18,6 +18,8 @@ export interface Config {
   themes: ThemeInfo[];
   /** The `--header` note, already rendered and cleaned by the server. */
   header: string | null;
+  /** The `--index` file name: a folder holding it opens as that page. Absent without the flag. */
+  index?: string;
   target: { path: string; kind: "dir" | "file" | "missing" };
 }
 

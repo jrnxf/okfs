@@ -50,6 +50,8 @@ pub struct Options {
     pub accent: Option<String>,
     pub css: Option<PathBuf>,
     pub header: Option<PathBuf>,
+    /// From `--index`: a folder holding a file of this name opens as that page.
+    pub index: Option<String>,
     /// Host names answered besides `localhost` and plain addresses.
     pub allow_hosts: Vec<String>,
     /// Refuse requests for other host names. On for a loopback address, where a
@@ -66,6 +68,7 @@ impl Default for Options {
             accent: None,
             css: None,
             header: None,
+            index: None,
             allow_hosts: Vec::new(),
             check_host: false,
             cache: None,
@@ -285,12 +288,19 @@ struct Listing {
     entries: Vec<Item>,
     total: usize,
     readme: Option<Readme>,
+    /// The folder holds the `--index` file, so the page opens it in place of the listing.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    index: bool,
 }
 
 fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
     let found = app.root.resolve(&query.path).filter(|found| found.meta.is_dir())?;
     let mut seen = app.root.scan(&found.abs).ok()?;
     let total = seen.len();
+    // What `scan` kept is shown and inside the served folder; a folder of that name is no page.
+    let index = app.options.index.as_deref().is_some_and(|index| {
+        seen.iter().any(|entry| !entry.dir && entry.name == index) && found.abs.join(index).is_file()
+    });
     seen.sort_by(|a, b| paths::natural_cmp(&a.name, &b.name));
     if let Some(limit) = query.limit {
         seen.sort_by_key(|entry| !entry.dir);
@@ -336,6 +346,7 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
         entries,
         total,
         readme,
+        index,
     })
 }
 
@@ -572,6 +583,9 @@ struct Config {
     themes: Vec<ThemeInfo>,
     /// The `--header` note, rendered.
     header: Option<String>,
+    /// The `--index` file name. Left out when the flag is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index: Option<String>,
     target: Target,
 }
 
@@ -646,6 +660,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
         theme: app.default_theme_id().to_owned(),
         themes: theme_infos(&app),
         header: header_note,
+        index: app.options.index.clone(),
         target,
     };
     // Inside a script element, only "<" could end the block early.

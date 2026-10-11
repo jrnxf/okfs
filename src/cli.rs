@@ -16,6 +16,7 @@ Examples:
   okfs                            serve this folder at http://127.0.0.1:8080/
   okfs ~/photos --port 9000       serve another folder on another port
   okfs --bind 0.0.0.0             let other machines on the network in
+  okfs --index index.html         open a folder that holds an index.html as that page
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
   okfs --theme ./mine.css         start in your own theme
   okfs theme check ./mine.css     check a theme file against the contract
@@ -45,6 +46,10 @@ struct Serve {
     /// Port to listen on
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
+
+    /// Open a folder that holds a file of this name as that page: --index index.html
+    #[arg(long, value_name = "FILE")]
+    index: Option<String>,
 
     /// Theme a new visitor starts in: a built-in name or a theme file
     #[arg(long, default_value = "default", value_name = "NAME|FILE", help_heading = "Look")]
@@ -149,6 +154,11 @@ fn serve(args: Serve) -> Result<(), String> {
     {
         return Err(format!("--accent {accent} is not a hex color such as #2d6a4f"));
     }
+    if let Some(index) = &args.index
+        && (index.is_empty() || index == "." || index == ".." || index.contains(['/', '\\']))
+    {
+        return Err(format!("--index {index} is not a plain file name such as index.html"));
+    }
     for (flag, file) in [("--css", &args.css), ("--header", &args.header)] {
         if let Some(file) = file
             && !file.is_file()
@@ -163,6 +173,7 @@ fn serve(args: Serve) -> Result<(), String> {
         accent: args.accent,
         css: args.css,
         header: args.header,
+        index: args.index,
         allow_hosts: args.allow_host,
         check_host: args.bind.is_loopback(),
         cache: dirs::cache_dir().map(|dir| dir.join("okfs").join("thumbs")),

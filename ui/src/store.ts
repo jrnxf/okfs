@@ -56,6 +56,16 @@ export interface State {
 
 type HistoryMode = "push" | "replace" | "none";
 
+/** What a history entry remembers besides its address. */
+interface Mark {
+  /** A file opened from the list in this visit: closing it is going back. */
+  opened?: boolean;
+  /** A folder's address standing for its listing, where it would otherwise open the folder's index page. */
+  listing?: boolean;
+}
+
+const mark = (): Mark => (history.state as Mark | null) ?? {};
+
 function toEntry(item: Item, dir: string, rank: number): Entry {
   const isDir = item.d === true;
   return {
@@ -100,6 +110,8 @@ export class Store {
   private turn = 0;
   /** Where the cursor was in each folder visited, by name. */
   private readonly remembered = new Map<string, string>();
+  /** The folder being shown holds the `--index` file. */
+  private hasIndex = false;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -141,15 +153,22 @@ export class Store {
     this.s.cursor = Math.max(0, at);
   }
 
-  private setUrl(mode: HistoryMode, path: string, dir: boolean, opened = false): void {
+  private setUrl(mode: HistoryMode, path: string, dir: boolean, state: Mark = {}): void {
     if (mode === "none") return;
     const url = urls.view(path, dir) + location.search;
-    if (mode === "push" && url !== location.pathname + location.search) history.pushState({ opened }, "", url);
-    else history.replaceState(mode === "push" ? { opened } : history.state, "", url);
+    if (mode === "push" && url !== location.pathname + location.search) history.pushState(state, "", url);
+    else history.replaceState(mode === "push" ? state : history.state, "", url);
   }
 
-  /** Shows a folder. `select` puts the cursor on a name; `open` also gives that file the full width. */
-  async showDir(path: string, opts: { select?: string; open?: string; history?: HistoryMode } = {}): Promise<void> {
+  /**
+   * Shows a folder. `select` puts the cursor on a name; `open` also gives that file the full width.
+   * A folder holding the `--index` file opens that file, under the folder's own address, unless
+   * a name was asked for or `listing` is set.
+   */
+  async showDir(
+    path: string,
+    opts: { select?: string; open?: string; listing?: boolean; history?: HistoryMode } = {},
+  ): Promise<void> {
     const { s } = this;
     const turn = ++this.turn;
     const leaving = this.cur();
@@ -174,27 +193,33 @@ export class Store {
     s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.readme = listing.readme;
+    this.hasIndex = listing.index === true && config.index !== undefined;
     if (changed) s.filter = "";
     this.compute();
-    const wanted = opts.open ?? opts.select ?? (changed ? this.remembered.get(listing.path) : this.cur()?.name);
-    if (opts.open !== undefined && !s.entries.some((entry) => entry.name === opts.open)) {
+    const asked = opts.open !== undefined || opts.select !== undefined || opts.listing === true;
+    const index = this.hasIndex && !asked ? config.index : undefined;
+    const open = opts.open ?? index;
+    const wanted = open ?? opts.select ?? (changed ? this.remembered.get(listing.path) : this.cur()?.name);
+    if (open !== undefined && !s.entries.some((entry) => entry.name === open)) {
       // The file may be hidden by a filter that outlived a reload of the same folder.
       s.filter = "";
       this.compute();
     }
     this.select(wanted);
-    const opened = opts.open === undefined ? null : this.cur();
-    s.open = opened && !opened.dir && opened.name === opts.open ? opened : null;
+    const opened = open === undefined ? null : this.cur();
+    s.open = opened && !opened.dir && opened.name === open ? opened : null;
     const mode = opts.history ?? "push";
+    // An index page keeps its folder's address, so a link to the folder means the page.
+    const paged = s.open !== null && index !== undefined;
     // A file opened from elsewhere gets its folder as the entry before it, so closing lands there.
-    if (!s.open || (mode === "push" && changed)) this.setUrl(mode, listing.path, true);
-    if (s.open) this.setUrl(mode, s.open.path, false, true);
+    if (!s.open || paged || (mode === "push" && changed)) this.setUrl(mode, listing.path, true, { listing: !paged });
+    if (s.open && !paged) this.setUrl(mode, s.open.path, false, { opened: true });
     this.emit();
   }
 
   /** Goes to any path in the tree: a folder is shown, a file is opened in its folder. */
-  go(path: string, dir: boolean, history: HistoryMode = "push"): Promise<void> {
-    if (dir) return this.showDir(path, { history });
+  go(path: string, dir: boolean, history: HistoryMode = "push", listing = false): Promise<void> {
+    if (dir) return this.showDir(path, { history, listing });
     return this.showDir(parentOf(path), { open: nameOf(path), history });
   }
 
@@ -206,7 +231,8 @@ export class Store {
       this.emit();
       return Promise.resolve();
     }
-    return this.go(path, kind === "dir", "replace");
+    // A reload of a folder whose index page was closed stays on the listing.
+    return this.go(path, kind === "dir", "replace", mark().listing === true);
   }
 
   /** Follows the address bar after back or forward. */
@@ -214,9 +240,13 @@ export class Store {
     const { s } = this;
     const { path, dir } = parseLocation();
     const folder = dir ? path : parentOf(path);
-    if (s.status !== "ready" || folder !== s.path) return this.go(path, dir, "none");
-    const at = dir ? -1 : s.entries.findIndex((entry) => entry.path === path);
-    if (!dir && at < 0) return this.go(path, dir, "none");
+    const listing = mark().listing === true;
+    if (s.status !== "ready" || folder !== s.path) return this.go(path, dir, "none", listing);
+    // A folder's address means its index page, unless the entry was left on the listing.
+    const index = this.hasIndex && !listing ? joinPath(path, config.index ?? "") : null;
+    const file = dir ? index : path;
+    const at = file === null ? -1 : s.entries.findIndex((entry) => entry.path === file);
+    if (file !== null && at < 0) return this.go(path, dir, "none", listing);
     if (at >= 0) s.cursor = at;
     s.open = at >= 0 ? (s.entries[at] ?? null) : null;
     this.emit();
@@ -237,6 +267,8 @@ export class Store {
   /** Enters the folder under the cursor, or gives the file under it the full width. */
   activate(index?: number): void {
     const { s } = this;
+    // A file already at full width stays as it is: opening it again would only rewrite its history entry.
+    if (s.open) return;
     if (index !== undefined) s.cursor = index;
     const entry = this.cur();
     if (!entry) return;
@@ -249,7 +281,7 @@ export class Store {
     const at = s.entries.indexOf(entry);
     if (at >= 0) s.cursor = at;
     s.open = entry;
-    this.setUrl(mode, entry.path, false, true);
+    this.setUrl(mode, entry.path, false, { opened: true });
     this.emit();
   }
 
@@ -257,12 +289,12 @@ export class Store {
     const { s } = this;
     if (!s.open) return;
     // Opened from the list in this visit: going back is the same as closing, and keeps history short.
-    if ((history.state as { opened?: boolean } | null)?.opened) {
+    if (mark().opened) {
       history.back();
       return;
     }
     s.open = null;
-    this.setUrl("replace", s.path, true);
+    history.replaceState({ listing: true }, "", urls.view(s.path, true) + location.search);
     this.emit();
   }
 

@@ -60,6 +60,7 @@ A folder's `README.md` is shown under its listing.
 | `[PATH]` | The folder to serve. Default: the current folder. |
 | `-b`, `--bind <ADDR>` | Address to listen on. Default `127.0.0.1`. |
 | `-p`, `--port <PORT>` | Port to listen on. Default `8080`. |
+| `--index <FILE>` | Open a folder that holds a file of this name as that page: `--index index.html`. Off by default. See below. |
 | `--theme <NAME\|FILE>` | Theme a new visitor starts in: a built-in name or a theme file. |
 | `--css <FILE>` | Your own stylesheet, loaded after the theme. Class names are not a promise and may change. |
 | `--header <FILE.md>` | A Markdown note shown above every folder. |
@@ -84,6 +85,16 @@ A folder's `README.md` is shown under its listing.
 | `t` | Light or dark |
 | `Esc` | Close the preview |
 | `?` | Show the keys |
+
+### A folder that is a small site
+
+A folder is shown as its listing. With `--index`, a folder that holds a file of that name opens as that page, at the folder's own address, so a link to the folder is a link to the site:
+
+```sh
+okfs --index index.html
+```
+
+The page is shown the way any HTML file is: full width under the thin bar, sandboxed. Closing it shows the folder's listing with the page under the cursor. A dotfile, a folder of that name or a link that leaves the served folder is not an index page.
 
 ### Behind a proxy or a tunnel
 

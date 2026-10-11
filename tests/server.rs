@@ -688,3 +688,66 @@ async fn search_finds_names_across_the_tree_and_follows_changes() {
     fs::remove_dir_all(site.served.join("fresh")).unwrap();
     wait_for("zebra", 0).await;
 }
+
+#[tokio::test]
+async fn a_folder_reports_its_index_page_only_behind_the_flag() {
+    let site = Site::new();
+    fs::write(site.served.join("sub/index.html"), "<h1>site</h1>").unwrap();
+    fs::write(site.served.join("sub/.home.html"), "<h1>hidden</h1>").unwrap();
+    fs::create_dir_all(site.served.join("sub/deep/index.html")).unwrap();
+    fs::create_dir_all(site.served.join("linked")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(site.outside.join("page.html"), site.served.join("linked/index.html")).unwrap();
+    let config = |html: &[u8]| -> Value {
+        let html = String::from_utf8_lossy(html).into_owned();
+        let start = html.find("id=\"okfs-config\">").unwrap() + "id=\"okfs-config\">".len();
+        let end = start + html[start..].find("</script>").unwrap();
+        serde_json::from_str(&html[start..end]).unwrap()
+    };
+    let with = |name: &str| {
+        site.app(Options {
+            index: Some(name.to_owned()),
+            ..Options::default()
+        })
+    };
+
+    let app = with("index.html");
+    let (_, body) = get(&app, "/sub/").await;
+    assert_eq!(config(&body)["index"], "index.html");
+    assert_eq!(
+        config(&body)["target"],
+        serde_json::json!({ "path": "sub", "kind": "dir" })
+    );
+    assert_eq!(json(&app, "/api/list?path=sub").await["index"], true);
+    assert_eq!(json(&app, "/api/list?path=sub&limit=1").await["index"], true);
+    // No such file, a folder of that name, and a link that leaves the served folder.
+    for folder in ["", "sub/deep", "linked"] {
+        let listing = json(&app, &format!("/api/list?path={folder}")).await;
+        assert!(listing.get("index").is_none(), "{folder:?} has no index page");
+    }
+    // The page itself is a file like any other: sandboxed.
+    let (response, _) = get(&app, "/raw/sub/index.html").await;
+    assert!(
+        response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .starts_with("sandbox")
+    );
+
+    // A dotfile is not served, so it is not an index page either.
+    let listing = json(&with(".home.html"), "/api/list?path=sub").await;
+    assert!(listing.get("index").is_none());
+
+    // With the flag off, the answers are the ones okfs always gave.
+    let off = site.router();
+    let (_, body) = get(&off, "/sub/").await;
+    assert!(config(&body).get("index").is_none());
+    let (plain, flagged) = (
+        json(&off, "/api/list?path=sub").await,
+        json(&app, "/api/list?path=sub").await,
+    );
+    assert!(plain.get("index").is_none());
+    let mut flagged = flagged;
+    flagged.as_object_mut().unwrap().remove("index");
+    assert_eq!(plain, flagged);
+}
