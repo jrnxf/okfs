@@ -17,7 +17,7 @@ export interface Readme {
 
 export interface Listing {
   path: string;
-  /** The folder is reached through a link. Deleting it removes the link only. */
+  /** The folder is reached through a link. Deleting it removes the link only. Sent with a whole listing only. */
   link?: boolean;
   entries: Item[];
   total: number;
@@ -104,16 +104,25 @@ export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> 
   return (await response.json()) as T;
 }
 
-/** Deletes a file, a link, or a folder with everything in it. Fails with the server's reason. */
+/** A delete that did not go through, with the server's reason. */
+export class DeleteError extends Error {
+  /** `partial`: a folder was being removed when it stopped, so part of it may be gone. */
+  constructor(
+    reason: string,
+    readonly partial: boolean,
+  ) {
+    super(reason);
+  }
+}
+
+/** Deletes a file, a link, or a folder with everything in it. Fails with a `DeleteError`. */
 export async function deleteEntry(path: string): Promise<void> {
   // The header marks the request as the page's own: the server refuses a delete without it.
   const response = await fetch(urls.entry(path), { method: "DELETE", headers: { "x-okfs": "delete" } });
   if (response.ok) return;
-  const reason: unknown = await response.json().then(
-    (body: { error?: unknown }) => body.error,
-    () => undefined,
-  );
-  throw new Error(typeof reason === "string" ? reason : `the server answered ${response.status}`);
+  const body: { error?: unknown; partial?: unknown } = await response.json().catch(() => ({}));
+  const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
+  throw new DeleteError(reason, body.partial === true);
 }
 
 export const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("/")));

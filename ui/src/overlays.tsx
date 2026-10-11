@@ -1,6 +1,7 @@
 // The theme switcher and the list of keys.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { DeleteError } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { KindIcon } from "./icons";
@@ -134,8 +135,9 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
     setBusy(true);
     setFailure("");
     store.remove(doomed).catch((error: unknown) => {
+      const stopped = error instanceof DeleteError && error.partial ? "Stopped part way" : "Not deleted";
       setBusy(false);
-      setFailure(error instanceof Error ? error.message : String(error));
+      setFailure(`${stopped}: ${error instanceof Error ? error.message : String(error)}.`);
     });
   };
   const noun = doomed.link ? "link" : doomed.dir ? "folder" : "file";
@@ -160,7 +162,7 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
         </p>
         {failure && (
           <p class="ask-fail" role="alert">
-            Not deleted: {failure}.
+            {failure}
           </p>
         )}
         <div class="ask-do">

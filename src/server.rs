@@ -307,6 +307,7 @@ struct Readme {
 struct Listing {
     path: String,
     /// The path's last name is a link to this folder. A delete removes only the link.
+    /// Told with a whole listing only, as the notes are.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     link: bool,
     /// In name order. The page sorts and filters from here.
@@ -361,7 +362,7 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
         })
         .collect();
     Some(Listing {
-        link: app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
+        link: query.limit.is_none() && app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
         path: found.rel,
         entries,
         total,
@@ -526,7 +527,7 @@ fn remove_entry(app: &App, path: &str) -> Response {
         Err(NoEntry::Missing) => return not_found(),
     };
     let removed = app.root.remove(&entry);
-    // Also after a failure: a folder may be half gone.
+    // Also after a failure: part of a folder may be gone.
     app.index.reread(&entry.folder);
     match removed {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -540,15 +541,22 @@ fn remove_entry(app: &App, path: &str) -> Response {
             "somewhere inside, this folder holds something okfs cannot show, such as a link that leads out of \
              the served folder, and so does not delete: remove it yourself",
         ),
-        Err(Kept::Failed(error)) => {
-            let status = match error.kind() {
-                std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
-                std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            // The kind reads as plain words, such as "permission denied", and names no path.
-            fail(status, &error.kind().to_string())
+        // The kind reads as plain words, such as "permission denied", and names no path.
+        Err(Kept::Failed(error)) => fail(disk_status(&error), &error.kind().to_string()),
+        Err(Kept::Partly(error)) => {
+            let message = format!("{}, and part of the folder may already be gone", error.kind());
+            let answer = serde_json::json!({ "error": message, "partial": true });
+            (disk_status(&error), Json(answer)).into_response()
         }
+    }
+}
+
+/// The status to answer with when the disk refused a delete.
+fn disk_status(error: &std::io::Error) -> StatusCode {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 

@@ -361,7 +361,16 @@ export class Store {
     const here = doomed.path === s.path;
     // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.
     const above = here ? await getJson<Listing>(urls.list(parentOf(doomed.path))).catch(() => null) : null;
-    await deleteEntry(doomed.path);
+    try {
+      await deleteEntry(doomed.path);
+    } catch (error) {
+      // Part of a folder may be gone all the same: the list and the dialog show what is there now.
+      forgetAnswers();
+      await this.showDir(s.path, { open: s.open?.name, history: "none" }).catch(() => undefined);
+      s.doomed = (here ? this.here() : s.all.find((entry) => entry.path === doomed.path)) ?? doomed;
+      this.emit();
+      throw error;
+    }
     forgetAnswers();
     try {
       if (here) {

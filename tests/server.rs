@@ -786,6 +786,79 @@ async fn a_file_or_a_folder_with_its_contents_is_deleted() {
 }
 
 #[tokio::test]
+async fn a_delete_finds_an_entry_only_by_the_name_its_folder_lists() {
+    let site = Site::new();
+    fs::write(site.served.join("A long name.TEXT"), "kept").unwrap();
+    fs::create_dir_all(site.served.join(".dotfolder")).unwrap();
+    fs::write(site.served.join(".dotfolder/kept.txt"), "kept").unwrap();
+    let app = site.deleting();
+    let before = snapshot(&site.served);
+    // Other spellings that some file systems answer to: another case, a short name, a dot at the end.
+    for alias in [
+        "a long name.text",
+        "A LONG NAME.TEXT",
+        "ALONGN~1.TEX",
+        "A long name.TEXT.",
+        "DOTFOL~1",
+    ] {
+        let request = page_delete(&alias.replace(' ', "%20")).unwrap();
+        assert_eq!(send(&app, request).await.0.status(), StatusCode::NOT_FOUND, "{alias}");
+        assert_eq!(snapshot(&site.served), before, "{alias}");
+    }
+    assert_eq!(delete(&app, "A%20long%20name.TEXT").await, StatusCode::NO_CONTENT);
+    assert!(!site.served.join("A long name.TEXT").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_delete_that_stops_part_way_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let site = Site::new();
+    let (proj, locked) = (site.served.join("proj"), site.served.join("proj/locked"));
+    fs::create_dir_all(&locked).unwrap();
+    fs::create_dir_all(proj.join("free")).unwrap();
+    fs::write(locked.join("kept.txt"), "kept").unwrap();
+    fs::write(proj.join("free/loose.txt"), "loose").unwrap();
+    // A folder that may be read and not written to: nothing can be taken out of it.
+    let lock = |mode: u32| fs::set_permissions(&locked, fs::Permissions::from_mode(mode)).unwrap();
+    lock(0o555);
+    if fs::write(locked.join("probe"), "").is_ok() {
+        // Whoever runs this is let past the permission, as root is: nothing can be made to fail.
+        return lock(0o755);
+    }
+    let app = site.deleting();
+    let answer = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let (response, body) = send(&app, page_delete(path).unwrap()).await;
+            (response.status(), serde_json::from_slice::<Value>(&body).unwrap())
+        }
+    };
+
+    // A file in it fails before anything is removed. The folder above fails once removing has begun.
+    let file = answer("proj/locked/kept.txt").await;
+    let folder = answer("proj").await;
+    let kept = fs::read_to_string(locked.join("kept.txt"));
+    lock(0o755);
+
+    assert_eq!(
+        file,
+        (
+            StatusCode::FORBIDDEN,
+            serde_json::json!({ "error": "permission denied" })
+        )
+    );
+    assert_eq!(folder.0, StatusCode::FORBIDDEN);
+    assert_eq!(folder.1["partial"], true);
+    let why = folder.1["error"].as_str().unwrap();
+    assert!(
+        why.contains("permission denied") && why.contains("part of the folder may already be gone"),
+        "{why}"
+    );
+    assert_eq!(kept.unwrap(), "kept");
+}
+
+#[tokio::test]
 async fn the_served_folder_itself_is_never_deleted() {
     let site = Site::new();
     let app = site.deleting();

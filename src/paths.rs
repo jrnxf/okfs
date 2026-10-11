@@ -33,13 +33,13 @@ pub struct Entry {
     /// The real folder holding it, relative to the served folder.
     pub folder: String,
     /// Of the entry itself, not of what a link points at.
-    meta: Metadata,
+    kind: FileType,
 }
 
 impl Entry {
     /// True for a link: removing it leaves what it points at where it is.
     pub fn is_link(&self) -> bool {
-        self.meta.file_type().is_symlink()
+        self.kind.is_symlink()
     }
 }
 
@@ -71,9 +71,10 @@ pub enum Kept {
     /// It is a folder that holds, at some depth, something that is not shown. Nothing
     /// was removed.
     Holds(Unshown),
-    /// The disk refused, or the entry is no longer where it was found. A folder may be
-    /// half gone.
+    /// The disk refused, or the entry is no longer where it was found. Nothing was removed.
     Failed(io::Error),
+    /// The disk refused while a folder was being removed. Part of the folder may be gone.
+    Partly(io::Error),
 }
 
 impl From<io::Error> for Kept {
@@ -156,6 +157,8 @@ impl Root {
     /// last name is not followed when it is a link: the link is what gets removed, and
     /// not what it points at. Only a link that is shown is found. The folder holding
     /// the entry is followed, and has to be inside the served folder like everything else.
+    /// The entry is looked up in that folder's own listing, by the name written there:
+    /// a file system may answer to other spellings of a name, and those find nothing.
     pub fn entry(&self, request: &str) -> Result<Entry, NoEntry> {
         let segments = self.segments(request).ok_or(NoEntry::NotServed)?;
         let Some((name, above)) = segments.split_last() else {
@@ -174,15 +177,18 @@ impl Root {
             .and_then(Path::to_str)
             .ok_or(NoEntry::Missing)?
             .replace(std::path::MAIN_SEPARATOR, "/");
-        let abs = parent.join(name);
-        let meta = fs::symlink_metadata(&abs).map_err(|_| NoEntry::Missing)?;
-        self.seen(&parent, OsStr::new(name), meta.file_type())
+        let held = fs::read_dir(&parent)
+            .ok()
+            .and_then(|mut names| names.find_map(|held| held.ok().filter(|held| held.file_name() == *name)))
+            .ok_or(NoEntry::Missing)?;
+        let kind = held.file_type().map_err(|_| NoEntry::Missing)?;
+        self.seen(&parent, &held.file_name(), kind)
             .map_err(|_| NoEntry::Missing)?;
         Ok(Entry {
             rel: segments.join("/"),
-            abs,
+            abs: held.path(),
             folder,
-            meta,
+            kind,
         })
     }
 
@@ -191,10 +197,10 @@ impl Root {
     /// checked first, by a walk that removes nothing, so a name that appears in the
     /// folder after the check goes with the folder.
     pub fn remove(&self, entry: &Entry) -> Result<(), Kept> {
-        if entry.meta.is_dir() {
+        if entry.kind.is_dir() {
             self.all_shown(&entry.abs)?;
         }
-        self.remove_unchecked(entry).map_err(Kept::Failed)
+        self.remove_unchecked(entry)
     }
 
     /// Checks that all a folder holds, at every depth, is shown. Removes nothing.
@@ -218,14 +224,14 @@ impl Root {
     /// goes has to be inside the served folder now. No link that sits in a folder is
     /// followed: it is removed as a link, and so is the entry itself when it is one.
     /// This does not hold against a process that rewrites the served folder while it runs.
-    fn remove_unchecked(&self, entry: &Entry) -> io::Result<()> {
+    fn remove_unchecked(&self, entry: &Entry) -> Result<(), Kept> {
         let now = self
             .entry(&entry.rel)
             .ok()
-            .filter(|now| now.abs == entry.abs && now.meta.file_type() == entry.meta.file_type())
-            .ok_or(io::ErrorKind::NotFound)?;
-        if now.meta.is_dir() {
-            return fs::remove_dir_all(&now.abs);
+            .filter(|now| now.abs == entry.abs && now.kind == entry.kind)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        if now.kind.is_dir() {
+            return fs::remove_dir_all(&now.abs).map_err(Kept::Partly);
         }
         fs::remove_file(&now.abs).or_else(|error| {
             // On Windows a link to a folder is removed the way a folder is.
@@ -234,7 +240,8 @@ impl Root {
             } else {
                 Err(error)
             }
-        })
+        })?;
+        Ok(())
     }
 
     /// True for a canonical path that is inside the served folder and not hidden.
