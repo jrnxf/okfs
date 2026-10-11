@@ -819,8 +819,16 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
     fs::write(locked.join("kept.txt"), "kept").unwrap();
     fs::write(locked.join("proj/note.txt"), "note").unwrap();
     fs::write(locked.join("proj/free/loose.txt"), "loose").unwrap();
+    // One folder in another in another, with the middle one locked.
+    let middle = site.served.join("chain/locked");
+    fs::create_dir_all(middle.join("inner")).unwrap();
+    fs::write(middle.join("inner/quartz.dat"), "deep").unwrap();
     // A folder that may be read and not written to: no name can be taken out of it.
-    let lock = |mode: u32| fs::set_permissions(&locked, fs::Permissions::from_mode(mode)).unwrap();
+    let lock = |mode: u32| {
+        for dir in [&locked, &middle] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(mode)).unwrap();
+        }
+    };
     lock(0o555);
     if fs::write(locked.join("probe"), "").is_ok() {
         // Whoever runs this is let past the permission, as root is: nothing can be made to fail.
@@ -839,6 +847,9 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
     // A file in it fails before anything is removed. A folder in it is emptied, and then cannot go itself.
     let file = answer("locked/kept.txt").await;
     let folder = answer("locked/proj").await;
+    let found = json(&app, "/api/search?q=loose").await;
+    // A folder that loses only what is deepest in it: every folder on the way down stays, with the same names.
+    let chain = answer("chain").await;
     lock(0o755);
 
     assert_eq!(
@@ -862,10 +873,26 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
     let listing = json(&app, "/api/list?path=locked").await;
     let proj = listing["entries"].as_array().unwrap().iter().find(|e| e["n"] == "proj");
     assert_eq!(proj.unwrap()["c"], 0);
-    let found = json(&app, "/api/search?q=loose").await;
     assert_eq!(found["total"], 0, "{found}");
     assert_eq!(found["indexed"], indexed - 3);
     assert_eq!(json(&app, "/api/search?q=kept.txt").await["total"], 1);
+
+    // The same holds at any depth of a folder that is still there.
+    assert_eq!(
+        (chain.0, &chain.1["partial"]),
+        (StatusCode::FORBIDDEN, &Value::Bool(true))
+    );
+    assert_eq!(fs::read_dir(middle.join("inner")).unwrap().count(), 0);
+    let listing = json(&app, "/api/list?path=chain/locked").await;
+    let inner = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["n"] == "inner");
+    assert_eq!(inner.unwrap()["c"], 0);
+    let found = json(&app, "/api/search?q=quartz").await;
+    assert_eq!(found["total"], 0, "{found}");
+    assert_eq!(found["indexed"], indexed - 4);
 }
 
 #[tokio::test]
