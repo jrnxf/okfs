@@ -1,0 +1,17 @@
+{
+  "name": "okfs-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0",
+    "@types/bun": "^1.4.2",
+    "preact": "^11.0.1",
+    "typescript": "^7.0.2"
+  }
+}

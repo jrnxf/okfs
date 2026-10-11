@@ -1,0 +1,50 @@
+// Builds the page into dist/: two scripts, one stylesheet, the fonts and the HTML shell.
+// The Rust build embeds everything in dist/ into the binary.
+import { cp, mkdir, rm } from "node:fs/promises";
+
+const out = "dist";
+await rm(out, { recursive: true, force: true });
+await mkdir(`${out}/fonts`, { recursive: true });
+
+const scripts = [
+  // The app, loaded as a module.
+  { entry: "src/main.tsx", format: "esm" },
+  // Runs before first paint to apply the saved theme, so it must not be deferred.
+  { entry: "src/boot.ts", format: "iife" },
+] as const;
+for (const { entry, format } of scripts) {
+  const result = await Bun.build({
+    entrypoints: [entry],
+    outdir: out,
+    format,
+    target: "browser",
+    minify: true,
+    naming: "[name].js",
+  });
+  if (!result.success) {
+    for (const log of result.logs) console.error(log);
+    process.exit(1);
+  }
+}
+
+// Order matters: fonts, then the token contract, then the styles that read it.
+const styles = ["fonts", "tokens", "core", "app"];
+const css = await Promise.all(styles.map((name) => Bun.file(`src/styles/${name}.css`).text()));
+await Bun.write(`${out}/app.css`, css.join("\n"));
+
+// Geist, Geist Mono and Newsreader are under the SIL Open Font License 1.1, which allows bundling.
+const fonts = [
+  "geist/files/geist-latin-wght-normal.woff2",
+  "geist/files/geist-latin-ext-wght-normal.woff2",
+  "geist-mono/files/geist-mono-latin-wght-normal.woff2",
+  "geist-mono/files/geist-mono-latin-ext-wght-normal.woff2",
+  "newsreader/files/newsreader-latin-opsz-normal.woff2",
+  "newsreader/files/newsreader-latin-ext-opsz-normal.woff2",
+  "newsreader/files/newsreader-latin-opsz-italic.woff2",
+];
+for (const font of fonts) {
+  await cp(`node_modules/@fontsource-variable/${font}`, `${out}/fonts/${font.split("/").pop()}`);
+}
+
+await cp("index.html", `${out}/index.html`);
+await cp("src/favicon.svg", `${out}/favicon.svg`);
