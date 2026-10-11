@@ -1,0 +1,4 @@
+/* @name Default  @author okfs  @version 1
+   The default theme is the contract itself: see tokens.css. Nothing to override. */
+:root {}
+:root[data-scheme="dark"] {}

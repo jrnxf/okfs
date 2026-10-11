@@ -1,0 +1,71 @@
+/* @name Riso  @author okfs  @version 1
+   Deliberately loud. Two-ink print: thick outlines, hard offset shadows, capitals. */
+:root {
+  --bg: #fff6d6;
+  --surface: #ffffff;
+  --sunken: #ffe45c;
+  --fg: #16110d;
+  --muted: #4a3f35;
+  --faint: #8a7b6c;
+  --line: #16110d;
+  --line-strong: #16110d;
+  --accent: #ff2e88;
+  --accent-fg: #ffffff;
+  --accent-soft: #ffd1e6;
+  --hover: #ffe45c;
+  --scrim: rgb(0 71 255 / 0.55);
+  --kind-folder: #0047ff;
+  --kind-image: #ff2e88;
+  --kind-media: #ff5b14;
+  --kind-doc: #16110d;
+  --kind-code: #00935a;
+  --kind-data: #0047ff;
+  --kind-archive: #7a1fd6;
+  --syn-comment: #8a7b6c;
+  --syn-keyword: #ff2e88;
+  --syn-string: #00935a;
+  --syn-number: #7a1fd6;
+  --syn-title: #0047ff;
+  --font-display: "Geist Mono", ui-monospace, Menlo, monospace;
+  --text: 14px;
+  --weight: 500;
+  --weight-strong: 800;
+  --tracking: 0;
+  --label-case: uppercase;
+  --radius: 0px;
+  --radius-lg: 0px;
+  --line-w: 2px;
+  --density: 1.1;
+  --shadow: 6px 6px 0 #16110d, 0 0 0 2px #16110d;
+  --shadow-tile: 3px 3px 0 #16110d, 0 0 0 2px #16110d;
+  --icon-set: solid;
+}
+:root[data-scheme="dark"] {
+  --bg: #1a0933;
+  --surface: #2a0f52;
+  --sunken: #12052a;
+  --fg: #fff7fd;
+  --muted: #d2b6f2;
+  --faint: #8d6bc0;
+  --line: #ff5fb7;
+  --line-strong: #ff5fb7;
+  --accent: #f4f74a;
+  --accent-fg: #1a0933;
+  --accent-soft: #4a1d8a;
+  --hover: #3a1670;
+  --scrim: rgb(255 46 136 / 0.5);
+  --kind-folder: #5fe0ff;
+  --kind-image: #ff5fb7;
+  --kind-media: #ff9a3d;
+  --kind-doc: #fff7fd;
+  --kind-code: #6dfbaa;
+  --kind-data: #f4f74a;
+  --kind-archive: #c79bff;
+  --syn-comment: #8d6bc0;
+  --syn-keyword: #ff5fb7;
+  --syn-string: #6dfbaa;
+  --syn-number: #f4f74a;
+  --syn-title: #5fe0ff;
+  --shadow: 6px 6px 0 #ff5fb7, 0 0 0 2px #ff5fb7;
+  --shadow-tile: 3px 3px 0 #ff5fb7, 0 0 0 2px #ff5fb7;
+}

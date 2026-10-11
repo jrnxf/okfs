@@ -1,0 +1,70 @@
+/* @name Terminal  @author okfs  @version 1
+   Monospace everywhere, square corners, tight rows, no icons. */
+:root {
+  --bg: #f2f5ec;
+  --surface: #f9fbf5;
+  --sunken: #e6ebdd;
+  --fg: #10201a;
+  --muted: #4d6157;
+  --faint: #8fa096;
+  --line: #d3dccb;
+  --line-strong: #a9b8a4;
+  --accent: #0b7a3e;
+  --accent-fg: #f9fbf5;
+  --accent-soft: #d5ebd6;
+  --hover: #e6ebdd;
+  --scrim: rgb(16 32 26 / 0.4);
+  --kind-folder: #0b7a3e;
+  --kind-image: #8a3f8f;
+  --kind-media: #a5571a;
+  --kind-doc: #4d6157;
+  --kind-code: #0b7a3e;
+  --kind-data: #7d6a10;
+  --kind-archive: #4a4fa0;
+  --syn-comment: #8fa096;
+  --syn-keyword: #a5571a;
+  --syn-string: #0b7a3e;
+  --syn-number: #8a3f8f;
+  --syn-title: #1f5f99;
+  --font-ui: "Geist Mono", ui-monospace, Menlo, monospace;
+  --font-prose: "Geist Mono", ui-monospace, Menlo, monospace;
+  --font-display: "Geist Mono", ui-monospace, Menlo, monospace;
+  --text: 12.5px;
+  --tracking: 0;
+  --label-case: uppercase;
+  --radius: 0px;
+  --radius-lg: 0px;
+  --density: 0.84;
+  --shadow: 0 0 0 1px #10201a;
+  --shadow-tile: 0 0 0 1px #d3dccb;
+  --icon-set: none;
+}
+:root[data-scheme="dark"] {
+  --bg: #070b08;
+  --surface: #0c120e;
+  --sunken: #040705;
+  --fg: #b9f2c9;
+  --muted: #6fa883;
+  --faint: #3f6b50;
+  --line: #16271c;
+  --line-strong: #24422f;
+  --accent: #3dff8f;
+  --accent-fg: #03130a;
+  --accent-soft: #0e2a19;
+  --hover: #101c14;
+  --scrim: rgb(0 0 0 / 0.7);
+  --kind-folder: #3dff8f;
+  --kind-image: #f08af5;
+  --kind-media: #ffb454;
+  --kind-doc: #6fa883;
+  --kind-code: #3dff8f;
+  --kind-data: #f5e663;
+  --kind-archive: #8fa5ff;
+  --syn-comment: #3f6b50;
+  --syn-keyword: #ffb454;
+  --syn-string: #f5e663;
+  --syn-number: #f08af5;
+  --syn-title: #7fd6ff;
+  --shadow: 0 0 0 1px #3dff8f;
+  --shadow-tile: 0 0 0 1px #16271c;
+}
