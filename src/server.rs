@@ -544,7 +544,6 @@ fn remove_entry(app: &App, path: &str) -> Response {
             let status = match error.kind() {
                 std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
                 std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
-                std::io::ErrorKind::DirectoryNotEmpty => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             // The kind reads as plain words, such as "permission denied", and names no path.

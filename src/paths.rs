@@ -26,6 +26,8 @@ pub struct Resolved {
 /// An entry that may be removed. See `Root::entry`.
 #[derive(Debug)]
 pub struct Entry {
+    /// The path it was asked for by, cleaned: no leading slash, no empty segments.
+    rel: String,
     /// Where it is: its real folder, then its own name. A link is not followed.
     abs: PathBuf,
     /// The real folder holding it, relative to the served folder.
@@ -69,7 +71,8 @@ pub enum Kept {
     /// It is a folder that holds, at some depth, something that is not shown. Nothing
     /// was removed.
     Holds(Unshown),
-    /// The disk refused. A folder may be half gone.
+    /// The disk refused, or the entry is no longer where it was found. A folder may be
+    /// half gone.
     Failed(io::Error),
 }
 
@@ -175,34 +178,63 @@ impl Root {
         let meta = fs::symlink_metadata(&abs).map_err(|_| NoEntry::Missing)?;
         self.seen(&parent, OsStr::new(name), meta.file_type())
             .map_err(|_| NoEntry::Missing)?;
-        Ok(Entry { abs, folder, meta })
+        Ok(Entry {
+            rel: segments.join("/"),
+            abs,
+            folder,
+            meta,
+        })
     }
 
     /// Removes an entry found by `entry`: a file, a link, or a folder with everything
-    /// in it. A folder goes only when all it holds, at every depth, is shown, and then
-    /// exactly what this walk met is removed: a name it did not meet keeps its folder.
-    /// Nothing is followed: a link is removed as a link, also one met inside a folder.
+    /// in it. A folder goes only when all it holds, at every depth, is shown. That is
+    /// checked first, by a walk that removes nothing, so a name that appears in the
+    /// folder after the check goes with the folder.
     pub fn remove(&self, entry: &Entry) -> Result<(), Kept> {
-        // A folder comes before what it holds, so going back from the end empties it first.
-        let mut doomed = vec![(entry.abs.clone(), entry.meta.file_type())];
-        let mut next = 0;
-        while let Some((dir, kind)) = doomed.get(next) {
-            next += 1;
-            if !kind.is_dir() {
-                continue;
-            }
-            let dir = dir.clone();
+        if entry.meta.is_dir() {
+            self.all_shown(&entry.abs)?;
+        }
+        self.remove_unchecked(entry).map_err(Kept::Failed)
+    }
+
+    /// Checks that all a folder holds, at every depth, is shown. Removes nothing.
+    fn all_shown(&self, top: &Path) -> Result<(), Kept> {
+        let mut todo = vec![top.to_owned()];
+        while let Some(dir) = todo.pop() {
             for held in fs::read_dir(&dir)? {
                 let held = held?;
                 let kind = held.file_type()?;
                 self.seen(&dir, &held.file_name(), kind).map_err(Kept::Holds)?;
-                doomed.push((held.path(), kind));
+                if kind.is_dir() {
+                    todo.push(held.path());
+                }
             }
         }
-        for (at, kind) in doomed.iter().rev() {
-            remove_one(at, *kind)?;
-        }
         Ok(())
+    }
+
+    /// Takes an entry off the disk, with no check of what a folder holds. The entry is
+    /// found again first: its place may have been moved since `entry` gave it, and what
+    /// goes has to be inside the served folder now. No link that sits in a folder is
+    /// followed: it is removed as a link, and so is the entry itself when it is one.
+    /// This does not hold against a process that rewrites the served folder while it runs.
+    fn remove_unchecked(&self, entry: &Entry) -> io::Result<()> {
+        let now = self
+            .entry(&entry.rel)
+            .ok()
+            .filter(|now| now.abs == entry.abs && now.meta.file_type() == entry.meta.file_type())
+            .ok_or(io::ErrorKind::NotFound)?;
+        if now.meta.is_dir() {
+            return fs::remove_dir_all(&now.abs);
+        }
+        fs::remove_file(&now.abs).or_else(|error| {
+            // On Windows a link to a folder is removed the way a folder is.
+            if now.is_link() && fs::remove_dir(&now.abs).is_ok() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })
     }
 
     /// True for a canonical path that is inside the served folder and not hidden.
@@ -256,21 +288,6 @@ impl Root {
         }
         Ok(out)
     }
-}
-
-/// Removes one thing and never what is in it or behind it: an empty folder, a file or a link.
-fn remove_one(at: &Path, kind: FileType) -> io::Result<()> {
-    if kind.is_dir() {
-        return fs::remove_dir(at);
-    }
-    fs::remove_file(at).or_else(|error| {
-        // On Windows a link to a folder is removed the way a folder is.
-        if kind.is_symlink() && fs::remove_dir(at).is_ok() {
-            Ok(())
-        } else {
-            Err(error)
-        }
-    })
 }
 
 /// Joins a folder path and a name, both relative to the served folder.
@@ -353,5 +370,76 @@ mod tests {
         assert_eq!(extension(".gitignore"), "");
         assert_eq!(extension("Makefile"), "");
         assert_eq!(extension("a.tar.gz"), "gz");
+    }
+
+    /// A served folder beside a folder that no delete may reach, with two files in it.
+    #[cfg(unix)]
+    fn served_beside_outside() -> (tempfile::TempDir, Root, PathBuf) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let top = tmp.path().canonicalize().unwrap();
+        let (served, outside) = (top.join("served"), top.join("outside"));
+        fs::create_dir_all(&served).unwrap();
+        fs::create_dir_all(outside.join("inner")).unwrap();
+        fs::write(outside.join("kept.txt"), "kept").unwrap();
+        fs::write(outside.join("inner/kept.txt"), "kept").unwrap();
+        (tmp, Root::new(&served, false).unwrap(), outside)
+    }
+
+    #[cfg(unix)]
+    fn untouched(outside: &Path) -> bool {
+        let kept = |name: &str| fs::read_to_string(outside.join(name)).is_ok_and(|text| text == "kept");
+        kept("kept.txt") && kept("inner/kept.txt")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removing_a_folder_does_not_follow_a_link_in_it() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, outside) = served_beside_outside();
+        let doomed = root.dir().join("doomed");
+        fs::create_dir_all(doomed.join("deep")).unwrap();
+        fs::write(doomed.join("deep/gone.txt"), "gone").unwrap();
+        symlink(&outside, doomed.join("exit")).unwrap();
+        symlink(&outside, doomed.join("deep/exit")).unwrap();
+        symlink(outside.join("kept.txt"), doomed.join("deep/exit.txt")).unwrap();
+        let entry = root.entry("doomed").unwrap();
+
+        // The check refuses this folder, so the removal under it is run by itself.
+        assert!(matches!(root.remove(&entry), Err(Kept::Holds(Unshown::Unserved))));
+        assert!(doomed.join("deep/gone.txt").exists());
+        root.remove_unchecked(&entry).unwrap();
+        assert!(fs::symlink_metadata(&doomed).is_err());
+        assert!(untouched(&outside));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_moved_since_it_was_found_is_not_removed() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, outside) = served_beside_outside();
+        let served = root.dir();
+        fs::create_dir_all(served.join("a/inner")).unwrap();
+        fs::write(served.join("a/kept.txt"), "inside").unwrap();
+        fs::create_dir_all(served.join("other/inner")).unwrap();
+        fs::write(served.join("other/kept.txt"), "inside").unwrap();
+        let (folder, file) = (root.entry("a/inner").unwrap(), root.entry("a/kept.txt").unwrap());
+
+        // The folder above is swapped for a link out of the served folder, with the same names in it.
+        fs::rename(served.join("a"), served.join("was-a")).unwrap();
+        symlink(&outside, served.join("a")).unwrap();
+        for entry in [&folder, &file] {
+            assert!(matches!(root.remove(entry), Err(Kept::Failed(_))));
+            assert!(root.remove_unchecked(entry).is_err());
+        }
+        assert!(untouched(&outside));
+
+        // And for a link to another folder inside it: that is not the entry that was found.
+        fs::remove_file(served.join("a")).unwrap();
+        symlink(served.join("other"), served.join("a")).unwrap();
+        for entry in [&folder, &file] {
+            assert!(root.remove_unchecked(entry).is_err());
+        }
+        assert!(served.join("other/inner").is_dir() && served.join("other/kept.txt").is_file());
+        assert!(served.join("was-a/inner").is_dir() && served.join("was-a/kept.txt").is_file());
     }
 }
