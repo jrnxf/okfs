@@ -1,4 +1,4 @@
-// The theme switcher and the list of keys.
+// The theme switcher, the list of keys and the delete dialog.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { DeleteError } from "./api";

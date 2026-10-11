@@ -103,9 +103,11 @@ okfs is read only until you start it with `--allow-delete`:
 okfs --allow-delete
 ```
 
-The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the palette has it as a command. A folder goes with everything in it. okfs always asks first and names what will be removed. There is no trash and no undo.
+The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the palette has it as a command. The palette can also delete the folder you are in, and on a narrow screen such as a phone a button at the top does that. A folder goes with everything in it. okfs always asks first and names what will be removed. There is no trash and no undo.
 
 okfs deletes only what it shows. A folder that holds something it does not show, at any depth, is not deleted: okfs removes nothing and tells you why. That is a dotfile while `--hidden` is off, or a symbolic link that leads out of the served folder. Pass `--hidden` to delete dotfiles too, or remove the entry yourself first. A symbolic link is removed as a link, and the file or folder it points at stays.
+
+A folder is not removed in one step. If the disk refuses part way, for example at a subfolder okfs has no permission to change, okfs says that it stopped part way and shows what is left. What it removed before that point does not come back.
 
 okfs has no accounts, so with this flag anyone who can reach the address can delete. Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
 
