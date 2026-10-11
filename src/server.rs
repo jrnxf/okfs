@@ -347,12 +347,24 @@ async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Re
     }
 }
 
-async fn preview_file(State(app): State<Arc<App>>, Query(query): Query<PathQuery>) -> Response {
+#[derive(Deserialize)]
+struct PreviewQuery {
+    #[serde(default)]
+    path: String,
+    /// Send only the start of the file, for a grid tile.
+    head: Option<u8>,
+}
+
+async fn preview_file(State(app): State<Arc<App>>, Query(query): Query<PreviewQuery>) -> Response {
     let Some(found) = app.root.resolve(&query.path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
     let size = found.meta.len();
-    match heavy(&app, move || preview::of(&found.abs, &found.rel, size)).await {
+    let work = move || match query.head {
+        Some(_) => preview::head(&found.abs, &found.rel),
+        None => preview::of(&found.abs, &found.rel, size),
+    };
+    match heavy(&app, work).await {
         Some(Ok(preview)) => Json(preview).into_response(),
         _ => fail(StatusCode::INTERNAL_SERVER_ERROR, "the file could not be read"),
     }

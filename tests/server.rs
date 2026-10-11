@@ -490,6 +490,12 @@ async fn text_previews_are_bounded() {
         (Some("none"), Some("binary"))
     );
 
+    // A tile's cover reads the start of a file only, however large the file is.
+    let head = json(&app, "/api/preview?path=huge.log&head=1").await;
+    assert_eq!(head["kind"], "none");
+    fs::write(site.served.join("long.txt"), "line\n".repeat(100_000)).unwrap();
+    assert_eq!(json(&app, "/api/preview?path=long.txt&head=1").await["lines"], 16);
+
     let code = json(&app, "/api/preview?path=sub/deep/c.rs").await;
     assert_eq!(code["kind"], "code");
     assert!(code["html"].as_str().unwrap().contains("tk-k"));
