@@ -147,4 +147,8 @@ cd ui && bun run check                      # type check the page
 
 The server is Rust (axum, tokio). The page is TypeScript and Preact in `ui/`, built by `build.rs` into the binary. To work on the page without rebuilding the binary each time, run a debug build with `OKFS_UI_DIR=ui/dist` and rebuild the page with `cd ui && bun run build`.
 
+## License
+
+okfs is released under the MIT License. See `LICENSE`.
+
 Geist, Geist Mono and Newsreader are bundled under the SIL Open Font License 1.1.
