@@ -41,6 +41,11 @@ impl Entry {
     pub fn is_link(&self) -> bool {
         self.kind.is_symlink()
     }
+
+    /// Where it really is, relative to the served folder: its real folder, then its name.
+    pub fn place(&self) -> String {
+        join(&self.folder, file_name(&self.rel))
+    }
 }
 
 /// Why a request path names nothing that may be removed.

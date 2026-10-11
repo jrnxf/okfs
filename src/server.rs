@@ -527,8 +527,11 @@ fn remove_entry(app: &App, path: &str) -> Response {
         Err(NoEntry::Missing) => return not_found(),
     };
     let removed = app.root.remove(&entry);
-    // Also after a failure: part of a folder may be gone.
     app.index.reread(&entry.folder);
+    // A folder that is partly gone is still listed where it was, changed inside at any depth.
+    if matches!(removed, Err(Kept::Partly(_))) {
+        app.index.rewalk(&entry.place());
+    }
     match removed {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(Kept::Holds(Unshown::Hidden)) => fail(

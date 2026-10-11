@@ -364,14 +364,13 @@ export class Store {
     try {
       await deleteEntry(doomed.path);
     } catch (error) {
-      // Part of a folder may be gone all the same: the list and the dialog show what is there now.
-      forgetAnswers();
+      // Part of a folder may be gone all the same: the list, the pane and the dialog show what is there now.
       await this.showDir(s.path, { open: s.open?.name, history: "none" }).catch(() => undefined);
       s.doomed = (here ? this.here() : s.all.find((entry) => entry.path === doomed.path)) ?? doomed;
+      forgetAnswers();
       this.emit();
       throw error;
     }
-    forgetAnswers();
     try {
       if (here) {
         // In the list's own order when it is sorted by name: folders first.
@@ -399,6 +398,8 @@ export class Store {
       await this.showDir(s.path, next ? { open: next.name, history: "replace" } : { select: beside?.name, history: "replace" });
     } finally {
       s.doomed = null;
+      // After the list is back, so that nothing on screen asks about what is gone.
+      forgetAnswers();
       this.emit();
     }
   }

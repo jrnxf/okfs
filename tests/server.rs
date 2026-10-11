@@ -811,15 +811,15 @@ async fn a_delete_finds_an_entry_only_by_the_name_its_folder_lists() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn a_folder_delete_that_stops_part_way_says_so() {
+async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
     use std::os::unix::fs::PermissionsExt;
     let site = Site::new();
-    let (proj, locked) = (site.served.join("proj"), site.served.join("proj/locked"));
-    fs::create_dir_all(&locked).unwrap();
-    fs::create_dir_all(proj.join("free")).unwrap();
+    let locked = site.served.join("locked");
+    fs::create_dir_all(locked.join("proj/free")).unwrap();
     fs::write(locked.join("kept.txt"), "kept").unwrap();
-    fs::write(proj.join("free/loose.txt"), "loose").unwrap();
-    // A folder that may be read and not written to: nothing can be taken out of it.
+    fs::write(locked.join("proj/note.txt"), "note").unwrap();
+    fs::write(locked.join("proj/free/loose.txt"), "loose").unwrap();
+    // A folder that may be read and not written to: no name can be taken out of it.
     let lock = |mode: u32| fs::set_permissions(&locked, fs::Permissions::from_mode(mode)).unwrap();
     lock(0o555);
     if fs::write(locked.join("probe"), "").is_ok() {
@@ -827,6 +827,7 @@ async fn a_folder_delete_that_stops_part_way_says_so() {
         return lock(0o755);
     }
     let app = site.deleting();
+    let indexed = json(&app, "/api/search?q=loose").await["indexed"].as_u64().unwrap();
     let answer = |path: &'static str| {
         let app = app.clone();
         async move {
@@ -835,10 +836,9 @@ async fn a_folder_delete_that_stops_part_way_says_so() {
         }
     };
 
-    // A file in it fails before anything is removed. The folder above fails once removing has begun.
-    let file = answer("proj/locked/kept.txt").await;
-    let folder = answer("proj").await;
-    let kept = fs::read_to_string(locked.join("kept.txt"));
+    // A file in it fails before anything is removed. A folder in it is emptied, and then cannot go itself.
+    let file = answer("locked/kept.txt").await;
+    let folder = answer("locked/proj").await;
     lock(0o755);
 
     assert_eq!(
@@ -848,6 +848,7 @@ async fn a_folder_delete_that_stops_part_way_says_so() {
             serde_json::json!({ "error": "permission denied" })
         )
     );
+    assert_eq!(fs::read_to_string(locked.join("kept.txt")).unwrap(), "kept");
     assert_eq!(folder.0, StatusCode::FORBIDDEN);
     assert_eq!(folder.1["partial"], true);
     let why = folder.1["error"].as_str().unwrap();
@@ -855,7 +856,16 @@ async fn a_folder_delete_that_stops_part_way_says_so() {
         why.contains("permission denied") && why.contains("part of the folder may already be gone"),
         "{why}"
     );
-    assert_eq!(kept.unwrap(), "kept");
+    assert_eq!(fs::read_dir(locked.join("proj")).unwrap().count(), 0);
+
+    // What the page then asks for is what is left: the folder, with nothing in it.
+    let listing = json(&app, "/api/list?path=locked").await;
+    let proj = listing["entries"].as_array().unwrap().iter().find(|e| e["n"] == "proj");
+    assert_eq!(proj.unwrap()["c"], 0);
+    let found = json(&app, "/api/search?q=loose").await;
+    assert_eq!(found["total"], 0, "{found}");
+    assert_eq!(found["indexed"], indexed - 3);
+    assert_eq!(json(&app, "/api/search?q=kept.txt").await["total"], 1);
 }
 
 #[tokio::test]

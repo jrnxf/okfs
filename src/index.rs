@@ -227,6 +227,21 @@ impl Index {
         }
     }
 
+    /// Walks one folder again with everything under it, in place of what the index
+    /// held of it. For a folder that changed at more than one depth: `reread` looks
+    /// at one folder only.
+    pub fn rewalk(&self, dir: &str) {
+        let fresh = self.walk(dir);
+        let mut tree = self.tree.write().expect("the index lock");
+        // Not indexed yet: its parent's reread will walk it.
+        if !tree.dirs.contains_key(dir) {
+            return;
+        }
+        tree.remove(dir);
+        tree.count += fresh.count;
+        tree.dirs.extend(fresh.dirs);
+    }
+
     fn forget(&self, dir: &str) {
         self.tree.write().expect("the index lock").remove(dir);
     }
