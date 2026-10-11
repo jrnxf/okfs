@@ -1,9 +1,10 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
-import { HttpError, type Item, type Listing, type Readme, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
+import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
 import { config } from "./config";
 import { type Kind, extension, kindOf } from "./kinds";
 import { prefs } from "./prefs";
+import { forgetAnswers } from "./preview";
 
 export interface Entry {
   name: string;
@@ -20,6 +21,9 @@ export interface Entry {
   rank: number;
   lower: string;
 }
+
+/** What a delete is asked for: an entry of the list, or the folder being shown. */
+export type Doomed = Pick<Entry, "name" | "path" | "dir" | "kind" | "count">;
 
 export type SortKey = "name" | "time" | "size" | "kind";
 export type View = "list" | "grid";
@@ -52,6 +56,8 @@ export interface State {
   bytes: number;
   palette: boolean;
   help: boolean;
+  /** What the delete dialog is asking about, while it is up. */
+  doomed: Doomed | null;
 }
 
 type HistoryMode = "push" | "replace" | "none";
@@ -93,6 +99,7 @@ export class Store {
     bytes: 0,
     palette: false,
     help: false,
+    doomed: null,
   };
 
   private readonly listeners = new Set<() => void>();
@@ -320,6 +327,64 @@ export class Store {
   setHelp(on: boolean): void {
     this.s.help = on;
     this.emit();
+  }
+
+  /** The folder being shown, as something to delete. The served folder itself is never offered. */
+  here(): Doomed | null {
+    const { s } = this;
+    if (!config.delete || s.status !== "ready" || !s.path) return null;
+    return { name: nameOf(s.path), path: s.path, dir: true, kind: "folder", count: s.all.length };
+  }
+
+  /** Puts up the delete dialog, for the open file or the entry under the cursor unless one is given. */
+  askDelete(doomed: Doomed | null = this.s.open ?? this.cur()): void {
+    if (!config.delete || !doomed) return;
+    this.s.doomed = doomed;
+    this.emit();
+  }
+
+  cancelDelete(): void {
+    this.s.doomed = null;
+    this.emit();
+  }
+
+  /** Deletes what the dialog asked about, then shows the folder without it. Fails with the server's reason. */
+  async remove(doomed: Doomed): Promise<void> {
+    const { s } = this;
+    const here = doomed.path === s.path;
+    // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.
+    const above = here ? await getJson<Listing>(urls.list(parentOf(doomed.path))).catch(() => null) : null;
+    await deleteEntry(doomed.path);
+    forgetAnswers();
+    try {
+      if (here) {
+        // In the list's own order when it is sorted by name: folders first.
+        const items = above?.entries ?? [];
+        const names = [...items.filter((item) => item.d), ...items.filter((item) => !item.d)].map((item) => item.n);
+        const was = names.indexOf(doomed.name);
+        await this.showDir(parentOf(doomed.path), { select: names[was + 1] ?? names[was - 1], history: "replace" });
+        return;
+      }
+      const at = s.entries.findIndex((entry) => entry.path === doomed.path);
+      if (at < 0) {
+        await this.showDir(s.path, { history: "none" });
+        return;
+      }
+      // The cursor stays where it is, on what came after; at the end of the list it steps back.
+      const beside = s.entries[at + 1] ?? s.entries[at - 1];
+      if (s.open?.path !== doomed.path) {
+        await this.showDir(s.path, { select: beside?.name, history: "replace" });
+        return;
+      }
+      // An open file gives its place to the next file, as stepping does. With none left, the list is back.
+      const files = this.files();
+      const turn = files.findIndex((entry) => entry.path === doomed.path);
+      const next = files[turn + 1] ?? files[turn - 1];
+      await this.showDir(s.path, next ? { open: next.name, history: "replace" } : { select: beside?.name, history: "replace" });
+    } finally {
+      s.doomed = null;
+      this.emit();
+    }
   }
 }
 

@@ -30,6 +30,11 @@ function remember(url: string, data: unknown): void {
   if (answers.size > 200) answers.delete(answers.keys().next().value as string);
 }
 
+/** Drops every answer kept. After a delete, some of them describe what is gone. */
+export function forgetAnswers(): void {
+  answers.clear();
+}
+
 interface Loaded<T> {
   /** The address `data` came from. It trails `url` while a newer answer is on its way. */
   url: string;

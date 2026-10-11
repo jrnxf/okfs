@@ -12,7 +12,7 @@
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree.
 - Themes: one CSS file each, five built in, light and dark.
-- Read only. There is no upload, no delete, no editing and no accounts.
+- Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/grid-dark.webp"><img src="docs/screenshots/grid-light.webp" alt="A folder of photos in grid view, with covers on the tiles" width="49%"></picture>
@@ -67,6 +67,7 @@ A folder's `README.md` is shown under its listing.
 | `--accent <COLOR>` | Accent color in every theme, as hex: `"#2d6a4f"`. |
 | `-H`, `--hidden` | Show and serve dotfiles. They are left out by default. |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
+| `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
 
 </details>
 
@@ -83,6 +84,7 @@ A folder's `README.md` is shown under its listing.
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `Esc` | Close the preview |
+| `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 
 ### Behind a proxy or a tunnel
@@ -92,6 +94,20 @@ While okfs listens on a loopback address it answers only to `localhost` and to p
 ```sh
 okfs --allow-host files.example.com
 ```
+
+### Deleting
+
+okfs is read only until you start it with `--allow-delete`:
+
+```sh
+okfs --allow-delete
+```
+
+The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the palette has it as a command. A folder goes with everything in it. okfs always asks first and names what will be removed. There is no trash and no undo.
+
+okfs has no accounts, so with this flag anyone who can reach the address can delete. Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
+
+Deleting works only from the address okfs answers to. If you reach okfs through a proxy, a tunnel or a host name of your own, name it with `--allow-host`, also when okfs listens on `0.0.0.0`.
 
 ## Themes
 
@@ -173,9 +189,17 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 ## What is safe to serve
 
 - No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
-- Nothing is written into the served folder. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
+- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-delete`. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
 - HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder.
 - okfs has no accounts. Anyone who can reach the address can read every file in the folder.
+
+With `--allow-delete`:
+
+- Anyone who can reach the address can also delete every file and folder in it. There is no password in front of it and no way to get a file back. Use it where you would hand everyone on that network the folder itself.
+- Only the served folder's contents can go: never the folder itself, nothing outside it, and no dotfile unless you also pass `--hidden`. A symbolic link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted.
+- Another website cannot make your browser delete. okfs takes a delete only from its own page, at the address it answers to: `localhost`, a plain address, or a name from `--allow-host`.
+- An HTML or SVG file in the folder cannot delete its neighbours. It runs sandboxed, in an origin of its own.
+- Each attempt is logged with the address it came from, the path and how it ended. An address a proxy reports in `X-Forwarded-For` is used only when that proxy runs on the same machine.
 
 ## Develop
 

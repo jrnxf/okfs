@@ -22,6 +22,28 @@ pub struct Resolved {
     pub meta: Metadata,
 }
 
+/// An entry that may be removed. See `Root::entry`.
+#[derive(Debug)]
+pub struct Entry {
+    /// Where it is: its real folder, then its own name. A link is not followed.
+    pub abs: PathBuf,
+    /// The real folder holding it, relative to the served folder.
+    pub folder: String,
+    /// Of the entry itself, not of what a link points at.
+    pub meta: Metadata,
+}
+
+/// Why a request path names nothing that may be removed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NoEntry {
+    /// It is the served folder itself.
+    Root,
+    /// It is not a plain path to something shown: it steps up, or names a hidden entry.
+    NotServed,
+    /// Nothing is there, or its folder is not inside the served folder.
+    Missing,
+}
+
 /// One name found in a folder.
 #[derive(Debug, Clone)]
 pub struct Seen {
@@ -92,6 +114,33 @@ impl Root {
         })
     }
 
+    /// Finds the entry a request path names, for removing it. Unlike `resolve`, the
+    /// last name is not followed when it is a link: the link is what gets removed,
+    /// wherever it points. The folder holding it is followed, and has to be inside
+    /// the served folder like everything else.
+    pub fn entry(&self, request: &str) -> Result<Entry, NoEntry> {
+        let segments = self.segments(request).ok_or(NoEntry::NotServed)?;
+        let Some((name, above)) = segments.split_last() else {
+            return Err(NoEntry::Root);
+        };
+        let mut joined = self.dir.clone();
+        joined.extend(above);
+        let parent = joined
+            .canonicalize()
+            .ok()
+            .filter(|parent| self.contains(parent))
+            .ok_or(NoEntry::Missing)?;
+        let folder = parent
+            .strip_prefix(&self.dir)
+            .ok()
+            .and_then(Path::to_str)
+            .ok_or(NoEntry::Missing)?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        let abs = parent.join(name);
+        let meta = fs::symlink_metadata(&abs).map_err(|_| NoEntry::Missing)?;
+        Ok(Entry { abs, folder, meta })
+    }
+
     /// True for a canonical path that is inside the served folder and not hidden.
     fn contains(&self, abs: &Path) -> bool {
         let Ok(inner) = abs.strip_prefix(&self.dir) else {
@@ -139,6 +188,23 @@ impl Root {
         }
         Ok(out)
     }
+}
+
+/// Removes an entry found by `Root::entry`: a file, a link, or a folder with everything
+/// in it. Nothing is followed: a link is removed as a link, also one met inside a folder.
+pub fn remove(entry: &Entry) -> io::Result<()> {
+    if entry.meta.is_dir() {
+        // Removes links it meets and never walks through one.
+        return fs::remove_dir_all(&entry.abs);
+    }
+    fs::remove_file(&entry.abs).or_else(|error| {
+        // On Windows a link to a folder is removed the way a folder is.
+        if entry.meta.file_type().is_symlink() && fs::remove_dir(&entry.abs).is_ok() {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    })
 }
 
 /// Joins a folder path and a name, both relative to the served folder.

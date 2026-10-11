@@ -1,5 +1,5 @@
-//! okfs: a web file browser. One binary serves a folder, read only, and the page
-//! compiled into it shows every file inside.
+//! okfs: a web file browser. One binary serves a folder and the page compiled into
+//! it shows every file inside. Read only, unless deleting is switched on.
 
 pub mod archive;
 pub mod assets;

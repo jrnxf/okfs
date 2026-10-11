@@ -186,8 +186,9 @@ impl Index {
         self.root.resolve(&rel).map(|found| found.rel)
     }
 
-    /// Reads one folder again and folds what changed into the index.
-    fn reread(&self, dir: &str) {
+    /// Reads one folder again and folds what changed into the index. The watcher does
+    /// this by itself a moment later; a delete calls it so the entry is gone at once.
+    pub fn reread(&self, dir: &str) {
         let Some(nodes) = self.read(dir) else {
             return self.forget(dir);
         };
