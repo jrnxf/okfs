@@ -105,6 +105,8 @@ okfs --allow-delete
 
 The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the palette has it as a command. A folder goes with everything in it. okfs always asks first and names what will be removed. There is no trash and no undo.
 
+okfs deletes only what it shows. A folder that holds something it does not show, at any depth, is not deleted: okfs removes nothing and tells you why. That is a dotfile while `--hidden` is off, or a symbolic link that leads out of the served folder. Pass `--hidden` to delete dotfiles too, or remove the entry yourself first. A symbolic link is removed as a link, and the file or folder it points at stays.
+
 okfs has no accounts, so with this flag anyone who can reach the address can delete. Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
 
 Deleting works only from the address okfs answers to. If you reach okfs through a proxy, a tunnel or a host name of your own, name it with `--allow-host`, also when okfs listens on `0.0.0.0`.
@@ -196,10 +198,10 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 With `--allow-delete`:
 
 - Anyone who can reach the address can also delete every file and folder in it. There is no password in front of it and no way to get a file back. Use it where you would hand everyone on that network the folder itself.
-- Only the served folder's contents can go: never the folder itself, nothing outside it, and no dotfile unless you also pass `--hidden`. A symbolic link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted.
+- Only what okfs shows can go: never the served folder itself, nothing outside it, and no dotfile unless you also pass `--hidden`. A folder that holds something okfs does not show, at any depth, is refused whole and nothing in it is removed. A symbolic link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted. A link that leads out of the served folder is not shown, so it is never removed.
 - Another website cannot make your browser delete. okfs takes a delete only from its own page, at the address it answers to: `localhost`, a plain address, or a name from `--allow-host`.
+- Another website cannot put the page in a frame and steer your clicks onto the delete button. With this flag the page tells the browser that only okfs itself may frame it (`frame-ancestors 'self'`). Without the flag the page can still be framed, and nothing can be deleted through it.
 - An HTML or SVG file in the folder cannot delete its neighbours. It runs sandboxed, in an origin of its own.
-- Each attempt is logged with the address it came from, the path and how it ended. An address a proxy reports in `X-Forwarded-For` is used only when that proxy runs on the same machine.
 
 ## Develop
 

@@ -196,9 +196,7 @@ fn serve(args: Serve) -> Result<(), String> {
         println!("  serving  {} ({writes})", root.dir().display());
         println!("  at       http://{address}/");
         println!("  theme    {theme_name}");
-        // The address of each visitor is kept, for the line a delete logs.
-        let service = server::router(app).into_make_service_with_connect_info::<SocketAddr>();
-        axum::serve(listener, service)
+        axum::serve(listener, server::router(app))
             .with_graceful_shutdown(async {
                 let _ = tokio::signal::ctrl_c().await;
             })

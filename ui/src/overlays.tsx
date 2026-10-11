@@ -138,8 +138,11 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
       setFailure(error instanceof Error ? error.message : String(error));
     });
   };
+  const noun = doomed.link ? "link" : doomed.dir ? "folder" : "file";
   let what = "This file will be removed.";
-  if (doomed.dir) {
+  if (doomed.link) {
+    what = `This is a link to a ${doomed.dir ? "folder" : "file"}. Only the link will be removed: what it points at stays as it is.`;
+  } else if (doomed.dir) {
     if (doomed.count === 0) what = "This empty folder will be removed.";
     else if (doomed.count === undefined) what = "This folder will be removed with everything in it.";
     else what = `This folder holds ${fmt.items(doomed.count)}. It will be removed with everything in it.`;
@@ -147,7 +150,7 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
   return (
     <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && close()}>
       <div class="ask" role="alertdialog" aria-modal="true" aria-labelledby="ask-title" aria-describedby="ask-what">
-        <h2 id="ask-title">{doomed.dir ? "Delete this folder?" : "Delete this file?"}</h2>
+        <h2 id="ask-title">Delete this {noun}?</h2>
         <div class="ask-name">
           <KindIcon kind={doomed.kind} />
           <span class="num">/{doomed.path}</span>
@@ -165,7 +168,7 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
             Cancel
           </button>
           <button class="btn btn-fill" ref={confirm} disabled={busy} onClick={run}>
-            {busy ? "Deleting" : doomed.dir ? "Delete folder" : "Delete file"}
+            {busy ? "Deleting" : `Delete ${noun}`}
           </button>
         </div>
       </div>

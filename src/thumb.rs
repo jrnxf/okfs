@@ -78,30 +78,6 @@ impl Thumbs {
         Some(self.cache.as_ref()?.join(format!("{hash:016x}-{w}")))
     }
 
-    /// The cached thumbnails of a file, or of every file in a folder, so they can be
-    /// dropped once it is deleted. `meta` is the entry's own. Links are not followed.
-    pub fn slots(&self, abs: &Path, meta: &fs::Metadata) -> Vec<PathBuf> {
-        let mut out = Vec::new();
-        if self.cache.is_none() {
-            return out;
-        }
-        let mut todo = vec![(abs.to_owned(), meta.clone())];
-        while let Some((at, meta)) = todo.pop() {
-            if meta.is_dir() {
-                let Ok(entries) = fs::read_dir(&at) else { continue };
-                todo.extend(
-                    entries
-                        .flatten()
-                        .filter_map(|entry| Some((entry.path(), entry.metadata().ok()?))),
-                );
-            } else if meta.is_file() {
-                let slots = WIDTHS.iter().filter_map(|w| self.slot(&at, *w, &meta));
-                out.extend(slots.filter(|slot| slot.exists()));
-            }
-        }
-        out
-    }
-
     /// The thumbnail of the image at `abs`, from the cache when it is there.
     pub fn get(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Result<Made, Refused> {
         let slot = self.slot(abs, w, meta);

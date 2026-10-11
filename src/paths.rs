@@ -1,7 +1,8 @@
 //! The served folder. Every request path becomes a place on disk here and nowhere else.
 
 use std::cmp::Ordering;
-use std::fs::{self, Metadata};
+use std::ffi::OsStr;
+use std::fs::{self, FileType, Metadata};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -26,11 +27,18 @@ pub struct Resolved {
 #[derive(Debug)]
 pub struct Entry {
     /// Where it is: its real folder, then its own name. A link is not followed.
-    pub abs: PathBuf,
+    abs: PathBuf,
     /// The real folder holding it, relative to the served folder.
     pub folder: String,
     /// Of the entry itself, not of what a link points at.
-    pub meta: Metadata,
+    meta: Metadata,
+}
+
+impl Entry {
+    /// True for a link: removing it leaves what it points at where it is.
+    pub fn is_link(&self) -> bool {
+        self.meta.file_type().is_symlink()
+    }
 }
 
 /// Why a request path names nothing that may be removed.
@@ -40,8 +48,35 @@ pub enum NoEntry {
     Root,
     /// It is not a plain path to something shown: it steps up, or names a hidden entry.
     NotServed,
-    /// Nothing is there, or its folder is not inside the served folder.
+    /// Nothing shown is there: no entry at all, a link that is not shown, or a folder
+    /// that is not inside the served folder.
     Missing,
+}
+
+/// Why a name in a folder is not shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unshown {
+    /// It starts with a dot, and dotfiles are not served.
+    Hidden,
+    /// It cannot be served: a link that leads nowhere or out of what is served, or a
+    /// name that is not text.
+    Unserved,
+}
+
+/// Why `Root::remove` left an entry where it was.
+#[derive(Debug)]
+pub enum Kept {
+    /// It is a folder that holds, at some depth, something that is not shown. Nothing
+    /// was removed.
+    Holds(Unshown),
+    /// The disk refused. A folder may be half gone.
+    Failed(io::Error),
+}
+
+impl From<io::Error> for Kept {
+    fn from(error: io::Error) -> Self {
+        Self::Failed(error)
+    }
 }
 
 /// One name found in a folder.
@@ -115,9 +150,9 @@ impl Root {
     }
 
     /// Finds the entry a request path names, for removing it. Unlike `resolve`, the
-    /// last name is not followed when it is a link: the link is what gets removed,
-    /// wherever it points. The folder holding it is followed, and has to be inside
-    /// the served folder like everything else.
+    /// last name is not followed when it is a link: the link is what gets removed, and
+    /// not what it points at. Only a link that is shown is found. The folder holding
+    /// the entry is followed, and has to be inside the served folder like everything else.
     pub fn entry(&self, request: &str) -> Result<Entry, NoEntry> {
         let segments = self.segments(request).ok_or(NoEntry::NotServed)?;
         let Some((name, above)) = segments.split_last() else {
@@ -138,7 +173,36 @@ impl Root {
             .replace(std::path::MAIN_SEPARATOR, "/");
         let abs = parent.join(name);
         let meta = fs::symlink_metadata(&abs).map_err(|_| NoEntry::Missing)?;
+        self.seen(&parent, OsStr::new(name), meta.file_type())
+            .map_err(|_| NoEntry::Missing)?;
         Ok(Entry { abs, folder, meta })
+    }
+
+    /// Removes an entry found by `entry`: a file, a link, or a folder with everything
+    /// in it. A folder goes only when all it holds, at every depth, is shown, and then
+    /// exactly what this walk met is removed: a name it did not meet keeps its folder.
+    /// Nothing is followed: a link is removed as a link, also one met inside a folder.
+    pub fn remove(&self, entry: &Entry) -> Result<(), Kept> {
+        // A folder comes before what it holds, so going back from the end empties it first.
+        let mut doomed = vec![(entry.abs.clone(), entry.meta.file_type())];
+        let mut next = 0;
+        while let Some((dir, kind)) = doomed.get(next) {
+            next += 1;
+            if !kind.is_dir() {
+                continue;
+            }
+            let dir = dir.clone();
+            for held in fs::read_dir(&dir)? {
+                let held = held?;
+                let kind = held.file_type()?;
+                self.seen(&dir, &held.file_name(), kind).map_err(Kept::Holds)?;
+                doomed.push((held.path(), kind));
+            }
+        }
+        for (at, kind) in doomed.iter().rev() {
+            remove_one(at, *kind)?;
+        }
+        Ok(())
     }
 
     /// True for a canonical path that is inside the served folder and not hidden.
@@ -152,54 +216,56 @@ impl Root {
         })
     }
 
+    /// What one name in the folder `dir` is, or why it is not shown. `kind` is the
+    /// name's own, not that of what a link points at. Listing and deleting both ask here.
+    fn seen(&self, dir: &Path, name: &OsStr, kind: FileType) -> Result<Seen, Unshown> {
+        let name = name.to_str().ok_or(Unshown::Unserved)?;
+        if !self.shows(name) {
+            return Err(Unshown::Hidden);
+        }
+        let name = name.to_owned();
+        if !kind.is_symlink() {
+            return Ok(Seen {
+                name,
+                dir: kind.is_dir(),
+                link: false,
+            });
+        }
+        let target = dir
+            .join(&name)
+            .canonicalize()
+            .ok()
+            .filter(|target| self.contains(target))
+            .ok_or(Unshown::Unserved)?;
+        Ok(Seen {
+            name,
+            dir: target.is_dir(),
+            link: true,
+        })
+    }
+
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
     pub fn scan(&self, abs: &Path) -> io::Result<Vec<Seen>> {
         let mut out = Vec::new();
         for entry in fs::read_dir(abs)? {
             let Ok(entry) = entry else { continue };
-            let Ok(name) = entry.file_name().into_string() else {
-                continue;
-            };
-            if !self.shows(&name) {
-                continue;
-            }
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
-            if kind.is_symlink() {
-                let Ok(target) = entry.path().canonicalize() else {
-                    continue;
-                };
-                if !self.contains(&target) {
-                    continue;
-                }
-                out.push(Seen {
-                    name,
-                    dir: target.is_dir(),
-                    link: true,
-                });
-            } else {
-                out.push(Seen {
-                    name,
-                    dir: kind.is_dir(),
-                    link: false,
-                });
-            }
+            out.extend(self.seen(abs, &entry.file_name(), kind).ok());
         }
         Ok(out)
     }
 }
 
-/// Removes an entry found by `Root::entry`: a file, a link, or a folder with everything
-/// in it. Nothing is followed: a link is removed as a link, also one met inside a folder.
-pub fn remove(entry: &Entry) -> io::Result<()> {
-    if entry.meta.is_dir() {
-        // Removes links it meets and never walks through one.
-        return fs::remove_dir_all(&entry.abs);
+/// Removes one thing and never what is in it or behind it: an empty folder, a file or a link.
+fn remove_one(at: &Path, kind: FileType) -> io::Result<()> {
+    if kind.is_dir() {
+        return fs::remove_dir(at);
     }
-    fs::remove_file(&entry.abs).or_else(|error| {
+    fs::remove_file(at).or_else(|error| {
         // On Windows a link to a folder is removed the way a folder is.
-        if entry.meta.file_type().is_symlink() && fs::remove_dir(&entry.abs).is_ok() {
+        if kind.is_symlink() && fs::remove_dir(at).is_ok() {
             Ok(())
         } else {
             Err(error)

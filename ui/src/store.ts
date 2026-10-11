@@ -10,6 +10,8 @@ export interface Entry {
   name: string;
   path: string;
   dir: boolean;
+  /** A link to the file or folder, not the thing itself. */
+  link: boolean;
   size: number;
   /** Modified time, in seconds. */
   mtime: number;
@@ -23,7 +25,7 @@ export interface Entry {
 }
 
 /** What a delete is asked for: an entry of the list, or the folder being shown. */
-export type Doomed = Pick<Entry, "name" | "path" | "dir" | "kind" | "count">;
+export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count">;
 
 export type SortKey = "name" | "time" | "size" | "kind";
 export type View = "list" | "grid";
@@ -42,6 +44,8 @@ export interface State {
   status: "loading" | "ready" | "missing";
   /** The folder being shown, relative to the served folder. Empty for the top. */
   path: string;
+  /** True when that folder is reached through a link. */
+  link: boolean;
   all: Entry[];
   /** `all` after the filter and the sort: what the list shows. */
   entries: Entry[];
@@ -68,6 +72,7 @@ function toEntry(item: Item, dir: string, rank: number): Entry {
     name: item.n,
     path: joinPath(dir, item.n),
     dir: isDir,
+    link: item.l === true,
     size: item.s,
     mtime: item.m,
     count: item.c,
@@ -88,6 +93,7 @@ export class Store {
   readonly s: State = {
     status: "loading",
     path: "",
+    link: false,
     all: [],
     entries: [],
     cursor: 0,
@@ -168,7 +174,7 @@ export class Store {
     } catch (error) {
       if (turn !== this.turn) return;
       if (!(error instanceof HttpError)) throw error;
-      Object.assign(s, { status: "missing", path, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+      Object.assign(s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
       this.setUrl(opts.history ?? "push", path, true);
       this.emit();
       return;
@@ -178,6 +184,7 @@ export class Store {
     const changed = s.path !== listing.path || s.status !== "ready";
     s.status = "ready";
     s.path = listing.path;
+    s.link = listing.link === true;
     s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.readme = listing.readme;
@@ -333,7 +340,7 @@ export class Store {
   here(): Doomed | null {
     const { s } = this;
     if (!config.delete || s.status !== "ready" || !s.path) return null;
-    return { name: nameOf(s.path), path: s.path, dir: true, kind: "folder", count: s.all.length };
+    return { name: nameOf(s.path), path: s.path, dir: true, link: s.link, kind: "folder", count: s.all.length };
   }
 
   /** Puts up the delete dialog, for the open file or the entry under the cursor unless one is given. */

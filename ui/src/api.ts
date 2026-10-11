@@ -3,6 +3,8 @@
 export interface Item {
   n: string;
   d?: boolean;
+  /** A link. Deleting it removes the link and leaves what it points at. */
+  l?: boolean;
   s: number;
   m: number;
   c?: number;
@@ -15,6 +17,8 @@ export interface Readme {
 
 export interface Listing {
   path: string;
+  /** The folder is reached through a link. Deleting it removes the link only. */
+  link?: boolean;
   entries: Item[];
   total: number;
   readme: Readme | null;
@@ -100,7 +104,7 @@ export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> 
   return (await response.json()) as T;
 }
 
-/** Deletes a file, or a folder with everything in it. Fails with the server's reason. */
+/** Deletes a file, a link, or a folder with everything in it. Fails with the server's reason. */
 export async function deleteEntry(path: string): Promise<void> {
   // The header marks the request as the page's own: the server refuses a delete without it.
   const response = await fetch(urls.entry(path), { method: "DELETE", headers: { "x-okfs": "delete" } });
