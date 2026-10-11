@@ -1,6 +1,10 @@
-# okfs
+<h1 align="center">okfs</h1>
 
-A web file browser. Run it in a folder and flip through every file inside.
+<p align="center">A web file browser. Run it in a folder and flip through every file inside.</p>
+
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.webp"><img src="docs/screenshots/hero-light.webp" alt="okfs serving a folder: a dense file list on the left, the photo under the cursor on the right" width="100%"></picture>
+</p>
 
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
@@ -10,15 +14,28 @@ A web file browser. Run it in a folder and flip through every file inside.
 - Themes: one CSS file each, five built in, light and dark.
 - Read only. There is no upload, no delete, no editing and no accounts.
 
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/grid-dark.webp"><img src="docs/screenshots/grid-light.webp" alt="A folder of photos in grid view, with covers on the tiles" width="49%"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/palette-dark.webp"><img src="docs/screenshots/palette-light.webp" alt="The palette finding files across the tree" width="49%"></picture>
+</p>
+
 ## Install from source
 
-You need a Rust toolchain and [bun](https://bun.sh). Bun builds the page while cargo builds the binary.
+With nix and nothing else installed, one command builds this checkout and puts `okfs` on your `PATH`:
+
+```sh
+nix develop -c cargo install --path . --locked    # installs to ~/.cargo/bin
+```
+
+Run it again after a pull or an edit to get the latest.
+
+Without nix you need a Rust toolchain and [bun](https://bun.sh). Bun builds the page while cargo builds the binary.
 
 ```sh
 cargo install --path .    # from a checkout of this repository
 ```
 
-With nix, the dev shell has both:
+To build without installing, the nix dev shell has both:
 
 ```sh
 nix develop
@@ -33,6 +50,11 @@ okfs ~/photos --port 9000   # another folder, another port
 okfs --bind 0.0.0.0         # let other machines on the network in
 ```
 
+A folder's `README.md` is shown under its listing.
+
+<details>
+<summary>All flags</summary>
+
 | Flag | What it does |
 | --- | --- |
 | `[PATH]` | The folder to serve. Default: the current folder. |
@@ -46,7 +68,7 @@ okfs --bind 0.0.0.0         # let other machines on the network in
 | `-H`, `--hidden` | Show and serve dotfiles. They are left out by default. |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
 
-A folder's `README.md` is shown under its listing.
+</details>
 
 ### Keys
 
@@ -71,14 +93,22 @@ While okfs listens on a loopback address it answers only to `localhost` and to p
 okfs --allow-host files.example.com
 ```
 
-## What is safe to serve
-
-- No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
-- Nothing is written into the served folder. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
-- HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder.
-- okfs has no accounts. Anyone who can reach the address can read every file in the folder.
-
 ## Themes
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-default-dark.png"><img src="docs/screenshots/theme-default-light.png" alt="The Default theme showing a Markdown file" width="100%"></picture><br><b><code>default</code></b><br>The contract's own values.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-paper-dark.png"><img src="docs/screenshots/theme-paper-light.png" alt="The Paper theme showing a Markdown file" width="100%"></picture><br><b><code>paper</code></b><br>Warm, bookish, serif. Flat: no shadows, almost no radius.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-terminal-dark.png"><img src="docs/screenshots/theme-terminal-light.png" alt="The Terminal theme showing a Markdown file" width="100%"></picture><br><b><code>terminal</code></b><br>Monospace everywhere, square corners, tight rows, no icons.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-fjord-dark.png"><img src="docs/screenshots/theme-fjord-light.png" alt="The Fjord theme showing a Markdown file" width="100%"></picture><br><b><code>fjord</code></b><br>Cool and roomy: blue-grey surfaces, soft corners, solid icons.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-riso-dark.png"><img src="docs/screenshots/theme-riso-light.png" alt="The Riso theme showing a Markdown file" width="100%"></picture><br><b><code>riso</code></b><br>Deliberately loud. Two-ink print: thick outlines, hard offset shadows, capitals.</td>
+    <td width="50%" align="center"><b>yours</b><br>One CSS file. See <a href="#write-one">Write one</a>.</td>
+  </tr>
+</table>
 
 A theme is one CSS file that sets tokens and nothing else. The contract is [`ui/src/styles/tokens.css`](ui/src/styles/tokens.css): 42 tokens for color, type, shape and icons. The built-in themes are in [`themes/`](themes).
 
@@ -110,6 +140,9 @@ Copy a file from `themes/`, change the values and run `okfs --theme ./mine.css` 
 }
 ```
 
+<details>
+<summary>The rules and bounds a theme file must keep</summary>
+
 The rules, all enforced by `okfs theme check` and again when okfs loads a theme file:
 
 - The file starts with a comment that names the theme with `@name`.
@@ -133,7 +166,16 @@ The rules, all enforced by `okfs theme check` and again when okfs loads a theme 
 
 - `--bg`, `--surface`, `--fg`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` needs at least 4.5:1 against `--bg` and `--surface`, and `--accent-fg` at least 3:1 against `--accent`.
 
+</details>
+
 To add a theme to okfs itself, open a pull request that adds one file to `themes/`.
+
+## What is safe to serve
+
+- No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
+- Nothing is written into the served folder. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
+- HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder.
+- okfs has no accounts. Anyone who can reach the address can read every file in the folder.
 
 ## Develop
 
