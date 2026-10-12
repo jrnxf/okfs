@@ -236,11 +236,15 @@ impl Index {
         }
     }
 
-    /// The indexed folder a changed path sits in, or `None` when it is not shown.
+    /// The indexed folder a changed path sits in, or `None` when it is not shown. The
+    /// watcher may name a path through a link to a folder: the index knows the folder
+    /// by its real place only, so that is what is given.
     fn dir_of(&self, path: &Path) -> Option<String> {
         let inner = path.parent()?.strip_prefix(self.root.dir()).ok()?;
         let rel = inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
-        self.root.resolve(&rel).map(|found| found.rel)
+        let real = self.root.resolve(&rel)?.abs;
+        let real = real.strip_prefix(self.root.dir()).ok()?.to_str()?;
+        Some(real.replace(std::path::MAIN_SEPARATOR, "/"))
     }
 
     /// Reads one folder again and folds what changed into the index. The watcher does
@@ -437,5 +441,56 @@ impl Tree {
             self.count -= nodes.len();
             todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use notify::Event;
+    use notify::event::{CreateKind, DataChange};
+
+    use super::*;
+
+    /// Sets when a file was last written, in seconds since the epoch.
+    fn written_at(path: &Path, seconds: u64) {
+        let file = fs::File::open(path).unwrap();
+        file.set_modified(UNIX_EPOCH + Duration::from_secs(seconds)).unwrap();
+    }
+
+    #[test]
+    fn a_change_named_through_a_link_to_a_folder_reaches_the_folder() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let served = tmp.path().canonicalize().unwrap();
+        fs::create_dir(served.join("real")).unwrap();
+        fs::write(served.join("real/report.html"), "one").unwrap();
+        written_at(&served.join("real/report.html"), 1000);
+        symlink(served.join("real"), served.join("latest")).unwrap();
+        let index = Index::new(Root::new(&served, false).unwrap());
+        index.build();
+        let listed = || index.recent().files;
+        let changed = |path: &str, m: u32| Changed {
+            path: path.to_owned(),
+            m,
+        };
+        assert_eq!(listed(), [changed("real/report.html", 1000)]);
+
+        // The watcher names a change by the link when the link is the path it walked last.
+        written_at(&served.join("real/report.html"), 2000);
+        let rewrite = Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)));
+        index.absorb(vec![Ok(rewrite.add_path(served.join("latest/report.html")))]);
+        assert_eq!(listed(), [changed("real/report.html", 2000)]);
+
+        fs::write(served.join("real/new.html"), "new").unwrap();
+        written_at(&served.join("real/new.html"), 3000);
+        let create = Event::new(EventKind::Create(CreateKind::File));
+        index.absorb(vec![Ok(create.add_path(served.join("latest/new.html")))]);
+        assert_eq!(
+            listed(),
+            [changed("real/new.html", 3000), changed("real/report.html", 2000)]
+        );
+        assert_eq!(index.search("new.html", 5).total, 1);
     }
 }
