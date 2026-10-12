@@ -18,6 +18,9 @@ export const active = {
   scheme: asScheme(query.get("scheme") ?? prefs.get("scheme")),
 };
 
+/** A theme shown in place of the chosen one, which stays in `active.theme`. */
+let previewed: string | null = null;
+
 export const isDark = (): boolean => (active.scheme === "auto" ? media.matches : active.scheme === "dark");
 
 const href = (id: string): string => (id === config.theme ? "/theme.css" : `/assets/themes/${id}.css`);
@@ -31,10 +34,11 @@ function tokensChanged(): void {
 
 export function applyTheme(): void {
   const root = document.documentElement;
+  const theme = previewed ?? active.theme;
   root.dataset.scheme = isDark() ? "dark" : "light";
-  root.dataset.theme = active.theme;
+  root.dataset.theme = theme;
   const link = document.getElementById("okfs-theme") as HTMLLinkElement | null;
-  const want = href(active.theme);
+  const want = href(theme);
   if (link && link.getAttribute("href") !== want) {
     link.onload = tokensChanged;
     link.setAttribute("href", want);
@@ -43,10 +47,16 @@ export function applyTheme(): void {
   }
 }
 
+/** Shows a theme without choosing it, as the palette does while a theme is only highlighted. With none, shows the chosen theme again. */
+export function previewTheme(id: string | null = null): void {
+  previewed = id;
+  applyTheme();
+}
+
 export function setTheme(id: string): void {
   active.theme = id;
   prefs.set("theme", id);
-  applyTheme();
+  previewTheme();
 }
 
 export function setScheme(scheme: Scheme): void {

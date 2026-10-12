@@ -72,6 +72,7 @@ kbd {
 .pal-in { display: flex; align-items: center; gap: 10px; padding: 0 14px; height: calc(48px * var(--density)); border-bottom: var(--border); color: var(--faint); flex: none; }
 .pal-in input { flex: 1; min-width: 0; background: none; border: 0; font-size: calc(var(--text) * 1.1); color: var(--fg); }
 .pal-in input::placeholder { color: var(--faint); }
+.pal-up { flex: none; margin-left: -6px; gap: 2px; padding: 0 8px 0 4px; color: var(--fg); font-weight: var(--weight-strong); }
 .pal-list { overflow: auto; padding: 6px; flex: 1; min-height: 0; }
 .pal-group { padding: 8px 8px 4px; }
 .pal-row { display: flex; align-items: center; gap: 10px; height: var(--row-h); padding: 0 8px; border-radius: var(--radius); cursor: pointer; }
@@ -80,6 +81,7 @@ kbd {
 .pal-row .dir { flex: 1; text-align: right; color: var(--faint); font-size: var(--text-s); direction: rtl; }
 .pal-row .dir bdi { direction: ltr; }
 .pal-row .age { flex: none; min-width: 3ch; text-align: right; color: var(--faint); font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+.pal-row .pal-more { flex: none; color: var(--faint); }
 .pal-row mark { background: none; color: var(--accent); font-weight: var(--weight-strong); }
 .pal-empty { padding: 28px 12px; text-align: center; color: var(--faint); }
 .pal-foot { display: flex; gap: 14px; align-items: center; padding: 0 14px; height: calc(34px * var(--density)); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
