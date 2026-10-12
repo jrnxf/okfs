@@ -33,6 +33,8 @@ const KEEP = 100;
  */
 const AHEAD_PAGES = 5;
 const BEHIND_PAGES = 1;
+/** PDFs are loaded ahead with them, fewer: each brings the browser's whole viewer. */
+const AHEAD_PDFS = 2;
 /** A page larger than this is not loaded ahead, and all that are loaded ahead stay under the second number. */
 const AHEAD_PAGE_BYTES = 4 * 1024 * 1024;
 const AHEAD_PAGES_BYTES = 12 * 1024 * 1024;
@@ -43,6 +45,8 @@ const AHEAD_PAGES_PACE = 50;
  * process: started with it, they made a 49 KB page 20 to 30 ms late to the screen.
  */
 const AHEAD_PAGES_REST = 50;
+/** A PDF says it has loaded when its viewer has, 150 ms and more before its first page is drawn: it is given longer. */
+const AHEAD_PDF_REST = 300;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -500,35 +504,13 @@ function Media({ entry, stamp, report, waiting, onReady }: Shown & { waiting: bo
   );
 }
 
-/** The browser's own viewer for a PDF, in a frame made anew for each file. */
-function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
-  const settled = useUnhurried();
-  // A rewritten file loads in a frame of its own, behind the one on screen, and takes its place once it
-  // is ready: a save never shows an empty pane.
-  const [shown, setShown] = useState(stamp);
-  // Until the first frame has loaded, the pane shows through it: the wait for a file is never white.
-  const [loaded, setLoaded] = useState(false);
-  if (!settled) return null;
-  return (
-    <>
-      {(stamp === shown ? [shown] : [shown, stamp]).map((version) => (
-        <iframe
-          key={version}
-          class={version !== shown ? "pv-frame pv-next" : loaded ? "pv-frame pv-loaded" : "pv-frame"}
-          src={`${urls.raw(entry.path)}#navpanes=0&view=FitH`}
-          title={entry.name}
-          onLoad={version === shown ? () => setLoaded(true) : () => setShown(version)}
-        />
-      ))}
-    </>
-  );
-}
-
 /** One frame of the pane and the page it holds. */
 interface Slot {
   id: number;
   path: string;
   size: number;
+  /** A PDF, in the browser's own viewer: it needs no sandbox, and a frame is not passed on to or from one. */
+  pdf: boolean;
   /** The address and stamp the frame was last sent to, or nothing while it is still empty. */
   sent: string;
   loaded: boolean;
@@ -540,8 +522,11 @@ interface Slot {
 
 const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms";
 
+/** Where a frame is sent for a file: the file itself, and for a PDF how its viewer opens. */
+const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind === "pdf" ? `${urls.raw(entry.path)}#navpanes=0&view=FitH` : urls.raw(entry.path));
+
 /**
- * An HTML page, live in a sandboxed frame.
+ * An HTML page, live in a sandboxed frame, or a PDF in the browser's viewer.
  *
  * The frame on screen serves page after page: it is told to replace its page with the next, and the browser
  * keeps the old page's picture up until the new one has something to draw. So there is no empty pane between
@@ -550,15 +535,19 @@ const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow
  * The pages just past the cursor are loaded ahead, each in a frame of its own that is hidden, not see-through:
  * exactly one frame is ever visible. When the cursor reaches such a page its frame is shown and the one before
  * is hidden in the same draw. A page loaded ahead runs its scripts before it is looked at.
+ *
+ * A PDF is loaded ahead the same way. Its frame is its own from start to end: a rewritten PDF loads in a second
+ * frame behind the first and takes its place once it is ready, so a save never shows an empty pane.
  */
 function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
-  const address = urls.raw(entry.path);
-  // A rewritten file is the same address with a new stamp: its frame loads it again, over itself.
+  const pdf = entry.kind === "pdf";
+  const address = frameUrl(entry);
+  // A rewritten file is the same address with a new stamp: it is loaded again.
   const want = `${address}\n${stamp}`;
   // Under a held key a large page waits, as a PDF does: see `EAGER_FRAME_BYTES`. A page that has started stays started.
   const started = useRef("");
   const [released, setReleased] = useState("");
-  if (!held || entry.size < EAGER_FRAME_BYTES) started.current = entry.path;
+  if (!held || (!pdf && entry.size < EAGER_FRAME_BYTES)) started.current = entry.path;
   const go = started.current === entry.path || released === entry.path;
   useEffect(() => {
     if (go) return;
@@ -596,8 +585,8 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
   useLayoutEffect(() => {
     const now = performance.now();
     const before = slots.current.map((slot) => slot.id).join() + shown.current;
-    const add = (path: string, size: number): Slot => {
-      const slot = { id: made.current++, path, size, sent: "", loaded: false, left: 0, rested: 0 };
+    const add = (file: Entry): Slot => {
+      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, left: 0, rested: 0 };
       slots.current.push(slot);
       return slot;
     };
@@ -625,21 +614,46 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let later: ReturnType<typeof setTimeout> | undefined;
     let cur = slots.current.find((slot) => slot.id === shown.current);
-    const ahead = slots.current.find((slot) => slot !== cur && slot.path === entry.path);
+    // A frame for the file on screen that is not the one on screen holds its rewritten self: it waits to be ready.
+    const ahead = slots.current.find((slot) => slot !== cur && slot.path === entry.path && (cur?.path !== entry.path || slot.loaded));
     if (ahead) {
       // This page was loaded ahead: its frame is shown, whether or not a key is held.
       if (cur && cur.path !== entry.path) cur.left = 0;
+      else if (cur) drop(cur);
       shown.current = ahead.id;
       cur = ahead;
       cur.rested = cur.loaded ? now : 0;
     } else if (!cur) {
       if (go) {
-        cur = add(entry.path, entry.size);
+        cur = add(entry);
         shown.current = cur.id;
       }
     } else if (cur.path === entry.path) {
-      // The file on screen was rewritten: its frame loads it again, and keeps the old picture up until then.
-      if (cur.sent && cur.sent !== want) send(cur, want);
+      // The file on screen was rewritten. A page loads again in its frame, which keeps the old picture up
+      // until then. A PDF loads in a second frame, behind this one.
+      if (cur.sent && cur.sent !== want) {
+        if (!pdf) send(cur, want);
+        else {
+          // One frame behind it for the newest stamp: a frame for a stamp since passed is dropped.
+          for (const slot of slots.current) if (slot !== cur && slot.path === entry.path && slot.sent && slot.sent !== want) drop(slot);
+          if (!slots.current.some((slot) => slot !== cur && slot.path === entry.path)) add(entry);
+        }
+      }
+    } else if (pdf || cur.pdf) {
+      // To or from a PDF there is nothing to pass a frame on to: a new one, as ever.
+      if (go) {
+        drop(cur);
+        cur = add(entry);
+        shown.current = cur.id;
+      } else {
+        if (!cur.left) cur.left = now;
+        timer = setTimeout(again, Math.max(0, cur.left + KEEP - now) + 1);
+        if (now - cur.left > KEEP) {
+          drop(cur);
+          shown.current = -1;
+          cur = undefined;
+        }
+      }
     } else {
       if (!cur.left) cur.left = now;
       if (!go) {
@@ -652,14 +666,14 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
         }
       } else if (now - cur.left > KEEP) {
         drop(cur);
-        cur = add(entry.path, entry.size);
+        cur = add(entry);
         shown.current = cur.id;
       } else if (send(cur, want)) {
         cur.path = entry.path;
         cur.size = entry.size;
       } else {
         drop(cur);
-        cur = add(entry.path, entry.size);
+        cur = add(entry);
         shown.current = cur.id;
       }
     }
@@ -669,10 +683,12 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
     if (here) {
       const keep = new Map<string, Entry>();
       let bytes = 0;
+      let pdfs = 0;
       for (let i = 1; i <= AHEAD_PAGES; i++) {
         const next = here.entries[here.cursor + here.step * i];
         if (!next) break;
-        if (next.kind !== "html" || next.size > AHEAD_PAGE_BYTES) continue;
+        if ((next.kind !== "html" && next.kind !== "pdf") || next.size > AHEAD_PAGE_BYTES) continue;
+        if (next.kind === "pdf" && ++pdfs > AHEAD_PDFS) continue;
         if (bytes + next.size > AHEAD_PAGES_BYTES) break;
         bytes += next.size;
         keep.set(next.path, next);
@@ -683,33 +699,37 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
         if (last) back.add(last.path);
       }
       for (const slot of slots.current) {
-        if (slot === cur) continue;
+        if (slot === cur || slot.path === entry.path) continue;
         const next = keep.get(slot.path);
         if (!next && !back.has(slot.path)) drop(slot);
-        // A page loaded ahead that has been rewritten since is loaded again.
-        else if (next && slot.sent && slot.sent !== `${urls.raw(next.path)}\n${here.stamp(next)}`) send(slot, `${urls.raw(next.path)}\n${here.stamp(next)}`);
+        // A file loaded ahead that has been rewritten since is loaded again: a page in its frame, a PDF in a
+        // new one, since its viewer would take the same address for the same file.
+        else if (next && slot.sent && slot.sent !== `${frameUrl(next)}\n${here.stamp(next)}`) {
+          if (slot.pdf) drop(slot);
+          else send(slot, `${frameUrl(next)}\n${here.stamp(next)}`);
+        }
       }
       // None are started before the page on screen has had its time: see `AHEAD_PAGES_REST`. And none while
       // the cursor is passing pages faster than they load.
       const missing = [...keep.values()].filter((next) => !slots.current.some((slot) => slot.path === next.path));
       if (missing.length && cur?.rested && !racing) {
-        const wait = cur.rested + AHEAD_PAGES_REST - now;
+        const wait = cur.rested + (cur.pdf ? AHEAD_PDF_REST : AHEAD_PAGES_REST) - now;
         if (wait > 0) later = setTimeout(again, wait + 1);
-        else for (const next of missing) add(next.path, next.size);
+        else for (const next of missing) add(next);
       }
     } else if (told.current) {
       // The cursor is somewhere this folder's list does not say: only the page on screen is kept.
-      for (const slot of slots.current) if (slot !== cur) drop(slot);
+      for (const slot of slots.current) if (slot !== cur && slot.path !== entry.path) drop(slot);
     }
     told.current = false;
 
     // A frame that is new is sent to its page once it is in the document.
     for (const slot of slots.current) {
       if (slot.sent) continue;
-      if (slot === cur) send(slot, want);
+      if (slot === cur || slot.path === entry.path) send(slot, want);
       else {
         const next = here?.entries.find((file) => file.path === slot.path);
-        if (next && here) send(slot, `${urls.raw(next.path)}\n${here.stamp(next)}`);
+        if (next && here) send(slot, `${frameUrl(next)}\n${here.stamp(next)}`);
       }
     }
     if (slots.current.map((slot) => slot.id).join() + shown.current !== before) again();
@@ -731,7 +751,7 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
           class={slot.id !== shown.current ? "pv-frame pv-ahead" : slot.loaded ? "pv-frame pv-loaded" : "pv-frame"}
           // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
           // The server sends the same restriction as a header, so it holds when the page is opened directly too.
-          sandbox={SANDBOX}
+          sandbox={slot.pdf ? undefined : SANDBOX}
           title={slot.path.slice(slot.path.lastIndexOf("/") + 1)}
           onLoad={() => {
             // An empty frame reports a load of its own, before it is sent anywhere.
@@ -950,7 +970,6 @@ function Kind({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boo
     case "audio":
       return <Media entry={entry} stamp={stamp} report={report} waiting={waiting} onReady={onReady} />;
     case "pdf":
-      return <Frame entry={entry} stamp={stamp} />;
     case "html":
       return <Page entry={entry} stamp={stamp} />;
     case "archive":
@@ -962,11 +981,11 @@ function Kind({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boo
 }
 
 /**
- * What tells one preview from the next. A player and a PDF are made anew for each file. Every other kind
+ * What tells one preview from the next. A player is made anew for each file. Every other kind
  * goes from file to file as it is, which is how a page, a picture and a text keep the last one up until the
  * next is here: see `Page`, `Picture` and `useLoaded`.
  */
-const slot = (entry: Entry): string => (entry.kind === "video" || entry.kind === "audio" || entry.kind === "pdf" ? entry.path : "");
+const slot = (entry: Entry): string => (entry.kind === "video" || entry.kind === "audio" ? entry.path : "");
 
 export function Preview(props: Shown) {
   const { entry } = props;
