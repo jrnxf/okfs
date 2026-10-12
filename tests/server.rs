@@ -904,6 +904,38 @@ async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
     panic!("removed files stayed in the list");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_stays_watched_when_a_link_to_it_is_removed() {
+    let site = Site::new();
+    std::os::unix::fs::symlink(site.served.join("sub"), site.served.join("current")).unwrap();
+    let root = Root::new(&site.served, false).unwrap();
+    let index = Index::spawn(root.clone());
+    let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
+    let wait_for = |uri: &'static str, done: fn(&Value) -> bool| {
+        let app = app.clone();
+        async move {
+            for _ in 0..200 {
+                if done(&json(&app, uri).await) {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            panic!("{uri} never gave the answer waited for");
+        }
+    };
+    wait_for("/api/search?q=current", |found| {
+        found["ready"] == true && found["total"] == 1
+    })
+    .await;
+
+    fs::remove_file(site.served.join("current")).unwrap();
+    wait_for("/api/search?q=current", |found| found["total"] == 0).await;
+
+    fs::write(site.served.join("sub/new.html"), "new").unwrap();
+    wait_for("/api/recent", |recent| recent_paths(recent).contains(&"sub/new.html")).await;
+}
+
 #[tokio::test]
 async fn recent_is_refused_for_a_wrong_host_like_every_route() {
     let site = Site::new();

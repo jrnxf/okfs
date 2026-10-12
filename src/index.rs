@@ -108,7 +108,9 @@ impl Index {
 
     fn run(&self) {
         let (send, events) = mpsc::channel();
-        let watcher = notify::recommended_watcher(send).and_then(|mut watcher| {
+        // The watcher goes where the walk goes: into real folders, and through no link.
+        let config = notify::Config::default().with_follow_symlinks(false);
+        let watcher = notify::RecommendedWatcher::new(send, config).and_then(|mut watcher| {
             watcher.watch(self.root.dir(), RecursiveMode::Recursive)?;
             Ok(watcher)
         });
@@ -237,8 +239,8 @@ impl Index {
     }
 
     /// The indexed folder a changed path sits in, or `None` when it is not shown. The
-    /// watcher may name a path through a link to a folder, whatever the link is called:
-    /// the index knows the folder by its real place only, so that is what is given.
+    /// folder is given by its real place, which is how the index knows it, whatever
+    /// links the path goes through.
     fn dir_of(&self, path: &Path) -> Option<String> {
         self.root.folder(path.parent()?).map(|(_, folder)| folder)
     }
@@ -476,7 +478,7 @@ mod tests {
             };
             assert_eq!(listed(), [changed("real/report.html", 1000)], "{link}");
 
-            // The watcher names a change by the link when the link is the path it walked last.
+            // A change named by the link, not by the folder's own path.
             written_at(&served.join("real/report.html"), 2000);
             let rewrite = Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Any)));
             index.absorb(vec![Ok(rewrite.add_path(served.join(link).join("report.html")))]);
