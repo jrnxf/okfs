@@ -1,7 +1,7 @@
 // What the right pane shows for the file or folder under the cursor.
 
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { type Archive, type Listing, type TextPreview, getJson, urls } from "./api";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
@@ -211,17 +211,18 @@ function Media({ entry, report }: { entry: Entry; report: Report }) {
   );
 }
 
-function Frame({ entry, hidden }: { entry: Entry; hidden: boolean }) {
+function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
   // The frame on screen stays until the next one has loaded behind it, then the next takes its place in
   // one step: the pane is never empty, and never the white of a frame that has not painted yet.
   const [shown, setShown] = useState<Entry | null>(null);
-  // A page that loaded while the pane was hidden was never on screen: it is not kept for another file.
+  // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
   useEffect(() => {
-    if (!hidden) setShown((page) => (page?.path === entry.path ? page : null));
-  }, [hidden]);
+    if (open && phone) setShown((page) => (page?.path === entry.path ? page : null));
+  }, [open]);
   const next = settled && shown?.path !== entry.path ? entry : null;
-  useEffect(() => {
+  // A layout effect: the timer is cleared in the step that takes its frame away, so it cannot bring that page back.
+  useLayoutEffect(() => {
     if (!next) return;
     const timer = setTimeout(() => setShown(next), FRAME_WAIT);
     return () => clearTimeout(timer);
@@ -419,7 +420,7 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
   }
 }
 
-export function Preview({ entry, report, hidden }: { entry: Entry; report: Report; hidden: boolean }) {
+export function Preview({ entry, report, open, phone }: { entry: Entry; report: Report; open: boolean; phone: boolean }) {
   switch (entry.kind) {
     case "folder":
       return <Folder entry={entry} report={report} />;
@@ -431,7 +432,7 @@ export function Preview({ entry, report, hidden }: { entry: Entry; report: Repor
     case "pdf":
     case "html":
       // One `Frame` for every file, so it can keep the page on screen while the next one loads.
-      return <Frame entry={entry} hidden={hidden} />;
+      return <Frame entry={entry} open={open} phone={phone} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;
