@@ -1,9 +1,11 @@
 //! Every name in the served tree, held in memory for the palette's search, with the
 //! time each file was last written. One walk at start builds it; a file watcher keeps
-//! it fresh after that.
+//! it fresh after that. The same watcher is what open pages follow: every change it
+//! reads is told to the feed.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -16,7 +18,8 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
-use crate::paths::{self, Root};
+use crate::live::{Change, Feed};
+use crate::paths::{self, Resolved, Root};
 
 /// How long the tree must be quiet before changes are read.
 const SETTLE: Duration = Duration::from_millis(150);
@@ -39,6 +42,13 @@ struct Node {
     modified: u32,
 }
 
+impl Node {
+    /// All that a listing tells of an entry.
+    fn shape(&self) -> (&str, bool, bool) {
+        (&self.name, self.dir, self.walk)
+    }
+}
+
 #[derive(Default)]
 struct Tree {
     /// Folder path to its children. The served folder itself is the empty path.
@@ -50,6 +60,7 @@ pub struct Index {
     root: Root,
     tree: RwLock<Tree>,
     ready: AtomicBool,
+    feed: Feed,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -92,6 +103,7 @@ impl Index {
             root,
             tree: RwLock::default(),
             ready: AtomicBool::new(false),
+            feed: Feed::default(),
         })
     }
 
@@ -124,7 +136,7 @@ impl Index {
                 );
                 loop {
                     std::thread::sleep(POLL);
-                    self.build();
+                    self.rebuild();
                 }
             }
         };
@@ -141,6 +153,11 @@ impl Index {
             }
             self.absorb(batch);
         }
+    }
+
+    /// The changes to the served folder, for the pages that are open.
+    pub fn feed(&self) -> &Feed {
+        &self.feed
     }
 
     /// Walks the whole served folder and replaces the index with what it finds.
@@ -185,29 +202,85 @@ impl Index {
         )
     }
 
+    /// Walks everything again and tells the pages to do the same.
+    fn rebuild(&self) {
+        self.build();
+        self.feed.tell(Change::Sync);
+    }
+
+    /// Folds what the watcher saw into the index and tells the pages.
     fn absorb(&self, batch: Vec<notify::Result<notify::Event>>) {
-        // Paths whose name came or went: the folder holding each is read again.
-        let mut named = HashSet::new();
+        let mut dirty = HashSet::new();
+        let mut touched = HashSet::new();
         // Paths whose content may have changed, with no name changing.
         let mut written = HashSet::new();
+        // A folder that came into place brought what it holds with it, and no event names that.
+        let mut arrived = BTreeSet::new();
         for event in batch {
             let Ok(event) = event else {
-                return self.build();
+                return self.rebuild();
             };
             if event.need_rescan() {
-                return self.build();
+                return self.rebuild();
             }
-            match event.kind {
-                EventKind::Access(_) => {}
-                EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => written.extend(event.paths),
-                _ => named.extend(event.paths),
+            if matches!(event.kind, EventKind::Access(_)) {
+                continue;
+            }
+            // A write changes no name: the index reads the file's time again and no folder.
+            let wrote = matches!(
+                event.kind,
+                EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
+            );
+            // A folder comes into place by being made or by being given its name.
+            let placed = matches!(
+                event.kind,
+                EventKind::Any | EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
+            );
+            for path in event.paths {
+                if wrote {
+                    written.insert(path.clone());
+                } else if let Some(dir) = self.dir_of(&path) {
+                    dirty.insert(dir);
+                }
+                if placed {
+                    arrived.extend(self.shown_folder(&path));
+                }
+                touched.insert(path);
             }
         }
-        let dirty: HashSet<String> = named.iter().filter_map(|path| self.dir_of(path)).collect();
+
+        // The files that were written, by folder. Only what a listing shows is named.
+        let mut told: HashMap<String, Vec<String>> = HashMap::new();
+        for path in &touched {
+            if let Some(dir) = self.dir_of(path)
+                && let Some(name) = self.shown_file(path)
+            {
+                told.entry(dir).or_default().push(name);
+            }
+        }
+        // Under a name the index already holds, it still holds the folder that was there before.
+        // They come in order, a folder before what is under it, which its walk reads too.
+        let mut walked: Vec<&str> = Vec::new();
+        for dir in &arrived {
+            let under =
+                |above: &&str| above.is_empty() || dir.strip_prefix(*above).is_some_and(|rest| rest.starts_with('/'));
+            if !walked.iter().any(under) && self.walk_again(dir) {
+                walked.push(dir);
+            }
+        }
         for dir in dirty {
-            self.reread(&dir);
+            if self.refresh(&dir) {
+                told.entry(dir).or_default();
+            }
         }
+        // The index is whole before a page is told: what it asks next is answered from it.
         self.restamp(written);
+        for (dir, files) in told {
+            self.feed.tell(Change::Folder { dir, files });
+        }
+        if !arrived.is_empty() {
+            self.feed.tell(Change::Sync);
+        }
     }
 
     /// Reads the time of each written file again, the way `read` does, and writes it
@@ -238,16 +311,49 @@ impl Index {
         }
     }
 
-    /// The indexed folder a changed path sits in, or `None` when it is not shown.
-    fn dir_of(&self, path: &Path) -> Option<String> {
-        let inner = path.parent()?.strip_prefix(self.root.dir()).ok()?;
+    /// What a changed path is now, when a listing shows it.
+    fn shown(&self, path: &Path) -> Option<Resolved> {
+        let inner = path.strip_prefix(self.root.dir()).ok()?;
         let rel = inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
-        self.root.resolve(&rel).map(|found| found.rel)
+        self.root.resolve(&rel)
     }
 
-    /// Reads one folder again and folds what changed into the index. The watcher does
-    /// this by itself a moment later; a delete calls it so the entry is gone at once.
+    /// The indexed folder a changed path sits in, by its real place, or `None` when
+    /// it is not shown.
+    fn dir_of(&self, path: &Path) -> Option<String> {
+        self.root.place(&self.shown(path.parent()?)?)
+    }
+
+    /// The name of a changed path, when it is a file that a listing shows.
+    fn shown_file(&self, path: &Path) -> Option<String> {
+        let found = self.shown(path).filter(|found| found.meta.is_file())?;
+        Some(paths::file_name(&found.rel).to_owned())
+    }
+
+    /// The real place of a changed path, when it is now a folder that a listing shows.
+    /// A link to a folder is not one.
+    fn shown_folder(&self, path: &Path) -> Option<String> {
+        if !fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+            return None;
+        }
+        self.root.place(&self.shown(path)?)
+    }
+
+    /// Reads one folder again, folds what changed into the index and tells the pages.
+    /// The watcher does this by itself a moment later; a delete calls it so the entry
+    /// is gone at once.
     pub fn reread(&self, dir: &str) {
+        if self.refresh(dir) {
+            self.feed.tell(Change::Folder {
+                dir: dir.to_owned(),
+                files: Vec::new(),
+            });
+        }
+    }
+
+    /// Reads one folder again and folds what changed into the index. True when the
+    /// folder does not list what it listed before.
+    fn refresh(&self, dir: &str) -> bool {
         let Some(nodes) = self.read(dir) else {
             return self.forget(dir);
         };
@@ -256,7 +362,7 @@ impl Index {
             match tree.dirs.get(dir) {
                 Some(old) => old.iter().filter(|n| n.walk).map(|n| n.name.to_string()).collect(),
                 // Not indexed yet: its parent's reread will walk it.
-                None if !dir.is_empty() => return,
+                None if !dir.is_empty() => return false,
                 None => HashSet::new(),
             }
         };
@@ -281,28 +387,49 @@ impl Index {
             tree.dirs.extend(sub.dirs);
         }
         tree.count += nodes.len();
-        if let Some(old) = tree.dirs.insert(dir.to_owned(), nodes) {
-            tree.count -= old.len();
+        let Some(old) = tree.dirs.insert(dir.to_owned(), nodes) else {
+            return true;
+        };
+        tree.count -= old.len();
+        let now = &tree.dirs[dir];
+        let before: HashSet<(&str, bool, bool)> = old.iter().map(Node::shape).collect();
+        old.len() != now.len() || now.iter().any(|node| !before.contains(&node.shape()))
+    }
+
+    /// Walks one folder again with everything under it, in place of what the index
+    /// held of it, and tells the pages. For a folder that changed at more than one
+    /// depth: `reread` looks at one folder only.
+    pub fn rewalk(&self, dir: &str) {
+        // It changed at depths no single folder names.
+        if self.walk_again(dir) {
+            self.feed.tell(Change::Sync);
         }
     }
 
     /// Walks one folder again with everything under it, in place of what the index
-    /// held of it. For a folder that changed at more than one depth: `reread` looks
-    /// at one folder only.
-    pub fn rewalk(&self, dir: &str) {
+    /// held of it. False when the index does not hold it.
+    fn walk_again(&self, dir: &str) -> bool {
+        // Not indexed yet: its parent's reread will walk it.
+        if self.child_count(dir).is_none() {
+            return false;
+        }
         let fresh = self.walk(dir);
         let mut tree = self.tree.write().expect("the index lock");
-        // Not indexed yet: its parent's reread will walk it.
         if !tree.dirs.contains_key(dir) {
-            return;
+            return false;
         }
         tree.remove(dir);
         tree.count += fresh.count;
         tree.dirs.extend(fresh.dirs);
+        true
     }
 
-    fn forget(&self, dir: &str) {
-        self.tree.write().expect("the index lock").remove(dir);
+    /// Drops a folder that is gone. True when the index held it.
+    fn forget(&self, dir: &str) -> bool {
+        let mut tree = self.tree.write().expect("the index lock");
+        let held = tree.dirs.contains_key(dir);
+        tree.remove(dir);
+        held
     }
 
     pub fn ready(&self) -> bool {
@@ -440,5 +567,276 @@ impl Tree {
             self.count -= nodes.len();
             todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::pin::Pin;
+
+    use futures_util::{FutureExt, Stream, StreamExt};
+    use notify::Event;
+    use notify::event::{CreateKind, DataChange, RemoveKind, RenameMode};
+
+    use super::*;
+
+    /// A served folder beside one it must not tell of, an index of it, and a page listening.
+    struct Watched {
+        _tmp: tempfile::TempDir,
+        served: PathBuf,
+        outside: PathBuf,
+        index: Arc<Index>,
+        page: Pin<Box<dyn Stream<Item = Change>>>,
+    }
+
+    const CREATE: EventKind = EventKind::Create(CreateKind::File);
+    const WRITE: EventKind = EventKind::Modify(ModifyKind::Data(DataChange::Any));
+    const REMOVE: EventKind = EventKind::Remove(RemoveKind::File);
+
+    impl Watched {
+        fn new(hidden: bool) -> Self {
+            let tmp = tempfile::TempDir::new().unwrap();
+            let top = tmp.path().canonicalize().unwrap();
+            let (served, outside) = (top.join("served"), top.join("outside"));
+            fs::create_dir_all(served.join("sub")).unwrap();
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(served.join("a.txt"), "a").unwrap();
+            fs::write(served.join("sub/b.txt"), "b").unwrap();
+            fs::write(outside.join("secret.txt"), "secret").unwrap();
+            let index = Index::new(Root::new(&served, hidden).unwrap());
+            index.build();
+            let page = Box::pin(index.feed().follow());
+            Self {
+                _tmp: tmp,
+                served,
+                outside,
+                index,
+                page,
+            }
+        }
+
+        /// Hands the index what a watcher would have seen in one batch.
+        fn see(&mut self, events: &[(EventKind, &str)]) -> Vec<Change> {
+            let batch = events
+                .iter()
+                .map(|(kind, path)| Ok(Event::new(*kind).add_path(self.served.join(path))))
+                .collect();
+            self.index.absorb(batch);
+            self.told()
+        }
+
+        /// What the page was told since the last look.
+        fn told(&mut self) -> Vec<Change> {
+            let mut told = Vec::new();
+            while let Some(Some(change)) = self.page.next().now_or_never() {
+                told.push(change);
+            }
+            told
+        }
+    }
+
+    fn folder(dir: &str, files: &[&str]) -> Change {
+        Change::Folder {
+            dir: dir.to_owned(),
+            files: files.iter().map(|name| (*name).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_new_file_is_told_with_its_folder_and_its_name() {
+        let mut site = Watched::new(false);
+        fs::write(site.served.join("sub/new.txt"), "new").unwrap();
+        let told = site.see(&[(CREATE, "sub/new.txt"), (WRITE, "sub/new.txt")]);
+        assert_eq!(told, [folder("sub", &["new.txt"])]);
+    }
+
+    #[test]
+    fn a_removed_file_is_told_with_its_folder() {
+        let mut site = Watched::new(false);
+        fs::remove_file(site.served.join("sub/b.txt")).unwrap();
+        assert_eq!(site.see(&[(REMOVE, "sub/b.txt")]), [folder("sub", &[])]);
+        // The same events again find nothing new, as after a delete made through okfs.
+        assert_eq!(site.see(&[(REMOVE, "sub/b.txt")]), []);
+    }
+
+    #[test]
+    fn a_renamed_file_is_told_by_its_new_name() {
+        let mut site = Watched::new(false);
+        fs::rename(site.served.join("a.txt"), site.served.join("z.txt")).unwrap();
+        let from = EventKind::Modify(ModifyKind::Name(RenameMode::From));
+        let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        assert_eq!(site.see(&[(from, "a.txt"), (to, "z.txt")]), [folder("", &["z.txt"])]);
+    }
+
+    #[test]
+    fn a_rewritten_file_is_told_by_name_in_place_or_swapped_in() {
+        let mut site = Watched::new(false);
+        fs::write(site.served.join("sub/b.txt"), "again").unwrap();
+        assert_eq!(site.see(&[(WRITE, "sub/b.txt")]), [folder("sub", &["b.txt"])]);
+
+        // Written beside it and moved over it, as editors save: the names stay as they were.
+        fs::write(site.served.join("sub/b.tmp"), "swapped").unwrap();
+        fs::rename(site.served.join("sub/b.tmp"), site.served.join("sub/b.txt")).unwrap();
+        let from = EventKind::Modify(ModifyKind::Name(RenameMode::From));
+        let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        let told = site.see(&[
+            (CREATE, "sub/b.tmp"),
+            (WRITE, "sub/b.tmp"),
+            (from, "sub/b.tmp"),
+            (to, "sub/b.txt"),
+        ]);
+        assert_eq!(told, [folder("sub", &["b.txt"])]);
+    }
+
+    #[test]
+    fn a_dotfile_is_told_only_when_dotfiles_are_shown() {
+        let events = [
+            (CREATE, ".env"),
+            (WRITE, ".env"),
+            (CREATE, ".git/config"),
+            (WRITE, ".git/config"),
+        ];
+        let write = |site: &Watched| {
+            fs::create_dir_all(site.served.join(".git")).unwrap();
+            fs::write(site.served.join(".env"), "KEY=1").unwrap();
+            fs::write(site.served.join(".git/config"), "[core]").unwrap();
+        };
+        let mut site = Watched::new(false);
+        write(&site);
+        assert_eq!(site.see(&events), []);
+        fs::remove_file(site.served.join(".env")).unwrap();
+        assert_eq!(site.see(&[(REMOVE, ".env")]), []);
+
+        let mut site = Watched::new(true);
+        write(&site);
+        let mut told = site.see(&events);
+        told.sort_by_key(|change| format!("{change:?}"));
+        assert_eq!(told, [folder("", &[".env"]), folder(".git", &["config"])]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nothing_behind_a_link_out_of_the_served_folder_is_told() {
+        use std::os::unix::fs::symlink;
+        let mut site = Watched::new(false);
+        symlink(&site.outside, site.served.join("out")).unwrap();
+        symlink(site.outside.join("secret.txt"), site.served.join("out.txt")).unwrap();
+        fs::write(site.outside.join("secret.txt"), "written").unwrap();
+        fs::write(site.outside.join("more.txt"), "new").unwrap();
+        let told = site.see(&[
+            (CREATE, "out"),
+            (CREATE, "out.txt"),
+            (WRITE, "out.txt"),
+            (WRITE, "out/secret.txt"),
+            (CREATE, "out/more.txt"),
+        ]);
+        assert_eq!(told, []);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_change_seen_through_a_link_inside_is_told_by_its_real_folder() {
+        use std::os::unix::fs::symlink;
+        let mut site = Watched::new(false);
+        symlink(site.served.join("sub"), site.served.join("latest")).unwrap();
+        assert_eq!(site.see(&[(CREATE, "latest")]), [folder("", &[])]);
+        fs::write(site.served.join("sub/b.txt"), "again").unwrap();
+        assert_eq!(site.see(&[(WRITE, "latest/b.txt")]), [folder("sub", &["b.txt"])]);
+    }
+
+    #[test]
+    fn a_burst_of_files_in_one_folder_is_one_change_that_names_them_all() {
+        let mut site = Watched::new(false);
+        let mut names: Vec<String> = (0..500).map(|at| format!("burst-{at}.txt")).collect();
+        let paths: Vec<String> = names.iter().map(|name| format!("sub/{name}")).collect();
+        let mut events = Vec::new();
+        for path in &paths {
+            fs::write(site.served.join(path), "x").unwrap();
+            events.extend([(CREATE, path.as_str()), (WRITE, path.as_str())]);
+        }
+        let told = site.see(&events);
+        let [Change::Folder { dir, files }] = told.as_slice() else {
+            panic!("one change for the folder: {told:?}");
+        };
+        assert_eq!(dir, "sub");
+        let mut files = files.clone();
+        files.sort();
+        names.sort();
+        assert_eq!(files, names);
+        assert_eq!(site.index.child_count("sub"), Some(501));
+    }
+
+    #[test]
+    fn a_folder_renamed_into_place_is_walked_again_and_tells_the_pages_to_catch_up() {
+        let mut site = Watched::new(false);
+        fs::create_dir_all(site.served.join("build/deep")).unwrap();
+        fs::write(site.served.join("build/fresh.txt"), "built").unwrap();
+        fs::write(site.served.join("build/deep/inner.txt"), "built").unwrap();
+        site.index.build();
+        // What it holds comes with it: no event names that.
+        fs::rename(site.served.join("sub"), site.served.join("sub.old")).unwrap();
+        fs::rename(site.served.join("build"), site.served.join("sub")).unwrap();
+        let from = EventKind::Modify(ModifyKind::Name(RenameMode::From));
+        let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        let told = site.see(&[(from, "sub"), (to, "sub.old"), (from, "build"), (to, "sub")]);
+        assert_eq!(told, [folder("", &[]), Change::Sync]);
+
+        // The index holds the folder that is there now, under the name of the one before.
+        assert_eq!(site.index.child_count("sub"), Some(2));
+        assert_eq!(site.index.child_count("sub/deep"), Some(1));
+        assert_eq!(site.index.child_count("sub.old"), Some(1));
+        assert_eq!(site.index.child_count("build"), None);
+        let found = |query: &str| -> Vec<String> {
+            let hits = site.index.search(query, 10).hits;
+            hits.into_iter().map(|hit| hit.path).collect()
+        };
+        assert_eq!(found("fresh"), ["sub/fresh.txt"]);
+        assert_eq!(found("inner"), ["sub/deep/inner.txt"]);
+    }
+
+    #[test]
+    fn a_folder_told_as_changed_is_not_one_that_came_into_place() {
+        let mut site = Watched::new(false);
+        fs::write(site.served.join("sub/new.txt"), "new").unwrap();
+        // Some watchers tell of the folder too when an entry in it comes or goes.
+        let changed = EventKind::Modify(ModifyKind::Any);
+        let told = site.see(&[(CREATE, "sub/new.txt"), (changed, "sub/new.txt"), (changed, "sub")]);
+        assert_eq!(told, [folder("sub", &["new.txt"])]);
+    }
+
+    #[test]
+    fn folders_told_late_are_walked_again_with_what_is_under_them() {
+        let mut site = Watched::new(false);
+        let made = EventKind::Create(CreateKind::Folder);
+        fs::create_dir_all(site.served.join("tree/a/b")).unwrap();
+        fs::write(site.served.join("tree/a/b/leaf.txt"), "leaf").unwrap();
+        // The first walk finds the folders under it before their own events are read.
+        assert_eq!(site.see(&[(made, "tree")]), [folder("", &[]), Change::Sync]);
+        fs::write(site.served.join("tree/a/b/more.txt"), "more").unwrap();
+        assert_eq!(site.see(&[(made, "tree/a"), (made, "tree/a/b")]), [Change::Sync]);
+        assert_eq!(site.index.child_count("tree/a"), Some(1));
+        assert_eq!(site.index.child_count("tree/a/b"), Some(2));
+        let hits = site.index.search("more", 10).hits;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "tree/a/b/more.txt");
+    }
+
+    #[test]
+    fn a_reread_tells_the_pages_once() {
+        let mut site = Watched::new(false);
+        fs::remove_file(site.served.join("a.txt")).unwrap();
+        site.index.reread("");
+        site.index.reread("");
+        assert_eq!(site.told(), [folder("", &[])]);
+    }
+
+    #[test]
+    fn a_watcher_that_lost_track_tells_the_pages_to_catch_up() {
+        let mut site = Watched::new(false);
+        let lost = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        site.index.absorb(vec![Ok(lost)]);
+        assert_eq!(site.told(), [Change::Sync]);
     }
 }

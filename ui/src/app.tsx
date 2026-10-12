@@ -66,7 +66,7 @@ function FolderCover({ entry }: { entry: Entry }) {
         return (
           <div>
             {kind === "image" && !item.n.toLowerCase().endsWith(".svg") ? (
-              <img src={urls.thumb(path, 160, item.m)} loading="lazy" alt="" />
+              <img src={urls.thumb(path, 160, item.m, item.s)} loading="lazy" alt="" />
             ) : (
               <KindIcon kind={kind} />
             )}
@@ -123,9 +123,11 @@ function Thumb({ entry, width }: { entry: Entry; width: number }) {
   if (entry.dir) return <FolderCover entry={entry} />;
   if (COVER_KINDS.has(entry.kind)) return <TextCover entry={entry} />;
   if (entry.ext === "zip") return <ZipCover entry={entry} />;
+  // The file itself is asked for by an address that moves when it is rewritten, as the thumbnail's does.
+  const raw = `${urls.raw(entry.path)}?v=${entry.mtime}.${entry.size}`;
   if (entry.kind === "image" && stage < 2) {
     const wanted = Math.ceil(width * (window.devicePixelRatio || 1));
-    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime) : urls.raw(entry.path);
+    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime, entry.size) : raw;
     return (
       <div class="th">
         <img src={src} loading="lazy" alt="" onError={() => setStage(stage + 1)} />
@@ -135,7 +137,7 @@ function Thumb({ entry, width }: { entry: Entry; width: number }) {
   if (entry.kind === "video" && stage < 2) {
     return (
       <div class="th">
-        <video src={`${urls.raw(entry.path)}#t=2`} preload="metadata" muted playsInline onError={() => setStage(2)} />
+        <video src={`${raw}#t=2`} preload="metadata" muted playsInline onError={() => setStage(2)} />
       </div>
     );
   }
@@ -366,7 +368,8 @@ export function App() {
       return (
         <div class="tile" role="option" aria-selected={on} data-i={index} style={style} key={entry.path}>
           <div class="box">
-            <Thumb entry={entry} width={cell.width} />
+            {/* A cover that failed while its file was being written is tried again when the file has changed. */}
+            <Thumb key={`${entry.mtime} ${entry.size}`} entry={entry} width={cell.width} />
           </div>
           <div class="nm trunc">{entry.name}</div>
         </div>
@@ -483,6 +486,7 @@ export function App() {
             count={s.entries.length}
             grid={s.view === "grid"}
             cursor={s.cursor}
+            caught={s.caught}
             listKey={`${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
             render={renderCell}
             onCols={onCols}
@@ -501,7 +505,7 @@ export function App() {
         </section>
         <section class="right">
           <div class="ph">{header}</div>
-          <div class="pv">{shown && <Preview entry={shown} report={report} />}</div>
+          <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} />}</div>
         </section>
       </div>
       <footer class={filtering || s.filter ? "status filtering" : "status"}>

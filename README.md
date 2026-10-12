@@ -11,6 +11,7 @@
 - A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, and lists the most recently changed files before you type.
+- The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
 - Themes: one CSS file each, five built in, light and dark.
 - Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
 
@@ -53,6 +54,8 @@ okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 ```
 
 A folder's `README.md` is shown under its listing.
+
+The page follows changes through a watcher on the folder. Where okfs cannot set one up, it reads the folder again every 30 seconds and the page catches up at that pace. Something reached through a symbolic link is not followed as it changes: it catches up when the page is reloaded or shown again.
 
 <details>
 <summary>All flags</summary>
