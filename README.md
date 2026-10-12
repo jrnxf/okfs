@@ -48,6 +48,7 @@ cargo build --release    # the binary is target/release/okfs
 okfs                        # serve this folder at http://127.0.0.1:8080/
 okfs ~/photos --port 9000   # another folder, another port
 okfs --bind 0.0.0.0         # let other machines on the network in
+okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 ```
 
 A folder's `README.md` is shown under its listing.
@@ -60,6 +61,7 @@ A folder's `README.md` is shown under its listing.
 | `[PATH]` | The folder to serve. Default: the current folder. |
 | `-b`, `--bind <ADDR>` | Address to listen on. Default `127.0.0.1`. |
 | `-p`, `--port <PORT>` | Port to listen on. Default `8080`. |
+| `--qr` | Print a QR code for the first address another device can use, in a terminal. Off by default. |
 | `--index <FILE>` | Open a folder that holds a file of this name as that page: `--index index.html`. Off by default. See below. |
 | `--theme <NAME\|FILE>` | Theme a new visitor starts in: a built-in name or a theme file. |
 | `--css <FILE>` | Your own stylesheet, loaded after the theme. Class names are not a promise and may change. |
