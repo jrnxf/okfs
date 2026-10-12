@@ -26,12 +26,14 @@ csv = "1.4.0"
 dirs = "7.0.0"
 futures-util = "0.3.34"
 httpdate = "1.0.3"
+if-addrs = { version = "0.15.0", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico"] }
 mime_guess = "2.0.5"
 notify = "8.2.0"
 nucleo-matcher = "0.3.1"
 percent-encoding = "2.3.2"
 pulldown-cmark = "0.13.4"
+qrcode = { version = "0.14.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }

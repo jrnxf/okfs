@@ -49,6 +49,17 @@ export interface Found {
   ready: boolean;
 }
 
+/** A file among the most recently written, with its time in seconds. */
+export interface Changed {
+  path: string;
+  m: number;
+}
+
+export interface Recent {
+  /** Newest first. */
+  files: Changed[];
+}
+
 export interface Archive {
   entries: { name: string; size: number; dir: boolean }[];
   total: number;
@@ -67,6 +78,7 @@ export const urls = {
   head: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&head=1`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
+  recent: "/api/recent",
   /** The time and size make a rewritten picture a new address: the browser keeps a thumbnail by its address. */
   thumb: (path: string, width: number, modified: number, size: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}&s=${size}`,

@@ -1,14 +1,16 @@
-//! Every name in the served tree, held in memory for the palette's search.
-//! One walk at start builds it; a file watcher keeps it fresh after that. The same
-//! watcher is what open pages follow: every change it reads is told to the feed.
+//! Every name in the served tree, held in memory for the palette's search, with the
+//! time each file was last written. One walk at start builds it; a file watcher keeps
+//! it fresh after that. The same watcher is what open pages follow: every change it
+//! reads is told to the feed.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::event::{EventKind, ModifyKind};
 use notify::{RecursiveMode, Watcher};
@@ -27,12 +29,17 @@ const MAX_WAIT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_secs(30);
 /// A match on the name itself outranks a match somewhere in the path.
 const NAME_BONUS: u32 = 64;
+/// How many files are listed as the ones written last.
+const RECENT: usize = 8;
 
 struct Node {
     name: Box<str>,
     dir: bool,
     /// A real folder, not a link to one: the walk goes in.
     walk: bool,
+    /// When a file was last written, in seconds. Zero for a folder, for a link, and for
+    /// a time that could not be read. Kept as 32 bits so a node stays as small as it was.
+    modified: u32,
 }
 
 impl Node {
@@ -75,6 +82,20 @@ pub struct Found {
     pub ready: bool,
 }
 
+/// One file among the most recently written.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Changed {
+    pub path: String,
+    /// When it was last written, in seconds.
+    pub m: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Recent {
+    /// Newest first. Files with the same time are ordered by folder, then by name.
+    pub files: Vec<Changed>,
+}
+
 impl Index {
     /// An empty index. Call `build` to fill it.
     pub fn new(root: Root) -> Arc<Self> {
@@ -99,7 +120,9 @@ impl Index {
 
     fn run(&self) {
         let (send, events) = mpsc::channel();
-        let watcher = notify::recommended_watcher(send).and_then(|mut watcher| {
+        // The watcher goes where the walk goes: into real folders, and through no link.
+        let config = notify::Config::default().with_follow_symlinks(false);
+        let watcher = notify::RecommendedWatcher::new(send, config).and_then(|mut watcher| {
             watcher.watch(self.root.dir(), RecursiveMode::Recursive)?;
             Ok(watcher)
         });
@@ -156,15 +179,24 @@ impl Index {
         tree
     }
 
+    /// The names in one folder, each file with the time the disk has for it now.
     fn read(&self, dir: &str) -> Option<Vec<Node>> {
         let at = self.root.dir().join(dir);
         let seen = self.root.scan(&at).ok()?;
         Some(
             seen.into_iter()
-                .map(|s| Node {
-                    name: s.name.into_boxed_str(),
-                    dir: s.dir,
-                    walk: s.dir && !s.link,
+                .map(|s| {
+                    let modified = if s.dir {
+                        0
+                    } else {
+                        seconds(self.root.modified(&at, &s.name))
+                    };
+                    Node {
+                        name: s.name.into_boxed_str(),
+                        dir: s.dir,
+                        walk: s.dir && !s.link,
+                        modified,
+                    }
                 })
                 .collect(),
         )
@@ -180,6 +212,8 @@ impl Index {
     fn absorb(&self, batch: Vec<notify::Result<notify::Event>>) {
         let mut dirty = HashSet::new();
         let mut touched = HashSet::new();
+        // Paths whose content may have changed, with no name changing.
+        let mut written = HashSet::new();
         // A folder that came into place brought what it holds with it, and no event names that.
         let mut arrived = BTreeSet::new();
         for event in batch {
@@ -192,8 +226,8 @@ impl Index {
             if matches!(event.kind, EventKind::Access(_)) {
                 continue;
             }
-            // A write changes no name, so the index has nothing to read again for it.
-            let written = matches!(
+            // A write changes no name: the index reads the file's time again and no folder.
+            let wrote = matches!(
                 event.kind,
                 EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
             );
@@ -203,7 +237,9 @@ impl Index {
                 EventKind::Any | EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
             );
             for path in event.paths {
-                if !written && let Some(dir) = self.dir_of(&path) {
+                if wrote {
+                    written.insert(path.clone());
+                } else if let Some(dir) = self.dir_of(&path) {
                     dirty.insert(dir);
                 }
                 if placed {
@@ -237,11 +273,41 @@ impl Index {
                 told.entry(dir).or_default();
             }
         }
+        // The index is whole before a page is told: what it asks next is answered from it.
+        self.restamp(written);
         for (dir, files) in told {
             self.feed.tell(Change::Folder { dir, files });
         }
         if !arrived.is_empty() {
             self.feed.tell(Change::Sync);
+        }
+    }
+
+    /// Reads the time of each written file again, the way `read` does, and writes it
+    /// into the index: one look at the disk per file, however often it was written to
+    /// since the last batch.
+    fn restamp(&self, written: HashSet<PathBuf>) {
+        let mut stamps: HashMap<String, HashMap<String, u32>> = HashMap::new();
+        for path in written {
+            let (Some(dir), Some(name)) = (self.dir_of(&path), path.file_name().and_then(|name| name.to_str())) else {
+                continue;
+            };
+            let time = seconds(self.root.modified(&self.root.dir().join(&dir), name));
+            stamps.entry(dir).or_default().insert(name.to_owned(), time);
+        }
+        if stamps.is_empty() {
+            return;
+        }
+        let mut tree = self.tree.write().expect("the index lock");
+        for (dir, times) in stamps {
+            let Some(nodes) = tree.dirs.get_mut(&dir) else {
+                continue;
+            };
+            for node in nodes.iter_mut().filter(|n| !n.dir) {
+                if let Some(&time) = times.get(&*node.name) {
+                    node.modified = time;
+                }
+            }
         }
     }
 
@@ -384,6 +450,35 @@ impl Index {
         tree.dirs.get(dir).map(Vec::len)
     }
 
+    /// The files written last, newest first. Read from memory: the disk is not looked
+    /// at. Folders and links never appear, and neither does a file whose time is unknown.
+    pub fn recent(&self) -> Recent {
+        let tree = self.tree.read().expect("the index lock");
+        // Newer is greater, and of two with the same time the earlier folder, then the
+        // earlier name, is greater.
+        // The heap keeps the `RECENT` greatest, its least on top.
+        let mut best = BinaryHeap::with_capacity(RECENT + 1);
+        for (dir, nodes) in &tree.dirs {
+            for node in nodes.iter().filter(|n| !n.dir && n.modified != 0) {
+                best.push(Reverse((node.modified, Reverse(dir.as_str()), Reverse(&*node.name))));
+                if best.len() > RECENT {
+                    best.pop();
+                }
+            }
+        }
+        let mut files: Vec<_> = best.into_iter().map(|Reverse(key)| key).collect();
+        files.sort_unstable_by(|a, b| b.cmp(a));
+        Recent {
+            files: files
+                .into_iter()
+                .map(|(m, Reverse(dir), Reverse(name))| Changed {
+                    path: paths::join(dir, name),
+                    m,
+                })
+                .collect(),
+        }
+    }
+
     /// Fuzzy search over every path. Returns the best `limit` matches.
     pub fn search(&self, query: &str, limit: usize) -> Found {
         let tree = self.tree.read().expect("the index lock");
@@ -452,6 +547,12 @@ impl Index {
         }
         found
     }
+}
+
+/// A time as the index keeps it: whole seconds, with zero for one that is not known.
+fn seconds(time: Option<SystemTime>) -> u32 {
+    time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |since| u32::try_from(since.as_secs()).unwrap_or(u32::MAX))
 }
 
 /// One match: score, folder, position in that folder, and whether the name itself matched.

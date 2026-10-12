@@ -10,7 +10,7 @@
 
 - A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
-- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree.
+- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, and lists the most recently changed files before you type.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
 - Themes: one CSS file each, five built in, light and dark.
 - Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
@@ -20,15 +20,16 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/palette-dark.webp"><img src="docs/screenshots/palette-light.webp" alt="The palette finding files across the tree" width="49%"></picture>
 </p>
 
-## Install from source
+## Install
 
-With nix and nothing else installed, one command builds this checkout and puts `okfs` on your `PATH`:
+With nix, run it without installing anything, or put it on your `PATH`:
 
 ```sh
-nix develop -c cargo install --path . --locked    # installs to ~/.cargo/bin
+nix run github:jrnxf/okfs -- ~/photos   # run it once
+nix profile install github:jrnxf/okfs   # or install it
 ```
 
-Run it again after a pull or an edit to get the latest.
+`nix profile upgrade okfs` brings an installed copy up to date.
 
 Without nix you need a Rust toolchain and [bun](https://bun.sh). Bun builds the page while cargo builds the binary.
 
@@ -49,6 +50,7 @@ cargo build --release    # the binary is target/release/okfs
 okfs                        # serve this folder at http://127.0.0.1:8080/
 okfs ~/photos --port 9000   # another folder, another port
 okfs --bind 0.0.0.0         # let other machines on the network in
+okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 ```
 
 A folder's `README.md` is shown under its listing.
@@ -63,6 +65,7 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `[PATH]` | The folder to serve. Default: the current folder. |
 | `-b`, `--bind <ADDR>` | Address to listen on. Default `127.0.0.1`. |
 | `-p`, `--port <PORT>` | Port to listen on. Default `8080`. |
+| `--qr` | Print a QR code for the first address another device can use, in a terminal. Off by default. |
 | `--index <FILE>` | Open a folder that holds a file of this name as that page: `--index index.html`. Off by default. See below. |
 | `--theme <NAME\|FILE>` | Theme a new visitor starts in: a built-in name or a theme file. |
 | `--css <FILE>` | Your own stylesheet, loaded after the theme. Class names are not a promise and may change. |
