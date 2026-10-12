@@ -23,8 +23,7 @@ pub fn found() -> Vec<Found> {
         .into_iter()
         .map(|interface| Found {
             ip: interface.ip(),
-            // Elsewhere a stopped interface reads as unknown, which is as good as down.
-            up: interface.is_oper_up() || (cfg!(windows) && interface.oper_status == if_addrs::IfOperStatus::Unknown),
+            up: interface.is_oper_up(),
         })
         .collect()
 }
