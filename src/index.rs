@@ -186,8 +186,9 @@ impl Index {
         self.root.resolve(&rel).map(|found| found.rel)
     }
 
-    /// Reads one folder again and folds what changed into the index.
-    fn reread(&self, dir: &str) {
+    /// Reads one folder again and folds what changed into the index. The watcher does
+    /// this by itself a moment later; a delete calls it so the entry is gone at once.
+    pub fn reread(&self, dir: &str) {
         let Some(nodes) = self.read(dir) else {
             return self.forget(dir);
         };
@@ -224,6 +225,21 @@ impl Index {
         if let Some(old) = tree.dirs.insert(dir.to_owned(), nodes) {
             tree.count -= old.len();
         }
+    }
+
+    /// Walks one folder again with everything under it, in place of what the index
+    /// held of it. For a folder that changed at more than one depth: `reread` looks
+    /// at one folder only.
+    pub fn rewalk(&self, dir: &str) {
+        let fresh = self.walk(dir);
+        let mut tree = self.tree.write().expect("the index lock");
+        // Not indexed yet: its parent's reread will walk it.
+        if !tree.dirs.contains_key(dir) {
+            return;
+        }
+        tree.remove(dir);
+        tree.count += fresh.count;
+        tree.dirs.extend(fresh.dirs);
     }
 
     fn forget(&self, dir: &str) {

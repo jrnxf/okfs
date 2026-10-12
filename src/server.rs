@@ -1,4 +1,5 @@
-//! The HTTP side: every route okfs answers. All of them read; none of them write.
+//! The HTTP side: every route okfs answers. All of them read, except the one that
+//! deletes, and that one refuses unless okfs was started with `--allow-delete`.
 
 use std::fs;
 use std::net::IpAddr;
@@ -7,12 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::header::{self, HeaderMap, HeaderValue};
 use axum::http::{Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
@@ -20,7 +22,7 @@ use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::Index;
-use crate::paths::{self, Root};
+use crate::paths::{self, Kept, NoEntry, Root, Unshown};
 use crate::render::{self, encode_path, view_url};
 use crate::theme::{self, Swatch, Theme};
 use crate::thumb::{self, Thumbs};
@@ -32,8 +34,16 @@ const MAX_README: u64 = 512 * 1024;
 /// Markdown are the one thing allowed from elsewhere.
 const PAGE_POLICY: &str = "default-src 'self'; img-src 'self' data: blob: https: http:; media-src 'self' blob:; \
      style-src 'self'; script-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
+/// Added to the page's policy while deleting is on: only okfs itself may show the page
+/// in a frame. Another site that could would hide it and steer a visitor's clicks
+/// onto the delete button and through the dialog.
+const NO_FRAMING: &str = "frame-ancestors 'self'";
 /// The id of a theme read from a file, as the switcher knows it.
 const CUSTOM: &str = "custom";
+/// The header, and its value, that the page sends with a delete. See `own_page`.
+const DELETE_HEADER: (&str, &str) = ("x-okfs", "delete");
+/// What a delete is refused with when nothing about it says okfs's own page sent it.
+const NOT_THE_PAGE: &str = "only the okfs page itself can delete";
 
 /// Which theme a fresh browser gets.
 #[derive(Debug, Clone)]
@@ -56,6 +66,9 @@ pub struct Options {
     /// hostile page could otherwise reach the server by pointing a name at it.
     pub check_host: bool,
     pub cache: Option<PathBuf>,
+    /// Let visitors delete entries. Off unless asked for: okfs has no accounts, so
+    /// with this on anyone who can reach the address can delete.
+    pub allow_delete: bool,
 }
 
 impl Default for Options {
@@ -69,6 +82,7 @@ impl Default for Options {
             allow_hosts: Vec::new(),
             check_host: false,
             cache: None,
+            allow_delete: false,
         }
     }
 }
@@ -161,10 +175,11 @@ pub fn read_theme(path: &std::path::Path) -> Result<(SystemTime, Theme), String>
     }
 }
 
-/// Every route. There is no route that changes anything on disk.
+/// Every route. Only `/api/entry` changes anything on disk, and only when deleting is on.
 pub fn router(app: Arc<App>) -> Router {
     let packed = Router::new()
         .route("/api/list", get(list))
+        .route("/api/entry", delete(delete_entry))
         .route("/api/preview", get(preview_file))
         .route("/api/search", get(search))
         .route("/api/archive", get(archive_list))
@@ -195,19 +210,31 @@ fn not_found() -> Response {
     fail(StatusCode::NOT_FOUND, "not found")
 }
 
+/// Splits a host, as a request names it, into its name and its port.
+fn split_host(host: &str) -> (&str, Option<&str>) {
+    if let Some(v6) = host.strip_prefix('[') {
+        let (name, rest) = v6.split_once(']').unwrap_or((v6, ""));
+        return (name, rest.strip_prefix(':'));
+    }
+    match host.rsplit_once(':') {
+        Some((name, port)) if port.chars().all(|c| c.is_ascii_digit()) => (name, Some(port)),
+        _ => (host, None),
+    }
+}
+
+/// The host a request came in on.
+fn request_host<'a>(headers: &'a HeaderMap, uri: &'a Uri) -> &'a str {
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| uri.authority().map(|authority| authority.as_str()))
+        .unwrap_or("")
+}
+
 /// True when a request's Host names this machine directly or is on the allowed list.
 pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
     let host = host.trim().to_ascii_lowercase();
-    let name = match host.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => host.rsplit_once(':').map_or(host.as_str(), |(name, port)| {
-            if port.chars().all(|c| c.is_ascii_digit()) {
-                name
-            } else {
-                host.as_str()
-            }
-        }),
-    };
+    let (name, _) = split_host(&host);
     name.parse::<IpAddr>().is_ok()
         || name == "localhost"
         || name.ends_with(".localhost")
@@ -217,12 +244,7 @@ pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
 /// Runs before every route: checks the Host name and marks every answer as not to be sniffed.
 async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
     if app.options.check_host {
-        let host = request
-            .headers()
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok())
-            .or_else(|| request.uri().host())
-            .unwrap_or("");
+        let host = request_host(request.headers(), request.uri());
         if !host_allowed(host, &app.options.allow_hosts) {
             let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
             let message = format!(
@@ -263,6 +285,9 @@ struct Item {
     n: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     d: bool,
+    /// A link. A delete removes the link and leaves what it points at.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    l: bool,
     /// Size in bytes. Zero for a folder.
     s: u64,
     /// Modified time, in seconds.
@@ -281,6 +306,10 @@ struct Readme {
 #[derive(Serialize)]
 struct Listing {
     path: String,
+    /// The path's last name is a link to this folder. A delete removes only the link.
+    /// Told with a whole listing only, as the notes are.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    link: bool,
     /// In name order. The page sorts and filters from here.
     entries: Vec<Item>,
     total: usize,
@@ -325,6 +354,7 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
             Some(Item {
                 n: entry.name,
                 d: entry.dir,
+                l: entry.link,
                 s: if entry.dir { 0 } else { meta.len() },
                 m: modified.map_or(0, |since| since.as_secs() as i64),
                 c: count.flatten(),
@@ -332,6 +362,7 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
         })
         .collect();
     Some(Listing {
+        link: query.limit.is_none() && app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
         path: found.rel,
         entries,
         total,
@@ -426,6 +457,132 @@ async fn archive_list(State(app): State<Arc<App>>, Query(query): Query<PathQuery
         Ok(Ok(listing)) => Json(listing).into_response(),
         _ => fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "not a zip file this build can read"),
     }
+}
+
+/// True when a delete was asked for by okfs's own page, and not by a page on another
+/// site that a visitor happens to have open. okfs has no accounts, so there is no
+/// session to steal: what such a page could borrow is the visitor's place on the
+/// network, the browser that can reach an address the page's own server cannot.
+/// Three things together stop that.
+///
+/// - The method is DELETE and the request carries a header of okfs's own. A form
+///   can send neither, and a script on another site can send them only after the
+///   browser has asked okfs for leave (a preflight). okfs never gives it: it answers
+///   no OPTIONS request and sends no CORS header.
+/// - The `Origin` header, which a browser sets on every DELETE and a page cannot
+///   change, has to name okfs itself. It passes the same rule as the Host of any
+///   request (a plain address, `localhost`, or a name from `--allow-host`), so a
+///   hostile name pointed at this machine fails even when okfs listens beyond
+///   loopback. And it has to be the host this request came in on, or a name from
+///   `--allow-host`: a proxy may put its own idea of the Host in front of okfs. The
+///   scheme is not compared. A proxy in front ends TLS, so the browser says `https`
+///   where okfs sees plain HTTP; the scheme only tells which port a bare name means.
+/// - A missing `Origin` is refused, and so is `Origin: null`. The second is what a
+///   served HTML or SVG file has, because okfs sends those sandboxed, so a file in
+///   the folder can never delete its neighbours.
+///
+/// The error is what to answer. When a page did send the request, from a host okfs
+/// does not know as its own, it names the `--allow-host` that would let it in.
+fn own_page(headers: &HeaderMap, host: &str, allowed: &[String]) -> Result<(), String> {
+    let (name, value) = DELETE_HEADER;
+    if headers.get(name).is_none_or(|sent| sent != value) {
+        return Err(NOT_THE_PAGE.to_owned());
+    }
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    let (Some(origin), None) = (origins.next(), origins.next()) else {
+        return Err(NOT_THE_PAGE.to_owned());
+    };
+    let origin = origin.to_str().unwrap_or("").to_ascii_lowercase();
+    let Some((scheme, from)) = origin.split_once("://") else {
+        return Err(NOT_THE_PAGE.to_owned());
+    };
+    let default_port = match scheme {
+        "http" => "80",
+        "https" => "443",
+        _ => return Err(NOT_THE_PAGE.to_owned()),
+    };
+    let (from_name, from_port) = split_host(from);
+    if from_name.is_empty() || from.contains(['/', '@', '?', '#']) {
+        return Err(NOT_THE_PAGE.to_owned());
+    }
+    let host = host.trim().to_ascii_lowercase();
+    let (name, port) = split_host(&host);
+    // A Host with no port means the usual one for the scheme the browser used.
+    let same = from_name == name && from_port.unwrap_or(default_port) == port.unwrap_or(default_port);
+    let named = allowed.iter().any(|allowed| allowed.eq_ignore_ascii_case(from_name));
+    if host_allowed(from, allowed) && (same || named) {
+        return Ok(());
+    }
+    Err(format!(
+        "the page at {from} is not one okfs knows as its own: to delete from it, start okfs with --allow-host {from_name}"
+    ))
+}
+
+/// Removes one entry and takes it out of the index. Answers with how it ended.
+fn remove_entry(app: &App, path: &str) -> Response {
+    let entry = match app.root.entry(path) {
+        Ok(entry) => entry,
+        Err(NoEntry::Root) => return fail(StatusCode::FORBIDDEN, "the served folder itself cannot be deleted"),
+        Err(NoEntry::NotServed) => return fail(StatusCode::FORBIDDEN, "this path is not served"),
+        Err(NoEntry::Missing) => return not_found(),
+    };
+    let removed = app.root.remove(&entry);
+    app.index.reread(&entry.folder);
+    // A folder that is partly gone is still listed where it was, changed inside at any depth.
+    if matches!(removed, Err(Kept::Partly(_))) {
+        app.index.rewalk(&entry.place());
+    }
+    match removed {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(Kept::Holds(Unshown::Hidden)) => fail(
+            StatusCode::CONFLICT,
+            "somewhere inside, this folder holds a dotfile, which okfs is not showing and so does not delete: \
+             start okfs with --hidden, or remove the dotfile yourself",
+        ),
+        Err(Kept::Holds(Unshown::Unserved)) => fail(
+            StatusCode::CONFLICT,
+            "somewhere inside, this folder holds something okfs cannot show, such as a link that leads out of \
+             the served folder, and so does not delete: remove it yourself",
+        ),
+        // The kind reads as plain words, such as "permission denied", and names no path.
+        Err(Kept::Failed(error)) => fail(disk_status(&error), &error.kind().to_string()),
+        Err(Kept::Partly(error)) => {
+            let message = format!("{}, and part of the folder may already be gone", error.kind());
+            let answer = serde_json::json!({ "error": message, "partial": true });
+            (disk_status(&error), Json(answer)).into_response()
+        }
+    }
+}
+
+/// The status to answer with when the disk refused a delete.
+fn disk_status(error: &std::io::Error) -> StatusCode {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
+        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+/// Deletes one entry of the served folder: a file, a link, or a folder with everything in it.
+async fn delete_entry(
+    State(app): State<Arc<App>>,
+    query: Result<Query<PathQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    if !app.options.allow_delete {
+        return fail(StatusCode::FORBIDDEN, "deleting is off: start okfs with --allow-delete");
+    }
+    if let Err(why) = own_page(&headers, request_host(&headers, &uri), &app.options.allow_hosts) {
+        return fail(StatusCode::FORBIDDEN, &why);
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the path cannot be read");
+    };
+    let worker = Arc::clone(&app);
+    tokio::task::spawn_blocking(move || remove_entry(&worker, &query.path))
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "the delete failed"))
 }
 
 async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, headers: HeaderMap) -> Response {
@@ -573,6 +730,8 @@ struct Config {
     /// The `--header` note, rendered.
     header: Option<String>,
     target: Target,
+    /// True when deleting is on. The page shows its delete control only then.
+    delete: bool,
 }
 
 fn theme_infos(app: &App) -> Vec<ThemeInfo> {
@@ -647,6 +806,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
         themes: theme_infos(&app),
         header: header_note,
         target,
+        delete: app.options.allow_delete,
     };
     // Inside a script element, only "<" could end the block early.
     let config = serde_json::to_string(&config)
@@ -670,23 +830,41 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
         )
         .replace("<!--okfs:css-->", &extra)
         .replace("<!--okfs:config-->", &config);
+    let policy = if app.options.allow_delete {
+        format!("{PAGE_POLICY}; {NO_FRAMING}")
+    } else {
+        PAGE_POLICY.to_owned()
+    };
     (
         if missing { StatusCode::NOT_FOUND } else { StatusCode::OK },
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-cache"),
-            (header::CONTENT_SECURITY_POLICY, PAGE_POLICY),
+            (header::CONTENT_SECURITY_POLICY, policy.as_str()),
         ],
         html,
     )
         .into_response()
 }
 
-/// Reading gets the page. Every other method is refused: nothing here writes.
+/// Reading gets the page. Every other method is refused: no address of a file takes a write.
 async fn page_or_refuse(state: State<Arc<App>>, method: Method, uri: Uri) -> Response {
     if method == Method::GET || method == Method::HEAD {
         page(state, uri).await
     } else {
         (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "GET, HEAD")]).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hosts_split_into_name_and_port() {
+        assert_eq!(split_host("localhost:8080"), ("localhost", Some("8080")));
+        assert_eq!(split_host("files.example.test"), ("files.example.test", None));
+        assert_eq!(split_host("[::1]:8080"), ("::1", Some("8080")));
+        assert_eq!(split_host("[::1]"), ("::1", None));
     }
 }

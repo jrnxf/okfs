@@ -19,6 +19,8 @@ export interface Config {
   /** The `--header` note, already rendered and cleaned by the server. */
   header: string | null;
   target: { path: string; kind: "dir" | "file" | "missing" };
+  /** True when the server was started with deleting on. */
+  delete: boolean;
 }
 
 export const config: Config = JSON.parse(document.getElementById("okfs-config")?.textContent ?? "{}");

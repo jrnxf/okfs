@@ -15,6 +15,8 @@ const SETTLE = 40;
 
 /** The modifier this platform uses for shortcuts, as it is written on the key. */
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+/** The key that deletes. It takes two fingers, so it is not hit by rolling over `j` and `k`. */
+export const DELETE_KEY = `${MOD === "⌘" ? "⇧" : "Shift"} D`;
 
 interface Command {
   title: string;
@@ -24,6 +26,12 @@ interface Command {
 
 function commands(): Command[] {
   const { s } = store;
+  const under = s.open ?? store.cur();
+  const here = store.here();
+  // Both are missing when the server has deleting off.
+  const deletes: Command[] = [];
+  if (config.delete && under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
+  if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
   return [
     { title: s.view === "list" ? "Switch to grid view" : "Switch to list view", key: "g", run: () => store.setView() },
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
@@ -35,6 +43,7 @@ function commands(): Command[] {
     ...config.themes.map((theme) => ({ title: `Theme: ${theme.name}`, run: () => setTheme(theme.id) })),
     { title: "Go to the top folder", run: () => void store.showDir("") },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
+    ...deletes,
     { title: "Keyboard shortcuts", key: "?", run: () => store.setHelp(true) },
   ];
 }
@@ -151,6 +160,7 @@ export function Palette() {
           <input
             ref={input}
             type="text"
+            name="find"
             value={value}
             placeholder={`Find a file or folder anywhere in ${config.root}`}
             spellcheck={false}

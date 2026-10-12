@@ -1,0 +1,6 @@
+# cargo, clippy, rustfmt and bun come from the nix dev shell, so every check runs
+# through it. These are the checks under "Develop" in the README.
+commands:
+  test: >-
+    nix --extra-experimental-features 'nix-command flakes' develop -c sh -c
+    'cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check && cd ui && bun run check'

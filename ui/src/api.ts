@@ -3,6 +3,8 @@
 export interface Item {
   n: string;
   d?: boolean;
+  /** A link. Deleting it removes the link and leaves what it points at. */
+  l?: boolean;
   s: number;
   m: number;
   c?: number;
@@ -15,6 +17,8 @@ export interface Readme {
 
 export interface Listing {
   path: string;
+  /** The folder is reached through a link. Deleting it removes the link only. Sent with a whole listing only. */
+  link?: boolean;
   entries: Item[];
   total: number;
   readme: Readme | null;
@@ -63,6 +67,8 @@ export const urls = {
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
   thumb: (path: string, width: number, modified: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}`,
+  /** One entry, for deleting it. */
+  entry: (path: string) => `/api/entry?path=${encodeURIComponent(path)}`,
   raw: (path: string) => `/raw/${encode(path)}`,
   zip: (path: string) => `/zip/${encode(path)}`,
   /** The shareable address of a folder or of an open file. */
@@ -96,6 +102,27 @@ export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> 
   const response = await fetch(url, { signal });
   if (!response.ok) throw new HttpError(response.status);
   return (await response.json()) as T;
+}
+
+/** A delete that did not go through, with the server's reason. */
+export class DeleteError extends Error {
+  /** `partial`: a folder was being removed when it stopped, so part of it may be gone. */
+  constructor(
+    reason: string,
+    readonly partial: boolean,
+  ) {
+    super(reason);
+  }
+}
+
+/** Deletes a file, a link, or a folder with everything in it. Fails with a `DeleteError`. */
+export async function deleteEntry(path: string): Promise<void> {
+  // The header marks the request as the page's own: the server refuses a delete without it.
+  const response = await fetch(urls.entry(path), { method: "DELETE", headers: { "x-okfs": "delete" } });
+  if (response.ok) return;
+  const body: { error?: unknown; partial?: unknown } = await response.json().catch(() => ({}));
+  const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
+  throw new DeleteError(reason, body.partial === true);
 }
 
 export const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("/")));

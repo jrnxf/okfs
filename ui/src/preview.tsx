@@ -23,11 +23,19 @@ const FOLDER_PEEK = 14;
 export type Report = (path: string, facts: string[]) => void;
 
 const answers = new Map<string, unknown>();
+/** One for each `useLoaded` on screen: called when the answers are dropped. */
+const askers = new Set<() => void>();
 function remember(url: string, data: unknown): void {
   answers.delete(url);
   answers.set(url, data);
   // Oldest first out: a Map keeps insertion order.
   if (answers.size > 200) answers.delete(answers.keys().next().value as string);
+}
+
+/** Drops every answer kept, and asks again for those on screen. After a delete, some of them describe what is gone. */
+export function forgetAnswers(): void {
+  answers.clear();
+  for (const again of askers) again();
 }
 
 interface Loaded<T> {
@@ -40,6 +48,15 @@ interface Loaded<T> {
 /** Fetches JSON for the pane. Keeps the last answer on screen until the next one arrives. */
 export function useLoaded<T>(url: string, settle = SETTLE): Loaded<T> {
   const [state, setState] = useState<Loaded<T>>({ url, data: answers.get(url) as T | undefined });
+  // Counts the times the answers were dropped while this was on screen. Each one asks again.
+  const [dropped, setDropped] = useState(0);
+  useEffect(() => {
+    const again = () => setDropped((count) => count + 1);
+    askers.add(again);
+    return () => {
+      askers.delete(again);
+    };
+  }, []);
   useEffect(() => {
     const known = answers.get(url) as T | undefined;
     if (known !== undefined) {
@@ -64,7 +81,7 @@ export function useLoaded<T>(url: string, settle = SETTLE): Loaded<T> {
       clearTimeout(clear);
       abort.abort();
     };
-  }, [url, settle]);
+  }, [url, settle, dropped]);
   return state;
 }
 

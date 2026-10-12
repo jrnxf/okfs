@@ -1,9 +1,12 @@
-// The theme switcher and the list of keys.
+// The theme switcher, the list of keys and the delete dialog.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { DeleteError } from "./api";
 import { config } from "./config";
-import { MOD } from "./palette";
-import { store } from "./store";
+import * as fmt from "./fmt";
+import { KindIcon } from "./icons";
+import { DELETE_KEY, MOD } from "./palette";
+import { type Doomed, store } from "./store";
 import { type Scheme, active, isDark, setScheme, setTheme } from "./theme";
 
 const SCHEMES: Scheme[] = ["light", "dark", "auto"];
@@ -71,6 +74,7 @@ const KEYS: [string[], string][] = [
   [["s"], "Change the sort"],
   [["t"], "Light or dark"],
   [["esc"], "Close the preview"],
+  ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies [string[], string]] : []),
   [["?"], "This list"],
 ];
 
@@ -91,6 +95,84 @@ export function Help() {
             </>
           ))}
         </dl>
+      </div>
+    </div>
+  );
+}
+
+/** Asks before a delete. It names what goes, and Enter does not confirm: the focus starts on Cancel. */
+export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
+  const cancel = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+
+  // At the start, and again after a failure: Enter on a dialog just put up never deletes.
+  useEffect(() => {
+    if (!busy) cancel.current?.focus();
+  }, [busy]);
+
+  const close = () => {
+    if (!busy) store.cancelDelete();
+  };
+  // On the document, so the keys still work after a click on the dialog's text took the focus away.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (!busy) store.cancelDelete();
+      } else if (event.key === "Tab") {
+        // Two buttons and nothing else: the focus goes back and forth and never leaves the dialog.
+        (document.activeElement === cancel.current ? confirm : cancel).current?.focus();
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy]);
+  const run = () => {
+    setBusy(true);
+    setFailure("");
+    store.remove(doomed).catch((error: unknown) => {
+      const stopped = error instanceof DeleteError && error.partial ? "Stopped part way" : "Not deleted";
+      setBusy(false);
+      setFailure(`${stopped}: ${error instanceof Error ? error.message : String(error)}.`);
+    });
+  };
+  const noun = doomed.link ? "link" : doomed.dir ? "folder" : "file";
+  let what = "This file will be removed.";
+  if (doomed.link) {
+    what = `This is a link to a ${doomed.dir ? "folder" : "file"}. Only the link will be removed: what it points at stays as it is.`;
+  } else if (doomed.dir) {
+    if (doomed.count === 0) what = "This empty folder will be removed.";
+    else if (doomed.count === undefined) what = "This folder will be removed with everything in it.";
+    else what = `This folder holds ${fmt.items(doomed.count)}. It will be removed with everything in it.`;
+  }
+  return (
+    <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && close()}>
+      <div class="ask" role="alertdialog" aria-modal="true" aria-labelledby="ask-title" aria-describedby="ask-what">
+        <h2 id="ask-title">Delete this {noun}?</h2>
+        <div class="ask-name">
+          <KindIcon kind={doomed.kind} />
+          <span class="num">/{doomed.path}</span>
+        </div>
+        <p id="ask-what">
+          {what} <b>There is no undo.</b>
+        </p>
+        {failure && (
+          <p class="ask-fail" role="alert">
+            {failure}
+          </p>
+        )}
+        <div class="ask-do">
+          <button class="btn btn-line" ref={cancel} disabled={busy} onClick={close}>
+            Cancel
+          </button>
+          <button class="btn btn-fill" ref={confirm} disabled={busy} onClick={run}>
+            {busy ? "Deleting" : `Delete ${noun}`}
+          </button>
+        </div>
       </div>
     </div>
   );

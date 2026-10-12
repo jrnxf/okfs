@@ -19,8 +19,9 @@ Examples:
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
   okfs --theme ./mine.css         start in your own theme
   okfs theme check ./mine.css     check a theme file against the contract
+  okfs --allow-delete             let visitors delete files and folders
 
-Everything is read only. There is no upload, no delete and no editing.";
+Everything is read only unless you pass --allow-delete. There is no upload and no editing.";
 
 /// A web file browser. Run it in a folder and flip through every file inside.
 #[derive(Parser)]
@@ -73,6 +74,10 @@ struct Serve {
     /// Also answer to this host name, for a proxy or a tunnel. Repeatable
     #[arg(long, value_name = "NAME")]
     allow_host: Vec<String>,
+
+    /// Let anyone who can reach the address delete files and folders. Off by default
+    #[arg(long)]
+    allow_delete: bool,
 }
 
 #[derive(Subcommand)]
@@ -165,6 +170,7 @@ fn serve(args: Serve) -> Result<(), String> {
         header: args.header,
         allow_hosts: args.allow_host,
         check_host: args.bind.is_loopback(),
+        allow_delete: args.allow_delete,
         cache: dirs::cache_dir().map(|dir| dir.join("okfs").join("thumbs")),
     };
     let theme_name = match &options.theme {
@@ -182,7 +188,12 @@ fn serve(args: Serve) -> Result<(), String> {
             .map_err(|error| format!("cannot listen on {address}: {error}"))?;
         let address = listener.local_addr().unwrap_or(address);
         println!("okfs {}", env!("CARGO_PKG_VERSION"));
-        println!("  serving  {} (read only)", root.dir().display());
+        let writes = if args.allow_delete {
+            "visitors can delete"
+        } else {
+            "read only"
+        };
+        println!("  serving  {} ({writes})", root.dir().display());
         println!("  at       http://{address}/");
         println!("  theme    {theme_name}");
         axum::serve(listener, server::router(app))

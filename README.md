@@ -12,7 +12,7 @@
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree.
 - Themes: one CSS file each, five built in, light and dark.
-- Read only. There is no upload, no delete, no editing and no accounts.
+- Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/grid-dark.webp"><img src="docs/screenshots/grid-light.webp" alt="A folder of photos in grid view, with covers on the tiles" width="49%"></picture>
@@ -67,6 +67,7 @@ A folder's `README.md` is shown under its listing.
 | `--accent <COLOR>` | Accent color in every theme, as hex: `"#2d6a4f"`. |
 | `-H`, `--hidden` | Show and serve dotfiles. They are left out by default. |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
+| `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
 
 </details>
 
@@ -83,6 +84,7 @@ A folder's `README.md` is shown under its listing.
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `Esc` | Close the preview |
+| `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 
 ### Behind a proxy or a tunnel
@@ -92,6 +94,24 @@ While okfs listens on a loopback address it answers only to `localhost` and to p
 ```sh
 okfs --allow-host files.example.com
 ```
+
+### Deleting
+
+okfs is read only until you start it with `--allow-delete`:
+
+```sh
+okfs --allow-delete
+```
+
+The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the palette has it as a command. The palette can also delete the folder you are in, and on a narrow screen such as a phone a button at the top does that. A folder goes with everything in it. okfs always asks first and names what will be removed. There is no trash and no undo.
+
+okfs deletes only what it shows. A folder that holds something it does not show, at any depth, is not deleted: okfs removes nothing and tells you why. That is a dotfile while `--hidden` is off, or a symbolic link that leads out of the served folder. Pass `--hidden` to delete dotfiles too, or remove the entry yourself first. A symbolic link is removed as a link, and the file or folder it points at stays.
+
+A folder is not removed in one step. If the disk refuses part way, for example at a subfolder okfs has no permission to change, okfs says that it stopped part way and shows what is left. What it removed before that point does not come back.
+
+okfs has no accounts, so with this flag anyone who can reach the address can delete. Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
+
+Deleting works only from the address okfs answers to. If you reach okfs through a proxy, a tunnel or a host name of your own, name it with `--allow-host`, also when okfs listens on `0.0.0.0`.
 
 ## Themes
 
@@ -173,9 +193,19 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 ## What is safe to serve
 
 - No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
-- Nothing is written into the served folder. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
+- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-delete`. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
 - HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder.
 - okfs has no accounts. Anyone who can reach the address can read every file in the folder.
+
+With `--allow-delete`:
+
+- Anyone who can reach the address can also delete every file and folder in it. There is no password in front of it and no way to get a file back. Use it where you would hand everyone on that network the folder itself.
+- Only what okfs shows can go: never the served folder itself, and no dotfile unless you also pass `--hidden`. A folder that holds something okfs does not show, at any depth, is refused whole and nothing in it is removed.
+- Deleting never follows a symbolic link that sits in the folder. A link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted. A link that leads out of the served folder is not shown, so it is never removed. A delete therefore stays inside the served folder, as long as nothing else changes the folder while the delete runs.
+- Deleting is not hardened against another process on the same machine that rewrites the served folder while a delete runs, for example one that swaps a folder for a link at that moment. Do not use `--allow-delete` on a folder that local users you do not trust can write to.
+- Another website cannot make your browser delete. okfs takes a delete only from its own page, at the address it answers to: `localhost`, a plain address, or a name from `--allow-host`.
+- Another website cannot put the page in a frame and steer your clicks onto the delete button. With this flag the page tells the browser that only okfs itself may frame it (`frame-ancestors 'self'`). Without the flag the page can still be framed, and nothing can be deleted through it.
+- An HTML or SVG file in the folder cannot delete its neighbours. It runs sandboxed, in an origin of its own.
 
 ## Develop
 
