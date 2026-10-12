@@ -181,7 +181,7 @@ impl Index {
         let mut dirty = HashSet::new();
         let mut touched = HashSet::new();
         // A folder that came into place brought what it holds with it, and no event names that.
-        let mut arrived = false;
+        let mut arrived = HashSet::new();
         for event in batch {
             let Ok(event) = event else {
                 return self.rebuild();
@@ -202,7 +202,7 @@ impl Index {
                     if let Some(dir) = self.dir_of(&path) {
                         dirty.insert(dir);
                     }
-                    arrived = arrived || self.shown_folder(&path);
+                    arrived.extend(self.shown_folder(&path));
                 }
                 touched.insert(path);
             }
@@ -217,6 +217,10 @@ impl Index {
                 told.entry(dir).or_default().push(name);
             }
         }
+        // Under a name the index already holds, it still holds the folder that was there before.
+        for dir in &arrived {
+            self.walk_again(dir);
+        }
         for dir in dirty {
             if self.refresh(&dir) {
                 told.entry(dir).or_default();
@@ -225,7 +229,7 @@ impl Index {
         for (dir, files) in told {
             self.feed.tell(Change::Folder { dir, files });
         }
-        if arrived {
+        if !arrived.is_empty() {
             self.feed.tell(Change::Sync);
         }
     }
@@ -249,10 +253,13 @@ impl Index {
         Some(paths::file_name(&found.rel).to_owned())
     }
 
-    /// True for a changed path that is now a folder a listing shows. A link to a
-    /// folder is not one.
-    fn shown_folder(&self, path: &Path) -> bool {
-        fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) && self.shown(path).is_some()
+    /// The real place of a changed path, when it is now a folder that a listing shows.
+    /// A link to a folder is not one.
+    fn shown_folder(&self, path: &Path) -> Option<String> {
+        if !fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
+            return None;
+        }
+        self.root.place(&self.shown(path)?)
     }
 
     /// Reads one folder again, folds what changed into the index and tells the pages.
@@ -313,21 +320,31 @@ impl Index {
     }
 
     /// Walks one folder again with everything under it, in place of what the index
-    /// held of it. For a folder that changed at more than one depth: `reread` looks
-    /// at one folder only.
+    /// held of it, and tells the pages. For a folder that changed at more than one
+    /// depth: `reread` looks at one folder only.
     pub fn rewalk(&self, dir: &str) {
+        // It changed at depths no single folder names.
+        if self.walk_again(dir) {
+            self.feed.tell(Change::Sync);
+        }
+    }
+
+    /// Walks one folder again with everything under it, in place of what the index
+    /// held of it. False when the index does not hold it.
+    fn walk_again(&self, dir: &str) -> bool {
+        // Not indexed yet: its parent's reread will walk it.
+        if self.child_count(dir).is_none() {
+            return false;
+        }
         let fresh = self.walk(dir);
         let mut tree = self.tree.write().expect("the index lock");
-        // Not indexed yet: its parent's reread will walk it.
         if !tree.dirs.contains_key(dir) {
-            return;
+            return false;
         }
         tree.remove(dir);
         tree.count += fresh.count;
         tree.dirs.extend(fresh.dirs);
-        drop(tree);
-        // It changed at depths no single folder names.
-        self.feed.tell(Change::Sync);
+        true
     }
 
     /// Drops a folder that is gone. True when the index held it.
@@ -640,18 +657,31 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_renamed_into_place_tells_the_pages_to_catch_up() {
+    fn a_folder_renamed_into_place_is_walked_again_and_tells_the_pages_to_catch_up() {
         let mut site = Watched::new(false);
-        fs::create_dir(site.served.join("build")).unwrap();
-        fs::write(site.served.join("build/b.txt"), "built").unwrap();
+        fs::create_dir_all(site.served.join("build/deep")).unwrap();
+        fs::write(site.served.join("build/fresh.txt"), "built").unwrap();
+        fs::write(site.served.join("build/deep/inner.txt"), "built").unwrap();
         site.index.build();
-        // Its files come with it: no event names them.
+        // What it holds comes with it: no event names that.
         fs::rename(site.served.join("sub"), site.served.join("sub.old")).unwrap();
         fs::rename(site.served.join("build"), site.served.join("sub")).unwrap();
         let from = EventKind::Modify(ModifyKind::Name(RenameMode::From));
         let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
         let told = site.see(&[(from, "sub"), (to, "sub.old"), (from, "build"), (to, "sub")]);
         assert_eq!(told, [folder("", &[]), Change::Sync]);
+
+        // The index holds the folder that is there now, under the name of the one before.
+        assert_eq!(site.index.child_count("sub"), Some(2));
+        assert_eq!(site.index.child_count("sub/deep"), Some(1));
+        assert_eq!(site.index.child_count("sub.old"), Some(1));
+        assert_eq!(site.index.child_count("build"), None);
+        let found = |query: &str| -> Vec<String> {
+            let hits = site.index.search(query, 10).hits;
+            hits.into_iter().map(|hit| hit.path).collect()
+        };
+        assert_eq!(found("fresh"), ["sub/fresh.txt"]);
+        assert_eq!(found("inner"), ["sub/deep/inner.txt"]);
     }
 
     #[test]
