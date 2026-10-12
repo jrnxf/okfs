@@ -1,7 +1,7 @@
 // Twin Pane: a dense list on the left, the file under the cursor on the right, a status line below.
 
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Archive, type Listing, type TextPreview, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
@@ -9,7 +9,7 @@ import { Icon, KindIcon, Sprite } from "./icons";
 import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { DELETE_KEY, MOD, Palette } from "./palette";
-import { Preview, Prose, useLoaded } from "./preview";
+import { Preview, Prose, lookAhead, useLoaded } from "./preview";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { type Cell, VGrid } from "./vgrid";
@@ -268,6 +268,14 @@ export function App() {
 
   const shown = s.open ?? store.cur();
   const here = store.here();
+
+  // What lies past the cursor, the way it is moving, is asked for before the cursor gets there.
+  const cursorWas = useRef(s.cursor);
+  useLayoutEffect(() => {
+    const step = s.cursor >= cursorWas.current ? 1 : -1;
+    cursorWas.current = s.cursor;
+    if (s.status === "ready") lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
+  }, [s.cursor, s.entries, s.status]);
 
   useEffect(() => {
     document.body.classList.toggle("open", s.open !== null);

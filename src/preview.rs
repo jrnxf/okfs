@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
 
@@ -32,6 +33,9 @@ pub enum Preview {
         html: String,
         lines: usize,
         highlighted: bool,
+        /// Only the start of the file is in `html`.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        more: bool,
     },
     Table {
         head: Vec<String>,
@@ -55,8 +59,9 @@ pub enum Preview {
     },
 }
 
-/// Builds the preview of the file at `abs`, known to the browser as `rel`.
-pub fn of(abs: &Path, rel: &str, size: u64) -> std::io::Result<Preview> {
+/// Builds the preview of the file at `abs`, known to the browser as `rel`. With `first`,
+/// source code is cut to that many lines. `gone` turns true when the reader has left.
+pub fn of(abs: &Path, rel: &str, size: u64, first: Option<usize>, gone: &AtomicBool) -> std::io::Result<Preview> {
     if size > MAX_TEXT {
         return Ok(Preview::None { reason: "large" });
     }
@@ -84,11 +89,12 @@ pub fn of(abs: &Path, rel: &str, size: u64) -> std::io::Result<Preview> {
             lines,
         },
         _ => {
-            let code = render::code(text, name);
+            let code = render::code_start(text, name, first, gone);
             Preview::Code {
                 html: code.html,
                 lines: code.lines,
                 highlighted: code.highlighted,
+                more: code.more,
             }
         }
     })
@@ -124,6 +130,7 @@ pub fn head(abs: &Path, rel: &str) -> std::io::Result<Preview> {
         html: code.html,
         lines: code.lines,
         highlighted: code.highlighted,
+        more: false,
     })
 }
 

@@ -28,7 +28,7 @@ export interface Listing {
 
 export type TextPreview =
   | { kind: "markdown"; html: string; lines: number }
-  | { kind: "code"; html: string; lines: number; highlighted: boolean }
+  | { kind: "code"; html: string; lines: number; highlighted: boolean; more?: boolean }
   | { kind: "table"; head: string[]; rows: string[][]; numeric: boolean[]; total: number }
   | { kind: "json"; text: string; lines: number }
   | { kind: "doc"; title: string; text: string }
@@ -74,6 +74,9 @@ export const urls = {
   list: (path: string, limit?: number) =>
     `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}`,
   preview: (path: string) => `/api/preview?path=${encodeURIComponent(path)}`,
+  /** Several text files in one answer, by path, source code cut to its first `lines` lines. */
+  previews: (paths: string[], lines: number) =>
+    `/api/previews?lines=${lines}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,
   /** The start of a text file only, for a grid tile. */
   head: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&head=1`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
