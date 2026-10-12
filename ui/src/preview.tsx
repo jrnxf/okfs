@@ -8,7 +8,10 @@ import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
 import type { Entry } from "./store";
 
-/** Frames and players cost a lot to start, so they wait until the cursor has stopped for this long. */
+/**
+ * Frames and players cost a lot to start. Under a held key, which passes a file faster than one can start,
+ * they wait until the key is up or the cursor has stopped for this long.
+ */
 const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
@@ -27,6 +30,11 @@ const FIRST_LINES = 80;
  * the page for half a second on a file of 1 MB.
  */
 const WHOLE_REST = 500;
+/**
+ * Rows of a table or of an archive's listing drawn first. Drawing costs by the row, 2,000 of them a tenth of
+ * a second or two, so the rest wait for the cursor to rest, as the rest of a source file does.
+ */
+const FIRST_ROWS = 100;
 /** Entries past the cursor, in the direction it moves, that are asked for before the cursor gets there. */
 const AHEAD = 16;
 /** Pictures cost more to hold than text does: fewer of them are loaded ahead. */
@@ -249,6 +257,43 @@ function useSettled(key: string, delay: number): boolean {
   return settled === key;
 }
 
+/** True while a key is held down and repeating: the cursor is passing files, not stopping on them. */
+let held = false;
+// Heard on the way down, before the key moves the cursor: what it brings on screen then knows.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    held = event.repeat;
+  },
+  true,
+);
+document.addEventListener(
+  "keyup",
+  () => {
+    held = false;
+  },
+  true,
+);
+
+/**
+ * True once a frame or a player may start. That is with the move itself, by a click or one press of a key.
+ * Under a held key it waits: see `SETTLE_HEAVY`. For a component that is made anew for each file.
+ */
+function useUnhurried(): boolean {
+  const [go, setGo] = useState(!held);
+  useEffect(() => {
+    if (go) return;
+    const start = () => setGo(true);
+    const timer = setTimeout(start, SETTLE_HEAVY);
+    document.addEventListener("keyup", start);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("keyup", start);
+    };
+  }, [go]);
+  return go;
+}
+
 function Card({ entry, line }: { entry: Entry; line: string }) {
   return (
     <div class="pv-center">
@@ -337,7 +382,7 @@ function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report
 
 function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
   const [broken, setBroken] = useState("");
-  const settled = useSettled(entry.path, SETTLE_HEAVY);
+  const settled = useUnhurried();
   // A rewritten file is loaded again only once nothing is playing: a player is never cut off.
   const [playing, setPlaying] = useState(false);
   const [loaded, setLoaded] = useState(stamp);
@@ -374,7 +419,7 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
 }
 
 function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
-  const settled = useSettled(entry.path, SETTLE_HEAVY);
+  const settled = useUnhurried();
   // A rewritten file loads in a frame of its own, behind the one on screen, and takes its place once it
   // is ready: a save never shows an empty pane.
   const [shown, setShown] = useState(stamp);
@@ -402,6 +447,7 @@ function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
 
 function Zip({ entry, report }: { entry: Entry; report: Report }) {
   const { data, failed, url } = useLoaded<Archive>(urls.archive(entry.path));
+  const rested = useSettled(entry.path, WHOLE_REST);
   const total = data?.total;
   useEffect(() => {
     if (total !== undefined && url === urls.archive(entry.path)) report(entry.path, [`${fmt.count(total)} ${total === 1 ? "entry" : "entries"}`]);
@@ -419,7 +465,7 @@ function Zip({ entry, report }: { entry: Entry; report: Report }) {
             </tr>
           </thead>
           <tbody>
-            {data.entries.map((item) => (
+            {(rested ? data.entries : data.entries.slice(0, FIRST_ROWS)).map((item) => (
               <tr key={item.name}>
                 <td>{item.name}</td>
                 <td class="r num">{item.dir ? "" : fmt.size(item.size)}</td>
@@ -561,7 +607,7 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((row, at) => (
+                {(rested ? data.rows : data.rows.slice(0, FIRST_ROWS)).map((row, at) => (
                   <tr>
                     <td class="i r num">{at + 1}</td>
                     {row.map((value, column) => (
