@@ -239,7 +239,6 @@ export function Palette() {
     else if (key === "Enter") pick(at);
     else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);
-    else if (key === "Backspace" && menu && value === "") back();
     else return;
     event.preventDefault();
   };
