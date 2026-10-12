@@ -1,7 +1,7 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
 import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
-import { config } from "./config";
+import { type Config, config, locate } from "./config";
 import { type Kind, extension, kindOf } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
@@ -207,7 +207,7 @@ export class Store {
     s.readme = listing.readme;
   }
 
-  /** Shows that there is no folder at a path. */
+  /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
     Object.assign(this.s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
@@ -339,8 +339,9 @@ export class Store {
   }
 
   /**
-   * Reads the folder on screen again, soon. `all`: the files that were written are not known by name,
-   * so they are told by their time and size, and nothing kept about the other folders is trusted.
+   * Reads the folder on screen again, soon, or asks again for an address that had nothing. `all`: the files
+   * that were written are not known by name, so they are told by their time and size, and nothing kept about
+   * the other folders is trusted.
    */
   private catchUp(all = false): void {
     this.due = { all: all || this.due?.all === true };
@@ -370,6 +371,7 @@ export class Store {
     const { path } = s;
     const turn = this.turn;
     if (s.status === "loading") return;
+    if (s.status === "missing") return this.arrive(all);
     let listing: Listing | null = null;
     try {
       listing = await getJson<Listing>(urls.list(path));
@@ -383,7 +385,6 @@ export class Store {
       return;
     }
     if (!listing) {
-      if (s.status === "missing" && !all) return;
       this.lose(path);
       this.distrust();
       this.emit();
@@ -411,22 +412,41 @@ export class Store {
     this.emit();
   }
 
+  /**
+   * Nothing is at the page's address. Asks the server for it again, the way a reload does, and shows what
+   * is there now: a folder and a file come back the same way.
+   */
+  private async arrive(all: boolean): Promise<void> {
+    const turn = this.turn;
+    // The server may not answer: the stream drops too, and catches up when it is back.
+    const found = await locate().catch(() => undefined);
+    // The reader went elsewhere meanwhile. A call to catch up on everything still stands.
+    if (turn !== this.turn || this.s.status !== "missing") {
+      if (all) this.catchUp(true);
+      return;
+    }
+    if (all) this.distrust();
+    if (found) await this.land(found).catch(() => undefined);
+  }
+
   /** Goes to any path in the tree: a folder is shown, a file is opened in its folder. */
   go(path: string, dir: boolean, history: HistoryMode = "push", listing = false): Promise<void> {
     if (dir) return this.showDir(path, { history, listing });
     return this.showDir(parentOf(path), { open: nameOf(path), history });
   }
 
-  start(): Promise<void> {
-    const { path, kind } = config.target;
-    addEventListener("popstate", () => void this.route());
-    if (kind === "missing") {
-      this.lose(path);
-      this.emit();
-      return Promise.resolve();
-    }
+  /** Shows what the server found at the page's address: a folder, a file in its folder, or nothing. */
+  private land({ path, kind }: Config["target"]): Promise<void> {
     // A reload of a folder whose index page was closed stays on the listing.
-    return this.go(path, kind === "dir", "replace", mark().listing === true);
+    if (kind !== "missing") return this.go(path, kind === "dir", "replace", mark().listing === true);
+    this.lose(path);
+    this.emit();
+    return Promise.resolve();
+  }
+
+  start(): Promise<void> {
+    addEventListener("popstate", () => void this.route());
+    return this.land(config.target);
   }
 
   /** Follows the address bar after back or forward. */

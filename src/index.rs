@@ -3,6 +3,7 @@
 //! watcher is what open pages follow: every change it reads is told to the feed.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -16,7 +17,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
 use crate::live::{Change, Feed};
-use crate::paths::{self, Root};
+use crate::paths::{self, Resolved, Root};
 
 /// How long the tree must be quiet before changes are read.
 const SETTLE: Duration = Duration::from_millis(150);
@@ -179,6 +180,8 @@ impl Index {
     fn absorb(&self, batch: Vec<notify::Result<notify::Event>>) {
         let mut dirty = HashSet::new();
         let mut touched = HashSet::new();
+        // A folder that came into place brought what it holds with it, and no event names that.
+        let mut arrived = false;
         for event in batch {
             let Ok(event) = event else {
                 return self.rebuild();
@@ -195,8 +198,11 @@ impl Index {
                 EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
             );
             for path in event.paths {
-                if !written && let Some(dir) = self.dir_of(&path) {
-                    dirty.insert(dir);
+                if !written {
+                    if let Some(dir) = self.dir_of(&path) {
+                        dirty.insert(dir);
+                    }
+                    arrived = arrived || self.shown_folder(&path);
                 }
                 touched.insert(path);
             }
@@ -219,22 +225,34 @@ impl Index {
         for (dir, files) in told {
             self.feed.tell(Change::Folder { dir, files });
         }
+        if arrived {
+            self.feed.tell(Change::Sync);
+        }
+    }
+
+    /// What a changed path is now, when a listing shows it.
+    fn shown(&self, path: &Path) -> Option<Resolved> {
+        let inner = path.strip_prefix(self.root.dir()).ok()?;
+        let rel = inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
+        self.root.resolve(&rel)
     }
 
     /// The indexed folder a changed path sits in, by its real place, or `None` when
     /// it is not shown.
     fn dir_of(&self, path: &Path) -> Option<String> {
-        let inner = path.parent()?.strip_prefix(self.root.dir()).ok()?;
-        let rel = inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
-        self.root.place(&self.root.resolve(&rel)?)
+        self.root.place(&self.shown(path.parent()?)?)
     }
 
     /// The name of a changed path, when it is a file that a listing shows.
     fn shown_file(&self, path: &Path) -> Option<String> {
-        let inner = path.strip_prefix(self.root.dir()).ok()?;
-        let rel = inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/");
-        let found = self.root.resolve(&rel).filter(|found| found.meta.is_file())?;
+        let found = self.shown(path).filter(|found| found.meta.is_file())?;
         Some(paths::file_name(&found.rel).to_owned())
+    }
+
+    /// True for a changed path that is now a folder a listing shows. A link to a
+    /// folder is not one.
+    fn shown_folder(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) && self.shown(path).is_some()
     }
 
     /// Reads one folder again, folds what changed into the index and tells the pages.
@@ -619,6 +637,21 @@ mod tests {
         names.sort();
         assert_eq!(files, names);
         assert_eq!(site.index.child_count("sub"), Some(501));
+    }
+
+    #[test]
+    fn a_folder_renamed_into_place_tells_the_pages_to_catch_up() {
+        let mut site = Watched::new(false);
+        fs::create_dir(site.served.join("build")).unwrap();
+        fs::write(site.served.join("build/b.txt"), "built").unwrap();
+        site.index.build();
+        // Its files come with it: no event names them.
+        fs::rename(site.served.join("sub"), site.served.join("sub.old")).unwrap();
+        fs::rename(site.served.join("build"), site.served.join("sub")).unwrap();
+        let from = EventKind::Modify(ModifyKind::Name(RenameMode::From));
+        let to = EventKind::Modify(ModifyKind::Name(RenameMode::To));
+        let told = site.see(&[(from, "sub"), (to, "sub.old"), (from, "build"), (to, "sub")]);
+        assert_eq!(told, [folder("", &[]), Change::Sync]);
     }
 
     #[test]

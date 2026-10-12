@@ -791,7 +791,7 @@ async fn an_open_page_is_told_of_what_changes_on_disk() {
             make(turn);
             while let Some((event, data)) = next_change(&mut stream).await {
                 heard.push(data.to_string());
-                assert_eq!(event, "change", "{data}");
+                assert!(event == "change" || event == "sync", "{event}: {data}");
                 let named = |name| data["files"].as_array().unwrap().contains(&Value::from(name));
                 if data["dir"] == dir && file.is_none_or(named) {
                     return;

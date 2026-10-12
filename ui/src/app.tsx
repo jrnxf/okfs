@@ -66,7 +66,7 @@ function FolderCover({ entry }: { entry: Entry }) {
         return (
           <div>
             {kind === "image" && !item.n.toLowerCase().endsWith(".svg") ? (
-              <img src={urls.thumb(path, 160, item.m)} loading="lazy" alt="" />
+              <img src={urls.thumb(path, 160, item.m, item.s)} loading="lazy" alt="" />
             ) : (
               <KindIcon kind={kind} />
             )}
@@ -127,7 +127,7 @@ function Thumb({ entry, width }: { entry: Entry; width: number }) {
   const raw = `${urls.raw(entry.path)}?v=${entry.mtime}.${entry.size}`;
   if (entry.kind === "image" && stage < 2) {
     const wanted = Math.ceil(width * (window.devicePixelRatio || 1));
-    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime) : raw;
+    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime, entry.size) : raw;
     return (
       <div class="th">
         <img src={src} loading="lazy" alt="" onError={() => setStage(stage + 1)} />

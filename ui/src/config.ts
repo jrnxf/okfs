@@ -25,4 +25,12 @@ export interface Config {
   delete: boolean;
 }
 
-export const config: Config = JSON.parse(document.getElementById("okfs-config")?.textContent ?? "{}");
+const read = (page: Document): Partial<Config> => JSON.parse(page.getElementById("okfs-config")?.textContent ?? "{}");
+
+export const config = read(document) as Config;
+
+/** Asks the server again where the page's address leads, the way a reload does. Nothing when it does not say. */
+export async function locate(): Promise<Config["target"] | undefined> {
+  const response = await fetch(location.href);
+  return read(new DOMParser().parseFromString(await response.text(), "text/html")).target;
+}

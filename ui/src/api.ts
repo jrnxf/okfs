@@ -67,8 +67,9 @@ export const urls = {
   head: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&head=1`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
-  thumb: (path: string, width: number, modified: number) =>
-    `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}`,
+  /** The time and size make a rewritten picture a new address: the browser keeps a thumbnail by its address. */
+  thumb: (path: string, width: number, modified: number, size: number) =>
+    `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}&s=${size}`,
   /** The stream of changes to the served folder. */
   events: "/api/events",
   /** One entry, for deleting it. */

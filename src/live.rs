@@ -22,7 +22,7 @@ pub enum Change {
         /// The files in it that were written.
         files: Vec<String>,
     },
-    /// More changed than is worth naming: read again whatever is on screen.
+    /// More changed than is named: read again whatever is on screen.
     Sync,
 }
 
