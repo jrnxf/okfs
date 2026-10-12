@@ -12,6 +12,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .find .sp { flex: 1; text-align: left; }
 .tools { display: flex; align-items: center; gap: 4px; flex: none; }
 .tools .btn { padding: 0 calc(7px * var(--density)); }
+.tools .touch { display: none; }
 
 .main { display: grid; grid-template-columns: minmax(340px, 42%) minmax(0, 1fr); min-height: 0; }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
@@ -88,6 +89,10 @@ body.open .ph .only-open { display: inline-flex; }
   .status { height: calc(44px * var(--density)); padding-bottom: env(safe-area-inset-bottom); }
   .status .hints, .status .mode { display: none; }
   .status .touch { display: inline-flex; height: 32px; }
+  .tools .touch { display: inline-flex; }
+  /* no keys to hint at here, and the count needs the room */
+  .pal-foot span:not(.num, .sp) { display: none; }
+  .ask-do .btn { height: 38px; flex: 1; justify-content: center; }
 }
 
 /* pieces the page adds around the mock's layout */

@@ -1,4 +1,4 @@
-//! Behavior that can break without anyone noticing: the safety rules, ranges,
+//! Behavior that can break without anyone noticing: the safety rules, deleting, ranges,
 //! listings, bounded inputs and the theme gate. Each test drives the real router.
 
 use std::fs;
@@ -55,7 +55,12 @@ impl Site {
     }
 
     fn app(&self, options: Options) -> axum::Router {
-        let root = Root::new(&self.served, false).unwrap();
+        self.serving(false, options)
+    }
+
+    /// `hidden` is the `--hidden` flag: dotfiles are shown and served.
+    fn serving(&self, hidden: bool, options: Options) -> axum::Router {
+        let root = Root::new(&self.served, hidden).unwrap();
         let index = Index::new(root.clone());
         index.build();
         router(App::new(root, index, options).unwrap())
@@ -64,6 +69,48 @@ impl Site {
     fn router(&self) -> axum::Router {
         self.app(Options::default())
     }
+
+    /// With deleting switched on.
+    fn deleting(&self) -> axum::Router {
+        self.app(Options {
+            allow_delete: true,
+            ..Options::default()
+        })
+    }
+}
+
+/// Header names and values to put on a request.
+type Headers<'a> = &'a [(&'a str, &'a str)];
+
+/// The address the page is opened at in these tests.
+const HOME: &str = "localhost:8080";
+
+/// A delete as the page sends it: its own origin, and the header a form cannot add.
+/// `None` when the path cannot be written as an address at all.
+fn page_delete(path: &str) -> Option<Request<Body>> {
+    Request::delete(format!("/api/entry?path={path}"))
+        .header(header::HOST, HOME)
+        .header(header::ORIGIN, format!("http://{HOME}"))
+        .header("x-okfs", "delete")
+        .body(Body::empty())
+        .ok()
+}
+
+async fn delete(app: &axum::Router, path: &str) -> StatusCode {
+    send(app, page_delete(path).unwrap()).await.0.status()
+}
+
+/// The reason a refused delete gives, as the page shows it.
+async fn refusal(app: &axum::Router, request: Request<Body>) -> (StatusCode, String) {
+    let (response, body) = send(app, request).await;
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    (response.status(), body["error"].as_str().unwrap().to_owned())
+}
+
+/// The directives of the policy a page was sent with.
+fn page_policy(response: &Response<()>) -> Vec<String> {
+    let policy = response.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    policy.split(';').map(|directive| directive.trim().to_owned()).collect()
 }
 
 async fn send(app: &axum::Router, request: Request<Body>) -> (Response<()>, Vec<u8>) {
@@ -687,6 +734,578 @@ async fn search_finds_names_across_the_tree_and_follows_changes() {
 
     fs::remove_dir_all(site.served.join("fresh")).unwrap();
     wait_for("zebra", 0).await;
+}
+
+#[tokio::test]
+async fn deleting_is_off_unless_asked_for() {
+    let site = Site::new();
+    let app = site.router();
+    let before = snapshot(&site.served);
+    for path in ["a.txt", "sub", "sub/b.txt", "link-in.txt", ""] {
+        let (response, body) = send(&app, page_delete(path).unwrap()).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+        assert!(String::from_utf8_lossy(&body).contains("--allow-delete"), "{path}");
+    }
+    assert_eq!(snapshot(&site.served), before);
+
+    // The page shows its delete control only when the server says deleting is on.
+    for (app, on) in [(app, false), (site.deleting(), true)] {
+        let (_, body) = get(&app, "/").await;
+        let html = String::from_utf8_lossy(&body).into_owned();
+        assert_eq!(html.contains("\"delete\":true"), on);
+        assert_eq!(html.contains("\"delete\":false"), !on);
+    }
+}
+
+#[tokio::test]
+async fn a_file_or_a_folder_with_its_contents_is_deleted() {
+    let site = Site::new();
+    let app = site.deleting();
+    assert_eq!(json(&app, "/api/search?q=c.rs").await["total"], 1);
+
+    assert_eq!(delete(&app, "a.txt").await, StatusCode::NO_CONTENT);
+    assert!(!site.served.join("a.txt").exists());
+    assert!(site.served.join("file2.txt").exists());
+    assert_eq!(delete(&app, "a.txt").await, StatusCode::NOT_FOUND);
+    assert_eq!(delete(&app, "sub/nope.txt").await, StatusCode::NOT_FOUND);
+    assert_eq!(delete(&app, "nope/b.txt").await, StatusCode::NOT_FOUND);
+
+    assert_eq!(delete(&app, "/sub/deep/").await, StatusCode::NO_CONTENT);
+    assert!(!site.served.join("sub/deep").exists());
+    assert!(site.served.join("sub/b.txt").exists());
+    assert_eq!(delete(&app, "sub").await, StatusCode::NO_CONTENT);
+    assert!(!site.served.join("sub").exists());
+
+    // Nothing the server remembers still shows them.
+    let listing = json(&app, "/api/list?path=").await;
+    assert!(!names(&listing).contains(&"a.txt") && !names(&listing).contains(&"sub"));
+    assert_eq!(json(&app, "/api/search?q=c.rs").await["total"], 0);
+    assert_eq!(json(&app, "/api/search?q=b.txt").await["total"], 0);
+    assert_eq!(json(&app, "/api/search?q=a.txt").await["total"], 0);
+    assert_eq!(json(&app, "/api/search?q=file2").await["total"], 1);
+}
+
+#[tokio::test]
+async fn a_delete_finds_an_entry_only_by_the_name_its_folder_lists() {
+    let site = Site::new();
+    fs::write(site.served.join("A long name.TEXT"), "kept").unwrap();
+    fs::create_dir_all(site.served.join(".dotfolder")).unwrap();
+    fs::write(site.served.join(".dotfolder/kept.txt"), "kept").unwrap();
+    let app = site.deleting();
+    let before = snapshot(&site.served);
+    // Other spellings that some file systems answer to: another case, a short name, a dot at the end.
+    for alias in [
+        "a long name.text",
+        "A LONG NAME.TEXT",
+        "ALONGN~1.TEX",
+        "A long name.TEXT.",
+        "DOTFOL~1",
+    ] {
+        let request = page_delete(&alias.replace(' ', "%20")).unwrap();
+        assert_eq!(send(&app, request).await.0.status(), StatusCode::NOT_FOUND, "{alias}");
+        assert_eq!(snapshot(&site.served), before, "{alias}");
+    }
+    assert_eq!(delete(&app, "A%20long%20name.TEXT").await, StatusCode::NO_CONTENT);
+    assert!(!site.served.join("A long name.TEXT").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
+    use std::os::unix::fs::PermissionsExt;
+    let site = Site::new();
+    let locked = site.served.join("locked");
+    fs::create_dir_all(locked.join("proj/free")).unwrap();
+    fs::write(locked.join("kept.txt"), "kept").unwrap();
+    fs::write(locked.join("proj/note.txt"), "note").unwrap();
+    fs::write(locked.join("proj/free/loose.txt"), "loose").unwrap();
+    // One folder in another in another, with the middle one locked.
+    let middle = site.served.join("chain/locked");
+    fs::create_dir_all(middle.join("inner")).unwrap();
+    fs::write(middle.join("inner/quartz.dat"), "deep").unwrap();
+    // A folder that may be read and not written to: no name can be taken out of it.
+    let lock = |mode: u32| {
+        for dir in [&locked, &middle] {
+            fs::set_permissions(dir, fs::Permissions::from_mode(mode)).unwrap();
+        }
+    };
+    lock(0o555);
+    if fs::write(locked.join("probe"), "").is_ok() {
+        // Whoever runs this is let past the permission, as root is: nothing can be made to fail.
+        return lock(0o755);
+    }
+    let app = site.deleting();
+    let indexed = json(&app, "/api/search?q=loose").await["indexed"].as_u64().unwrap();
+    let answer = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let (response, body) = send(&app, page_delete(path).unwrap()).await;
+            (response.status(), serde_json::from_slice::<Value>(&body).unwrap())
+        }
+    };
+
+    // A file in it fails before anything is removed. A folder in it is emptied, and then cannot go itself.
+    let file = answer("locked/kept.txt").await;
+    let folder = answer("locked/proj").await;
+    let found = json(&app, "/api/search?q=loose").await;
+    // A folder that loses only what is deepest in it: every folder on the way down stays, with the same names.
+    let chain = answer("chain").await;
+    lock(0o755);
+
+    assert_eq!(
+        file,
+        (
+            StatusCode::FORBIDDEN,
+            serde_json::json!({ "error": "permission denied" })
+        )
+    );
+    assert_eq!(fs::read_to_string(locked.join("kept.txt")).unwrap(), "kept");
+    assert_eq!(folder.0, StatusCode::FORBIDDEN);
+    assert_eq!(folder.1["partial"], true);
+    let why = folder.1["error"].as_str().unwrap();
+    assert!(
+        why.contains("permission denied") && why.contains("part of the folder may already be gone"),
+        "{why}"
+    );
+    assert_eq!(fs::read_dir(locked.join("proj")).unwrap().count(), 0);
+
+    // What the page then asks for is what is left: the folder, with nothing in it.
+    let listing = json(&app, "/api/list?path=locked").await;
+    let proj = listing["entries"].as_array().unwrap().iter().find(|e| e["n"] == "proj");
+    assert_eq!(proj.unwrap()["c"], 0);
+    assert_eq!(found["total"], 0, "{found}");
+    assert_eq!(found["indexed"], indexed - 3);
+    assert_eq!(json(&app, "/api/search?q=kept.txt").await["total"], 1);
+
+    // The same holds at any depth of a folder that is still there.
+    assert_eq!(
+        (chain.0, &chain.1["partial"]),
+        (StatusCode::FORBIDDEN, &Value::Bool(true))
+    );
+    assert_eq!(fs::read_dir(middle.join("inner")).unwrap().count(), 0);
+    let listing = json(&app, "/api/list?path=chain/locked").await;
+    let inner = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["n"] == "inner");
+    assert_eq!(inner.unwrap()["c"], 0);
+    let found = json(&app, "/api/search?q=quartz").await;
+    assert_eq!(found["total"], 0, "{found}");
+    assert_eq!(found["indexed"], indexed - 4);
+}
+
+#[tokio::test]
+async fn the_served_folder_itself_is_never_deleted() {
+    let site = Site::new();
+    let app = site.deleting();
+    let before = snapshot(&site.served);
+    for path in ["", "/", "//", "%2F"] {
+        assert_eq!(delete(&app, path).await, StatusCode::FORBIDDEN, "{path:?}");
+    }
+    let (response, _) = send(
+        &app,
+        Request::delete("/api/entry")
+            .header(header::HOST, HOME)
+            .header(header::ORIGIN, format!("http://{HOME}"))
+            .header("x-okfs", "delete")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(snapshot(&site.served), before);
+}
+
+#[tokio::test]
+async fn no_delete_leaves_the_served_folder_or_reaches_a_dotfile() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join(".git")).unwrap();
+    fs::write(site.served.join(".git/config"), SECRET).unwrap();
+    let app = site.deleting();
+    let before = (snapshot(&site.served), snapshot(&site.outside));
+    let escapes = [
+        "..",
+        "../outside",
+        "../outside/secret.txt",
+        "%2e%2e/outside/secret.txt",
+        "%2E%2E%2Foutside%2Fsecret.txt",
+        "..%2foutside%2fsecret.txt",
+        "sub/../../outside/secret.txt",
+        "sub/..%2f..%2foutside/secret.txt",
+        "sub/%2e%2e/%2e%2e/outside/secret.txt",
+        "./../outside/secret.txt",
+        "sub/..",
+        "sub/.",
+        "sub/../a.txt",
+        "..%5coutside%5csecret.txt",
+        "%252e%252e/outside/secret.txt",
+        "..%00/outside/secret.txt",
+        "a.txt%00",
+        "link-out.txt",
+        "link-out-dir",
+        "link-out-dir/secret.txt",
+        "link-out-dir/page.html",
+        ".hidden",
+        ".git",
+        ".git/config",
+    ];
+    let absolute = site.outside.join("secret.txt");
+    let absolute = absolute.to_str().unwrap();
+    let encoded_absolute = absolute.replace('/', "%2F");
+    let folder = site.outside.to_str().unwrap();
+    for escape in escapes.into_iter().chain([absolute, encoded_absolute.as_str(), folder]) {
+        let Some(request) = page_delete(escape) else { continue };
+        let status = send(&app, request).await.0.status();
+        assert!(
+            status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+            "{escape}: {status}"
+        );
+    }
+    assert_eq!(snapshot(&site.served), before.0);
+    assert_eq!(snapshot(&site.outside), before.1);
+    assert!(site.outside.is_dir());
+}
+
+#[tokio::test]
+async fn a_folder_that_holds_a_dotfile_is_refused_whole() {
+    let site = Site::new();
+    fs::write(site.served.join("sub/deep/.dotfile"), "not shown, still inside").unwrap();
+    // Nothing in it is shown: the page counts no items in it.
+    fs::create_dir_all(site.served.join("scratch/.git")).unwrap();
+    fs::write(site.served.join("scratch/.git/config"), SECRET).unwrap();
+    fs::write(site.served.join("scratch/.env"), SECRET).unwrap();
+    let app = site.deleting();
+    let before = snapshot(&site.served);
+    let listing = json(&app, "/api/list?path=").await;
+    let scratch = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["n"] == "scratch");
+    assert_eq!(scratch.unwrap()["c"], 0);
+
+    // The folder that holds it, a folder above that one, and a folder of nothing else.
+    for path in ["sub/deep", "sub", "scratch"] {
+        let (status, why) = refusal(&app, page_delete(path).unwrap()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{path}");
+        assert!(why.contains("dotfile") && why.contains("--hidden"), "{path}: {why}");
+        // The reason names no hidden entry.
+        assert!(
+            !why.contains(".dotfile") && !why.contains(".git") && !why.contains(".env"),
+            "{why}"
+        );
+    }
+    assert_eq!(snapshot(&site.served), before);
+    assert!(site.served.join("scratch/.git").is_dir());
+    assert_eq!(json(&app, "/api/search?q=c.rs").await["total"], 1);
+
+    // What is beside the dotfile still goes by itself.
+    assert_eq!(delete(&app, "sub/deep/c.rs").await, StatusCode::NO_CONTENT);
+    assert!(site.served.join("sub/deep/.dotfile").exists());
+
+    // With --hidden the dotfiles are shown, and the same folders go with them.
+    let app = site.serving(
+        true,
+        Options {
+            allow_delete: true,
+            ..Options::default()
+        },
+    );
+    for path in ["scratch", "sub"] {
+        assert_eq!(delete(&app, path).await, StatusCode::NO_CONTENT, "{path}");
+        assert!(!site.served.join(path).exists(), "{path}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_that_holds_a_link_okfs_does_not_show_is_refused_whole() {
+    use std::os::unix::fs::symlink;
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("out/in")).unwrap();
+    fs::create_dir_all(site.served.join("dangling")).unwrap();
+    fs::write(site.served.join("out/kept.txt"), "kept").unwrap();
+    // A link to a folder outside, at some depth, and a link to nothing.
+    symlink(&site.outside, site.served.join("out/in/exit")).unwrap();
+    symlink(site.served.join("nowhere"), site.served.join("dangling/lost")).unwrap();
+    let app = site.deleting();
+    let before = (snapshot(&site.served), snapshot(&site.outside));
+
+    for path in ["out", "out/in", "dangling"] {
+        let (status, why) = refusal(&app, page_delete(path).unwrap()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{path}");
+        assert!(
+            why.contains("link") && why.contains("remove it yourself"),
+            "{path}: {why}"
+        );
+    }
+    assert_eq!(snapshot(&site.served), before.0);
+    assert_eq!(snapshot(&site.outside), before.1);
+    assert!(fs::symlink_metadata(site.served.join("out/in/exit")).is_ok());
+
+    // Once the links are out of the way, the folders go.
+    fs::remove_file(site.served.join("out/in/exit")).unwrap();
+    fs::remove_file(site.served.join("dangling/lost")).unwrap();
+    for path in ["out", "dangling"] {
+        assert_eq!(delete(&app, path).await, StatusCode::NO_CONTENT, "{path}");
+        assert!(!site.served.join(path).exists(), "{path}");
+    }
+    assert_eq!(snapshot(&site.outside), before.1);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_link_is_deleted_as_a_link_and_never_followed() {
+    use std::os::unix::fs::symlink;
+    let site = Site::new();
+    symlink(site.served.join("sub"), site.served.join("link-in-dir")).unwrap();
+    // A folder that holds links to a file and to a folder elsewhere in the served folder.
+    fs::create_dir_all(site.served.join("album")).unwrap();
+    symlink(site.served.join("a.txt"), site.served.join("album/home.txt")).unwrap();
+    symlink(site.served.join("sub"), site.served.join("album/sub")).unwrap();
+    let app = site.deleting();
+    let before = (snapshot(&site.served.join("sub")), snapshot(&site.outside));
+    let gone = |name: &str| fs::symlink_metadata(site.served.join(name)).is_err();
+
+    // The page is told which entries are links, and when the folder it shows is one.
+    let listing = json(&app, "/api/list?path=").await;
+    let entry = |name: &str| listing["entries"].as_array().unwrap().iter().find(|e| e["n"] == name);
+    assert_eq!(entry("link-in-dir").unwrap()["l"], true);
+    assert_eq!(entry("link-in-dir").unwrap()["d"], true);
+    assert_eq!(entry("link-in.txt").unwrap()["l"], true);
+    assert!(entry("sub").unwrap().get("l").is_none());
+    assert!(entry("a.txt").unwrap().get("l").is_none());
+    assert_eq!(json(&app, "/api/list?path=link-in-dir").await["link"], true);
+    assert!(json(&app, "/api/list?path=sub").await.get("link").is_none());
+    assert!(
+        json(&app, "/api/list?path=link-in-dir/deep")
+            .await
+            .get("link")
+            .is_none()
+    );
+    assert!(listing.get("link").is_none());
+
+    // A link to a file and a link to a folder: the link goes, what it points at stays.
+    for link in ["link-in.txt", "link-in-dir"] {
+        assert_eq!(delete(&app, link).await, StatusCode::NO_CONTENT, "{link}");
+        assert!(gone(link), "{link}");
+    }
+    assert_eq!(snapshot(&site.served.join("sub")), before.0);
+
+    // A folder goes with the links in it, and they are not walked through.
+    assert_eq!(delete(&app, "album").await, StatusCode::NO_CONTENT);
+    assert!(gone("album"));
+    assert_eq!(snapshot(&site.served.join("sub")), before.0);
+    assert!(site.served.join("a.txt").exists());
+
+    // A link that leaves the served folder is not shown, so there is nothing to delete.
+    for link in ["link-out.txt", "link-out-dir"] {
+        assert_eq!(delete(&app, link).await, StatusCode::NOT_FOUND, "{link}");
+        assert!(!gone(link), "{link}");
+    }
+    assert_eq!(snapshot(&site.outside), before.1);
+}
+
+#[tokio::test]
+async fn only_okfs_may_frame_the_page_while_deleting_is_on() {
+    let site = Site::new();
+    for (app, on) in [(site.router(), false), (site.deleting(), true)] {
+        // A folder, a file, a path behind /-/ and one that is missing: each is the page.
+        for uri in ["/", "/sub/", "/sub/b.txt", "/-/sub/", "/nope"] {
+            let (page, _) = get(&app, uri).await;
+            let policy = page_policy(&page);
+            let (framing, rest): (Vec<&str>, Vec<&str>) = policy
+                .iter()
+                .map(String::as_str)
+                .partition(|directive| directive.starts_with("frame-ancestors"));
+            if on {
+                assert_eq!(framing, ["frame-ancestors 'self'"], "{uri}");
+            } else {
+                assert!(framing.is_empty(), "{uri}: {framing:?}");
+            }
+            // The rest of the policy is the same either way.
+            assert!(
+                rest.contains(&"script-src 'self'") && rest.contains(&"frame-src 'self'"),
+                "{uri}: {rest:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn another_site_cannot_make_a_browser_delete() {
+    let site = Site::new();
+    let app = site.app(Options {
+        allow_delete: true,
+        check_host: true,
+        allow_hosts: vec!["files.example.test".to_owned()],
+        ..Options::default()
+    });
+    let before = snapshot(&site.served);
+    let request = |method: &str, host: &str, headers: Headers| {
+        let mut request = Request::builder()
+            .method(method)
+            .uri("/api/entry?path=a.txt")
+            .header(header::HOST, host);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        request.body(Body::from("path=a.txt")).unwrap()
+    };
+    let own = ("x-okfs", "delete");
+    let form = ("content-type", "application/x-www-form-urlencoded");
+
+    let refused: [(&str, &str, Headers); 22] = [
+        // No Origin at all, with and without the header.
+        ("DELETE", HOME, &[]),
+        ("DELETE", HOME, &[own]),
+        // Another site, however it spells itself.
+        ("DELETE", HOME, &[own, ("origin", "https://evil.example")]),
+        ("DELETE", HOME, &[own, ("origin", "http://evil.example:8080")]),
+        ("DELETE", HOME, &[own, ("origin", "http://localhost.evil.example:8080")]),
+        ("DELETE", HOME, &[own, ("origin", "http://localhost:8080.evil.example")]),
+        ("DELETE", HOME, &[own, ("origin", "http://evil.example/localhost:8080")]),
+        ("DELETE", HOME, &[own, ("origin", "http://localhost:8080@evil.example")]),
+        ("DELETE", HOME, &[own, ("origin", "file://localhost:8080")]),
+        ("DELETE", HOME, &[own, ("origin", "localhost:8080")]),
+        ("DELETE", HOME, &[own, ("origin", "")]),
+        // Another page on this machine, or at a plain address: not the one asked.
+        ("DELETE", HOME, &[own, ("origin", "http://localhost:3000")]),
+        ("DELETE", HOME, &[own, ("origin", "http://localhost")]),
+        ("DELETE", HOME, &[own, ("origin", "http://127.0.0.1:8080")]),
+        ("DELETE", HOME, &[own, ("origin", "http://203.0.113.9:8080")]),
+        // A served HTML or SVG file: okfs sends those sandboxed, so their origin is null.
+        ("DELETE", HOME, &[own, ("origin", "null")]),
+        // Two origins: one of them is a lie.
+        (
+            "DELETE",
+            HOME,
+            &[
+                own,
+                ("origin", "http://localhost:8080"),
+                ("origin", "https://evil.example"),
+            ],
+        ),
+        // The right origin without the header, or with the wrong value in it.
+        ("DELETE", HOME, &[("origin", "http://localhost:8080")]),
+        ("DELETE", HOME, &[("x-okfs", "1"), ("origin", "http://localhost:8080")]),
+        // A plain form post, from the page's own address or from elsewhere.
+        ("POST", HOME, &[form, ("origin", "http://localhost:8080")]),
+        ("POST", HOME, &[form, own, ("origin", "http://localhost:8080")]),
+        ("GET", HOME, &[own, ("origin", "http://localhost:8080")]),
+    ];
+    for (method, host, headers) in refused {
+        let status = send(&app, request(method, host, headers)).await.0.status();
+        let expected = if method == "DELETE" {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::METHOD_NOT_ALLOWED
+        };
+        assert_eq!(status, expected, "{method} {headers:?}");
+        assert!(site.served.join("a.txt").exists(), "{method} {headers:?}");
+    }
+    // Asking for leave, as a browser does before a cross-site DELETE, gets none.
+    let (preflight, _) = send(
+        &app,
+        request(
+            "OPTIONS",
+            HOME,
+            &[
+                ("origin", "https://evil.example"),
+                ("access-control-request-method", "DELETE"),
+                ("access-control-request-headers", "x-okfs"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(preflight.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert!(!preflight.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+    assert!(!preflight.headers().contains_key(header::ACCESS_CONTROL_ALLOW_METHODS));
+    assert_eq!(snapshot(&site.served), before);
+
+    // The page's own request passes, at each address the page can be opened at.
+    let allowed: [(&str, &str); 7] = [
+        (HOME, "http://localhost:8080"),
+        ("LOCALHOST:8080", "http://localhost:8080"),
+        ("127.0.0.1:8080", "http://127.0.0.1:8080"),
+        ("[::1]:8080", "http://[::1]:8080"),
+        ("localhost", "http://localhost"),
+        // Behind a proxy that ends TLS and is named with --allow-host: the browser
+        // says https, and the proxy passes its own name on or puts okfs's address there.
+        ("files.example.test", "https://files.example.test"),
+        ("127.0.0.1:8080", "https://files.example.test"),
+    ];
+    for (host, origin) in allowed {
+        fs::write(site.served.join("a.txt"), "again").unwrap();
+        let status = send(&app, request("DELETE", host, &[own, ("origin", origin)]))
+            .await
+            .0
+            .status();
+        assert_eq!(status, StatusCode::NO_CONTENT, "{host} {origin}");
+        assert!(!site.served.join("a.txt").exists(), "{host} {origin}");
+    }
+}
+
+#[tokio::test]
+async fn a_name_pointed_at_this_machine_cannot_delete_even_beyond_loopback() {
+    let site = Site::new();
+    // Listening on every address: any Host is answered, so a hostile name gets the page.
+    let app = site.deleting();
+    let request = Request::delete("/api/entry?path=a.txt")
+        .header(header::HOST, "rebound.evil.example:8080")
+        .header(header::ORIGIN, "http://rebound.evil.example:8080")
+        .header("x-okfs", "delete")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
+    assert!(site.served.join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn a_delete_from_a_name_okfs_does_not_know_says_how_to_allow_it() {
+    let site = Site::new();
+    let from = |host: &str, origin: &str| {
+        Request::delete("/api/entry?path=a.txt")
+            .header(header::HOST, host)
+            .header(header::ORIGIN, origin)
+            .header("x-okfs", "delete")
+            .body(Body::empty())
+            .unwrap()
+    };
+    // The page opened by a name of the machine, and behind a proxy that passes its own address on.
+    let cases = [
+        ("mybox:8080", "http://mybox:8080", "mybox"),
+        ("127.0.0.1:8080", "https://files.example.test", "files.example.test"),
+    ];
+    for (host, origin, name) in cases {
+        let app = site.deleting();
+        let (status, why) = refusal(&app, from(host, origin)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{origin}");
+        assert!(why.contains(&format!("--allow-host {name}")), "{origin}: {why}");
+        assert!(site.served.join("a.txt").exists(), "{origin}");
+
+        // Doing what it says lets the same request through.
+        let app = site.app(Options {
+            allow_delete: true,
+            allow_hosts: vec![name.to_owned()],
+            ..Options::default()
+        });
+        assert_eq!(
+            send(&app, from(host, origin)).await.0.status(),
+            StatusCode::NO_CONTENT,
+            "{origin}"
+        );
+        fs::write(site.served.join("a.txt"), "again").unwrap();
+    }
+
+    // A request that names no page gets no such advice: there is no name to allow.
+    let app = site.deleting();
+    for origin in ["null", "file://mybox", ""] {
+        let (status, why) = refusal(&app, from(HOME, origin)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{origin:?}");
+        assert!(!why.contains("--allow-host"), "{origin:?}: {why}");
+    }
 }
 
 #[tokio::test]

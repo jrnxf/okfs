@@ -21,6 +21,8 @@ export interface Config {
   /** The `--index` file name: a folder holding it opens as that page. Absent without the flag. */
   index?: string;
   target: { path: string; kind: "dir" | "file" | "missing" };
+  /** True when the server was started with deleting on. */
+  delete: boolean;
 }
 
 export const config: Config = JSON.parse(document.getElementById("okfs-config")?.textContent ?? "{}");

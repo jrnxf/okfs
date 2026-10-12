@@ -7,8 +7,8 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
 import { kindOf } from "./kinds";
-import { Help, ThemeMenu } from "./overlays";
-import { MOD, Palette } from "./palette";
+import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
+import { DELETE_KEY, MOD, Palette } from "./palette";
 import { Preview, Prose, useLoaded } from "./preview";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
@@ -265,6 +265,7 @@ export function App() {
   }, []);
 
   const shown = s.open ?? store.cur();
+  const here = store.here();
 
   useEffect(() => {
     document.body.classList.toggle("open", s.open !== null);
@@ -279,6 +280,8 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       const { s } = store;
       const { key } = event;
+      // The delete dialog takes every key while it is up.
+      if (s.doomed) return;
       if ((event.ctrlKey || event.metaKey) && key.toLowerCase() === "k") {
         event.preventDefault();
         store.setPalette(!s.palette);
@@ -326,6 +329,7 @@ export function App() {
         t: () => setScheme(isDark() ? "light" : "dark"),
         "?": () => store.setHelp(true),
       };
+      if (event.shiftKey) actions.D = () => store.askDelete();
       const action = actions[key];
       if (action) {
         event.preventDefault();
@@ -423,6 +427,11 @@ export function App() {
         >
           <Icon name="download" />
         </a>
+        {config.delete && (
+          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(shown)}>
+            <Icon name="trash" />
+          </button>
+        )}
         {!shown.dir && (
           <button
             class="btn widen"
@@ -451,6 +460,12 @@ export function App() {
             <span class="sp">Find anything</span>
             <kbd>{MOD} K</kbd>
           </button>
+          {/* A phone has no pane beside the list to hold this, and a tap on a folder goes in. */}
+          {here && (
+            <button class="btn touch" aria-label="Delete this folder" onClick={() => store.askDelete(here)}>
+              <Icon name="trash" />
+            </button>
+          )}
           <button class="btn" aria-label="List or grid" onClick={() => store.setView()}>
             <Icon name={s.view === "list" ? "grid" : "list"} />
           </button>
@@ -499,6 +514,7 @@ export function App() {
             type="text"
             name="filter"
             value={s.filter}
+            name="filter"
             spellcheck={false}
             autocomplete="off"
             aria-label="Filter this folder"
@@ -545,6 +561,7 @@ export function App() {
       </footer>
       {s.palette && <Palette />}
       {s.help && <Help />}
+      {s.doomed && <ConfirmDelete key={s.doomed.path} doomed={s.doomed} />}
       {menu && <ThemeMenu anchor={menu} onClose={closeMenu} />}
     </>
   );
