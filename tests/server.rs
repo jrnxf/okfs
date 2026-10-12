@@ -1307,3 +1307,94 @@ async fn a_delete_from_a_name_okfs_does_not_know_says_how_to_allow_it() {
         assert!(!why.contains("--allow-host"), "{origin:?}: {why}");
     }
 }
+
+#[tokio::test]
+async fn a_folder_answers_with_its_index_page_only_behind_the_flag() {
+    let site = Site::new();
+    fs::write(site.served.join("sub/index.html"), "<h1>site</h1>").unwrap();
+    fs::write(site.served.join("sub/.home.html"), "<h1>hidden</h1>").unwrap();
+    fs::create_dir_all(site.served.join("sub/deep/index.html")).unwrap();
+    fs::create_dir_all(site.served.join("empty")).unwrap();
+    fs::create_dir_all(site.served.join("linked")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(site.outside.join("page.html"), site.served.join("linked/index.html")).unwrap();
+    let config = |html: &[u8]| -> Value {
+        let html = String::from_utf8_lossy(html).into_owned();
+        let start = html.find("id=\"okfs-config\">").unwrap() + "id=\"okfs-config\">".len();
+        let end = start + html[start..].find("</script>").unwrap();
+        serde_json::from_str(&html[start..end]).unwrap()
+    };
+    let with = |name: &str| {
+        site.app(Options {
+            index: Some(name.to_owned()),
+            ..Options::default()
+        })
+    };
+    let (app, off) = (with("index.html"), site.router());
+
+    let (_, body) = get(&app, "/sub/").await;
+    assert_eq!(config(&body)["index"], "index.html");
+    assert_eq!(
+        config(&body)["target"],
+        serde_json::json!({ "path": "sub", "kind": "dir" })
+    );
+
+    // The folder's address under /raw/ is its index page, sent as that file is: sandboxed.
+    let (folder, body) = get(&app, "/raw/sub/").await;
+    assert_eq!(folder.status(), StatusCode::OK);
+    assert_eq!(body, b"<h1>site</h1>");
+    let policy = folder.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(policy.starts_with("sandbox"), "{policy}");
+    assert_eq!(folder.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8");
+    let (file, _) = get(&app, "/raw/sub/index.html").await;
+    assert_eq!(folder.headers(), file.headers());
+
+    // Without the slash it moves to the address with it, so links inside the page resolve.
+    for (asked, to) in [("/raw/sub", "/raw/sub/"), ("/raw/sub?tab=2", "/raw/sub/?tab=2")] {
+        let (response, _) = get(&app, asked).await;
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT, "{asked}");
+        assert_eq!(response.headers()[header::LOCATION], to, "{asked}");
+    }
+
+    // No such file, a folder of that name, and a link that leaves the served folder:
+    // the answer is the one okfs gives without the flag.
+    for folder in ["empty", "sub/deep", "linked"] {
+        for uri in [format!("/raw/{folder}/"), format!("/raw/{folder}")] {
+            let (response, body) = get(&app, &uri).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+            assert!(
+                !String::from_utf8_lossy(&body).contains(SECRET),
+                "{uri} leaked the file outside"
+            );
+            assert_eq!(body, get(&off, &uri).await.1, "{uri}");
+        }
+    }
+
+    // A dotfile is not served, so it is not an index page either.
+    let hidden = with(".home.html");
+    for uri in ["/raw/sub/", "/raw/sub"] {
+        assert_eq!(get(&hidden, uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+
+    // With the flag off, the answers are the ones okfs always gave.
+    let (_, body) = get(&off, "/sub/").await;
+    assert!(config(&body).get("index").is_none());
+    for uri in ["/raw/sub/", "/raw/sub"] {
+        assert_eq!(get(&off, uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+    assert_eq!(get(&off, "/raw/sub/index.html").await.1, b"<h1>site</h1>");
+
+    // The served folder itself: /raw/ is its index page once it holds one, and only behind the flag.
+    let missing = serde_json::json!({ "path": "raw", "kind": "missing" });
+    let (response, body) = get(&app, "/raw/").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(config(&body)["target"], missing);
+    fs::write(site.served.join("index.html"), "<h1>top</h1>").unwrap();
+    let (top, body) = get(&app, "/raw/").await;
+    assert_eq!(top.status(), StatusCode::OK);
+    assert_eq!(body, b"<h1>top</h1>");
+    assert_eq!(top.headers(), get(&app, "/raw/index.html").await.0.headers());
+    let (response, body) = get(&off, "/raw/").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(config(&body)["target"], missing);
+}
