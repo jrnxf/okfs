@@ -118,8 +118,8 @@ kbd {
 .pv-center img { box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
 .pv-ph { width: min(100%, 520px); aspect-ratio: 3/2; border-radius: var(--radius); }
 .pv-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; display: block; }
-/* The next page loading behind the frame on screen, at the size it will be shown at. */
-.pv-next { position: absolute; inset: 0; height: 100%; visibility: hidden; }
+/* The next page loading under the frame on screen, at the size it will be shown at. Covered, not hidden: a hidden frame is not painted. */
+.pv-next { position: absolute; inset: 0; height: 100%; z-index: -1; }
 .pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
 .pv-audio { display: grid; gap: 22px; justify-items: center; width: min(100%, 420px); }
 .pv-audio .ic { width: 44px; height: 44px; }

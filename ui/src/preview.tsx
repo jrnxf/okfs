@@ -213,8 +213,8 @@ function Media({ entry, report }: { entry: Entry; report: Report }) {
 
 function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  // The frame on screen stays until the next one has loaded behind it, then the next takes its place in
-  // one step: the pane is never empty, and never the white of a frame that has not painted yet.
+  // The frame on screen stays until the next one has loaded and painted behind it, then the next takes its
+  // place in one step: the pane is never empty, and never the white of a frame that has not painted yet.
   const [shown, setShown] = useState<Entry | null>(null);
   // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
   useEffect(() => {
@@ -242,7 +242,13 @@ function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boo
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
             src={html ? urls.raw(page.path) : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
             title={page.name}
-            onLoad={page === next ? () => setShown(page) : undefined}
+            // A page that has loaded may not be painted yet: it takes over two animation frames later. By then
+            // a move of the cursor may have taken this frame away, and its page is not brought back.
+            onLoad={
+              page === next
+                ? ({ currentTarget: frame }) => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page)))
+                : undefined
+            }
           />
         );
       })}
