@@ -21,6 +21,11 @@ const SETTLE_HEAVY = 90;
 const EAGER_FRAME_BYTES = 256 * 1024;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
+/**
+ * A page stays in the pane this long after the cursor has left it, while the next one is on its way. Past it
+ * the pane shows its backdrop: under a held key it would otherwise show a page from several files back.
+ */
+const KEEP_PAGE = 100;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -283,11 +288,10 @@ document.addEventListener(
 
 /**
  * True once a frame or a player may start. That is with the move itself, by a click or one press of a key.
- * Under a held key it waits: see `SETTLE_HEAVY`, unless `light` says it is cheap enough to start at once.
- * For a component that is made anew for each file.
+ * Under a held key it waits: see `SETTLE_HEAVY`. For a component that is made anew for each file.
  */
-function useUnhurried(light = false): boolean {
-  const [go, setGo] = useState(light || !held);
+function useUnhurried(): boolean {
+  const [go, setGo] = useState(!held);
   useEffect(() => {
     if (go) return;
     const start = () => setGo(true);
@@ -425,30 +429,115 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
   );
 }
 
+/** The browser's own viewer for a PDF, in a frame made anew for each file. */
 function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
-  const settled = useUnhurried(entry.kind === "html" && entry.size < EAGER_FRAME_BYTES);
+  const settled = useUnhurried();
   // A rewritten file loads in a frame of its own, behind the one on screen, and takes its place once it
   // is ready: a save never shows an empty pane.
   const [shown, setShown] = useState(stamp);
-  // Until the first frame has loaded, the pane shows through it: the wait for a page is never white.
+  // Until the first frame has loaded, the pane shows through it: the wait for a file is never white.
   const [loaded, setLoaded] = useState(false);
   if (!settled) return null;
-  const html = entry.kind === "html";
   return (
     <>
       {(stamp === shown ? [shown] : [shown, stamp]).map((version) => (
         <iframe
           key={version}
           class={version !== shown ? "pv-frame pv-next" : loaded ? "pv-frame pv-loaded" : "pv-frame"}
-          // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
-          // The server sends the same restriction as a header, so it holds when the page is opened directly too.
-          sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
-          src={html ? urls.raw(entry.path) : `${urls.raw(entry.path)}#navpanes=0&view=FitH`}
+          src={`${urls.raw(entry.path)}#navpanes=0&view=FitH`}
           title={entry.name}
           onLoad={version === shown ? () => setLoaded(true) : () => setShown(version)}
         />
       ))}
     </>
+  );
+}
+
+/**
+ * An HTML page, live in a sandboxed frame. One frame serves page after page: it is told to replace its page
+ * with the next, and the browser keeps the old page's picture up until the new one has something to draw.
+ * So there is no empty pane between two pages, and nothing here waits before the new page is shown.
+ */
+function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
+  const address = urls.raw(entry.path);
+  // A rewritten file is the same address with a new stamp: the frame loads it again, over itself.
+  const want = `${address}\n${stamp}`;
+  // Under a held key a large page waits, as a PDF does: see `EAGER_FRAME_BYTES`. A page that has started stays started.
+  const started = useRef("");
+  const [released, setReleased] = useState("");
+  if (!held || entry.size < EAGER_FRAME_BYTES) started.current = entry.path;
+  const go = started.current === entry.path || released === entry.path;
+  useEffect(() => {
+    if (go) return;
+    const start = () => setReleased(entry.path);
+    const timer = setTimeout(start, SETTLE_HEAVY);
+    document.addEventListener("keyup", start);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("keyup", start);
+    };
+  }, [go, entry.path]);
+
+  const frame = useRef<HTMLIFrameElement>(null);
+  // A new number is a new frame, empty and see-through: what the pane falls back to when the old page has
+  // stayed long enough.
+  const [made, setMade] = useState(0);
+  // The frame whose page has loaded. Until then the pane shows through it: the wait for a page is never white.
+  const [loaded, setLoaded] = useState(-1);
+  /** What the frame was last sent to, and since when its picture may be of a page the cursor has left. */
+  const at = useRef({ made: -1, sent: "", left: 0 });
+  // With the draw that moved the cursor, as `useLoaded` asks: a plain effect would wait for the next paint.
+  useLayoutEffect(() => {
+    const now = performance.now();
+    const state = at.current;
+    if (state.made !== made) at.current = { made, sent: "", left: 0 };
+    const { sent } = at.current;
+    if (sent === want) return;
+    const same = sent.startsWith(`${address}\n`);
+    if (sent && !same && !at.current.left) at.current.left = now;
+    const stale = sent !== "" && !same && now - at.current.left > KEEP_PAGE;
+    if (!go) {
+      // Nothing is on its way to take the old page's place: it goes when its time is up.
+      if (!sent) return;
+      const timer = setTimeout(() => setMade((count) => count + 1), Math.max(0, at.current.left + KEEP_PAGE - now));
+      return () => clearTimeout(timer);
+    }
+    if (stale) {
+      setMade((count) => count + 1);
+      return;
+    }
+    const element = frame.current;
+    if (!element) return;
+    at.current.sent = want;
+    if (!sent) {
+      element.src = address;
+      return;
+    }
+    // `replace` takes the place of the page in the frame without adding to the back button's history, which
+    // setting the frame's address would do.
+    try {
+      element.contentWindow?.location.replace(new URL(address, location.href).href);
+    } catch {
+      setMade((count) => count + 1);
+    }
+  }, [want, go, made, address]);
+  return (
+    <iframe
+      key={made}
+      ref={frame}
+      class={loaded === made ? "pv-frame pv-loaded" : "pv-frame"}
+      // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
+      // The server sends the same restriction as a header, so it holds when the page is opened directly too.
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
+      title={entry.name}
+      onLoad={() => {
+        // An empty frame reports a load of its own, before it is sent anywhere.
+        if (at.current.made !== made || !at.current.sent) return;
+        // The page under the cursor is the one in the frame again.
+        if (at.current.sent === want) at.current.left = 0;
+        setLoaded(made);
+      }}
+    />
   );
 }
 
@@ -646,9 +735,10 @@ export function Preview({ entry, stamp, report }: { entry: Entry; stamp: string;
     case "audio":
       return <Media key={entry.path} entry={entry} stamp={stamp} report={report} />;
     case "pdf":
-    case "html":
-      // A new frame for each file: changing the address of one frame would add to the back button's history.
       return <Frame key={entry.path} entry={entry} stamp={stamp} />;
+    case "html":
+      // Not keyed by the file: one frame goes from page to page. See `Page`.
+      return <Page entry={entry} stamp={stamp} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;
