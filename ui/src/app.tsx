@@ -9,7 +9,7 @@ import { Icon, KindIcon, Sprite } from "./icons";
 import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { DELETE_KEY, MOD, Palette } from "./palette";
-import { Preview, Prose, lookAhead, useLoaded } from "./preview";
+import { Preview, Prose, lookAhead, pagesAhead, useLoaded } from "./preview";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { type Cell, VGrid } from "./vgrid";
@@ -274,7 +274,9 @@ export function App() {
   useLayoutEffect(() => {
     const step = s.cursor >= cursorWas.current ? 1 : -1;
     cursorWas.current = s.cursor;
-    if (s.status === "ready") lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
+    if (s.status !== "ready") return;
+    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
+    pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
   }, [s.cursor, s.entries, s.status]);
 
   useEffect(() => {

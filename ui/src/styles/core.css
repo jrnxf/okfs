@@ -128,6 +128,8 @@ kbd {
 .pv-loaded { background: #fff; }
 /* A rewritten file loading behind the frame on screen, at the size it will be shown at. */
 .pv-next { position: absolute; inset: 0; height: 100%; visibility: hidden; }
+/* A page loaded ahead of the cursor: in the pane at the size it will be shown at, and not visible. */
+.pv-ahead { position: absolute; inset: 0; height: 100%; visibility: hidden; }
 .pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
 .pv-audio { display: grid; gap: 22px; justify-items: center; width: min(100%, 420px); }
 .pv-audio .ic { width: 44px; height: 44px; }

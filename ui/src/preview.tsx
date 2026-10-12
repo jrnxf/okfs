@@ -27,6 +27,22 @@ const STALE = 250;
  * a file from several back.
  */
 const KEEP = 100;
+/**
+ * HTML pages past the cursor that are loaded before it gets there, each in a frame of its own that is not on
+ * screen, and how many the cursor has left are kept in case it turns back.
+ */
+const AHEAD_PAGES = 5;
+const BEHIND_PAGES = 1;
+/** A page larger than this is not loaded ahead, and all that are loaded ahead stay under the second number. */
+const AHEAD_PAGE_BYTES = 4 * 1024 * 1024;
+const AHEAD_PAGES_BYTES = 12 * 1024 * 1024;
+/** A key repeating faster than this many ms a move passes pages faster than any can load: none are started. */
+const AHEAD_PAGES_PACE = 50;
+/**
+ * The page on screen is given this long, loaded, before the pages after it are started. All frames share one
+ * process: started with it, they made a 49 KB page 20 to 30 ms late to the screen.
+ */
+const AHEAD_PAGES_REST = 50;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -298,11 +314,16 @@ function useSettled(key: string, delay: number): boolean {
 
 /** True while a key is held down and repeating: the cursor is passing files, not stopping on them. */
 let held = false;
+/** True while it repeats faster than `AHEAD_PAGES_PACE`. */
+let racing = false;
+let pressed = 0;
 // Heard on the way down, before the key moves the cursor: what it brings on screen then knows.
 document.addEventListener(
   "keydown",
   (event) => {
     held = event.repeat;
+    racing = held && event.timeStamp - pressed < AHEAD_PAGES_PACE;
+    pressed = event.timeStamp;
   },
   true,
 );
@@ -310,9 +331,20 @@ document.addEventListener(
   "keyup",
   () => {
     held = false;
+    racing = false;
   },
   true,
 );
+
+/** Where the cursor is in its folder and which way it last moved: what `Page` loads ahead from. */
+let near: { entries: Entry[]; cursor: number; step: 1 | -1; stamp: (entry: Entry) => string } | null = null;
+const nearby = new Set<() => void>();
+
+/** Tells the pane where the cursor is, so the pages past it can be loaded before it gets there. */
+export function pagesAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string): void {
+  near = { entries, cursor, step, stamp };
+  for (const heard of nearby) heard();
+}
 
 /**
  * True once a frame or a player may start. That is with the move itself, by a click or one press of a key.
@@ -492,14 +524,36 @@ function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
   );
 }
 
+/** One frame of the pane and the page it holds. */
+interface Slot {
+  id: number;
+  path: string;
+  size: number;
+  /** The address and stamp the frame was last sent to, or nothing while it is still empty. */
+  sent: string;
+  loaded: boolean;
+  /** Since when the frame's picture may be of a page the cursor has left. */
+  left: number;
+  /** Since when it has been on screen with its page loaded, or 0. */
+  rested: number;
+}
+
+const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms";
+
 /**
- * An HTML page, live in a sandboxed frame. One frame serves page after page: it is told to replace its page
- * with the next, and the browser keeps the old page's picture up until the new one has something to draw.
- * So there is no empty pane between two pages, and nothing here waits before the new page is shown.
+ * An HTML page, live in a sandboxed frame.
+ *
+ * The frame on screen serves page after page: it is told to replace its page with the next, and the browser
+ * keeps the old page's picture up until the new one has something to draw. So there is no empty pane between
+ * two pages, and nothing here waits before the new page is shown.
+ *
+ * The pages just past the cursor are loaded ahead, each in a frame of its own that is hidden, not see-through:
+ * exactly one frame is ever visible. When the cursor reaches such a page its frame is shown and the one before
+ * is hidden in the same draw. A page loaded ahead runs its scripts before it is looked at.
  */
 function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
   const address = urls.raw(entry.path);
-  // A rewritten file is the same address with a new stamp: the frame loads it again, over itself.
+  // A rewritten file is the same address with a new stamp: its frame loads it again, over itself.
   const want = `${address}\n${stamp}`;
   // Under a held key a large page waits, as a PDF does: see `EAGER_FRAME_BYTES`. A page that has started stays started.
   const started = useRef("");
@@ -517,66 +571,182 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
     };
   }, [go, entry.path]);
 
-  const frame = useRef<HTMLIFrameElement>(null);
-  // A new number is a new frame, empty and see-through: what the pane falls back to when the old page has
-  // stayed long enough.
-  const [made, setMade] = useState(0);
-  // The frame whose page has loaded. Until then the pane shows through it: the wait for a page is never white.
-  const [loaded, setLoaded] = useState(-1);
-  /** What the frame was last sent to, and since when its picture may be of a page the cursor has left. */
-  const at = useRef({ made: -1, sent: "", left: 0 });
+  const [drawn, draw] = useState(0);
+  const again = () => draw((count) => count + 1);
+  // True once the list has said where the cursor is since the last look: until then `near` may be a move old.
+  const told = useRef(false);
+  useEffect(() => {
+    const heard = () => {
+      told.current = true;
+      again();
+    };
+    nearby.add(heard);
+    return () => {
+      nearby.delete(heard);
+    };
+  }, []);
+  /** Every frame there is, in the order they were made: a frame that is moved loads its page again. */
+  const slots = useRef<Slot[]>([]);
+  const made = useRef(0);
+  /** The frame on screen, if any. */
+  const shown = useRef(-1);
+  const frames = useRef(new Map<number, HTMLIFrameElement>());
+
   // With the draw that moved the cursor, as `useLoaded` asks: a plain effect would wait for the next paint.
   useLayoutEffect(() => {
     const now = performance.now();
-    const state = at.current;
-    if (state.made !== made) at.current = { made, sent: "", left: 0 };
-    const { sent } = at.current;
-    if (sent === want) return;
-    const same = sent.startsWith(`${address}\n`);
-    if (sent && !same && !at.current.left) at.current.left = now;
-    const stale = sent !== "" && !same && now - at.current.left > KEEP;
-    if (!go) {
-      // Nothing is on its way to take the old page's place: it goes when its time is up.
-      if (!sent) return;
-      const timer = setTimeout(() => setMade((count) => count + 1), Math.max(0, at.current.left + KEEP - now));
-      return () => clearTimeout(timer);
-    }
-    if (stale) {
-      setMade((count) => count + 1);
-      return;
-    }
-    const element = frame.current;
-    if (!element) return;
-    at.current.sent = want;
-    if (!sent) {
-      element.src = address;
-      return;
-    }
-    // `replace` takes the place of the page in the frame without adding to the back button's history, which
+    const before = slots.current.map((slot) => slot.id).join() + shown.current;
+    const add = (path: string, size: number): Slot => {
+      const slot = { id: made.current++, path, size, sent: "", loaded: false, left: 0, rested: 0 };
+      slots.current.push(slot);
+      return slot;
+    };
+    const drop = (gone: Slot) => {
+      slots.current = slots.current.filter((slot) => slot !== gone);
+    };
+    // `replace` takes the place of the page in a frame without adding to the back button's history, which
     // setting the frame's address would do.
-    try {
-      element.contentWindow?.location.replace(new URL(address, location.href).href);
-    } catch {
-      setMade((count) => count + 1);
+    const send = (slot: Slot, to: string): boolean => {
+      const frame = frames.current.get(slot.id);
+      if (!frame) return false;
+      const url = to.slice(0, to.indexOf("\n"));
+      try {
+        if (slot.sent) frame.contentWindow?.location.replace(new URL(url, location.href).href);
+        else frame.src = url;
+      } catch {
+        return false;
+      }
+      slot.sent = to;
+      slot.loaded = false;
+      slot.rested = 0;
+      return true;
+    };
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let later: ReturnType<typeof setTimeout> | undefined;
+    let cur = slots.current.find((slot) => slot.id === shown.current);
+    const ahead = slots.current.find((slot) => slot !== cur && slot.path === entry.path);
+    if (ahead) {
+      // This page was loaded ahead: its frame is shown, whether or not a key is held.
+      if (cur && cur.path !== entry.path) cur.left = 0;
+      shown.current = ahead.id;
+      cur = ahead;
+      cur.rested = cur.loaded ? now : 0;
+    } else if (!cur) {
+      if (go) {
+        cur = add(entry.path, entry.size);
+        shown.current = cur.id;
+      }
+    } else if (cur.path === entry.path) {
+      // The file on screen was rewritten: its frame loads it again, and keeps the old picture up until then.
+      if (cur.sent && cur.sent !== want) send(cur, want);
+    } else {
+      if (!cur.left) cur.left = now;
+      if (!go) {
+        // Nothing is on its way to take the old page's place: it goes when its time is up.
+        timer = setTimeout(again, Math.max(0, cur.left + KEEP - now) + 1);
+        if (now - cur.left > KEEP) {
+          drop(cur);
+          shown.current = -1;
+          cur = undefined;
+        }
+      } else if (now - cur.left > KEEP) {
+        drop(cur);
+        cur = add(entry.path, entry.size);
+        shown.current = cur.id;
+      } else if (send(cur, want)) {
+        cur.path = entry.path;
+        cur.size = entry.size;
+      } else {
+        drop(cur);
+        cur = add(entry.path, entry.size);
+        shown.current = cur.id;
+      }
     }
-  }, [want, go, made, address]);
+
+    // The pages to hold besides the one on screen: those just past the cursor, and the one it came from.
+    const here = near && near.entries[near.cursor]?.path === entry.path ? near : null;
+    if (here) {
+      const keep = new Map<string, Entry>();
+      let bytes = 0;
+      for (let i = 1; i <= AHEAD_PAGES; i++) {
+        const next = here.entries[here.cursor + here.step * i];
+        if (!next) break;
+        if (next.kind !== "html" || next.size > AHEAD_PAGE_BYTES) continue;
+        if (bytes + next.size > AHEAD_PAGES_BYTES) break;
+        bytes += next.size;
+        keep.set(next.path, next);
+      }
+      const back = new Set<string>();
+      for (let i = 1; i <= BEHIND_PAGES; i++) {
+        const last = here.entries[here.cursor - here.step * i];
+        if (last) back.add(last.path);
+      }
+      for (const slot of slots.current) {
+        if (slot === cur) continue;
+        const next = keep.get(slot.path);
+        if (!next && !back.has(slot.path)) drop(slot);
+        // A page loaded ahead that has been rewritten since is loaded again.
+        else if (next && slot.sent && slot.sent !== `${urls.raw(next.path)}\n${here.stamp(next)}`) send(slot, `${urls.raw(next.path)}\n${here.stamp(next)}`);
+      }
+      // None are started before the page on screen has had its time: see `AHEAD_PAGES_REST`. And none while
+      // the cursor is passing pages faster than they load.
+      const missing = [...keep.values()].filter((next) => !slots.current.some((slot) => slot.path === next.path));
+      if (missing.length && cur?.rested && !racing) {
+        const wait = cur.rested + AHEAD_PAGES_REST - now;
+        if (wait > 0) later = setTimeout(again, wait + 1);
+        else for (const next of missing) add(next.path, next.size);
+      }
+    } else if (told.current) {
+      // The cursor is somewhere this folder's list does not say: only the page on screen is kept.
+      for (const slot of slots.current) if (slot !== cur) drop(slot);
+    }
+    told.current = false;
+
+    // A frame that is new is sent to its page once it is in the document.
+    for (const slot of slots.current) {
+      if (slot.sent) continue;
+      if (slot === cur) send(slot, want);
+      else {
+        const next = here?.entries.find((file) => file.path === slot.path);
+        if (next && here) send(slot, `${urls.raw(next.path)}\n${here.stamp(next)}`);
+      }
+    }
+    if (slots.current.map((slot) => slot.id).join() + shown.current !== before) again();
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(later);
+    };
+  }, [want, go, drawn, entry.path, entry.size]);
+
   return (
-    <iframe
-      key={made}
-      ref={frame}
-      class={loaded === made ? "pv-frame pv-loaded" : "pv-frame"}
-      // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
-      // The server sends the same restriction as a header, so it holds when the page is opened directly too.
-      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms"
-      title={entry.name}
-      onLoad={() => {
-        // An empty frame reports a load of its own, before it is sent anywhere.
-        if (at.current.made !== made || !at.current.sent) return;
-        // The page under the cursor is the one in the frame again.
-        if (at.current.sent === want) at.current.left = 0;
-        setLoaded(made);
-      }}
-    />
+    <>
+      {slots.current.map((slot) => (
+        <iframe
+          key={slot.id}
+          ref={(frame) => {
+            if (frame) frames.current.set(slot.id, frame);
+            else frames.current.delete(slot.id);
+          }}
+          class={slot.id !== shown.current ? "pv-frame pv-ahead" : slot.loaded ? "pv-frame pv-loaded" : "pv-frame"}
+          // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
+          // The server sends the same restriction as a header, so it holds when the page is opened directly too.
+          sandbox={SANDBOX}
+          title={slot.path.slice(slot.path.lastIndexOf("/") + 1)}
+          onLoad={() => {
+            // An empty frame reports a load of its own, before it is sent anywhere.
+            if (!slot.sent) return;
+            slot.loaded = true;
+            // The page under the cursor is the one in the frame again.
+            if (slot.id === shown.current && slot.sent === want) {
+              slot.left = 0;
+              slot.rested = performance.now();
+            }
+            again();
+          }}
+        />
+      ))}
+    </>
   );
 }
 
