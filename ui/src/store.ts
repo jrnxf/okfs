@@ -172,8 +172,11 @@ export class Store {
   private setUrl(mode: HistoryMode, path: string, dir: boolean, state: Mark = {}): void {
     if (mode === "none") return;
     const url = urls.view(path, dir) + location.search;
-    if (mode === "push" && url !== location.pathname + location.search) history.pushState(state, "", url);
-    else history.replaceState(mode === "push" ? state : history.state, "", url);
+    if (mode === "push" && url !== location.pathname + location.search) return history.pushState(state, "", url);
+    // A replaced entry keeps what it remembered, except whether its folder stands for the listing:
+    // a delete can leave the list showing in a folder that would otherwise open its index page.
+    const kept = state.listing === undefined ? history.state : { ...mark(), listing: state.listing };
+    history.replaceState(mode === "push" ? state : kept, "", url);
   }
 
   /**

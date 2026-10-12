@@ -512,7 +512,6 @@ export function App() {
           <input
             ref={filterInput}
             type="text"
-            name="filter"
             value={s.filter}
             name="filter"
             spellcheck={false}
