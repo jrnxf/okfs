@@ -7,6 +7,7 @@ import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
 import type { Entry } from "./store";
+import { isDark } from "./theme";
 
 /** Wait this long before asking the server, so holding `j` does not ask for every file passed. */
 const SETTLE = 25;
@@ -21,10 +22,18 @@ const STALE = 250;
 const FRAME_WAIT = 500;
 /**
  * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
- * painted, and a long page is still being laid out after it has loaded. So a loaded page waits before it is
- * shown, this many times as long as it took to load. It is a guess, since nothing tells the app when a frame
- * has painted. Measured: with no wait a page of 1 KB shows white on most moves, with once the load time a page
- * of 400 KB does on one move in six, with twice on about one move in a hundred. Three times is no better.
+ * painted. In the dark scheme that does not matter: the next frame lies on top of the one on screen and is
+ * see-through until its page paints, so the browser itself makes the change, and the frame beneath is only
+ * taken away this long after the load. A page that sets no background still paints one there, because its
+ * colour scheme differs from the frame's.
+ */
+const DROP_WAIT = 250;
+/**
+ * In the light scheme a page that sets no background is see-through for good, and on top it would be drawn
+ * over the page before it. So there the next frame loads beneath the one on screen and takes over after a
+ * wait of this many times its load time. That is a guess. Measured: with no wait a page of 1 KB shows white
+ * on most moves, with once the load time a page of 400 KB does on one move in six, with twice on about one
+ * move in a hundred. Three times is no better.
  */
 const PAINT_WAIT = 2;
 /** Children of one JSON object or array shown before "show more". */
@@ -249,8 +258,8 @@ interface Page {
 
 function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  // The frame on screen stays until the next one has loaded and painted behind it, then the next takes its
-  // place in one step: the pane is never empty, and never the white of a frame that has not painted yet.
+  // The frame on screen stays until the next one has painted, then the next takes its place in one step:
+  // the pane is never empty, and never the white of a frame that has not painted yet.
   // The next page is another file, or the same file rewritten.
   const [shown, setShown] = useState<Page | null>(null);
   // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
@@ -283,11 +292,11 @@ function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; ope
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
             src={html ? urls.raw(page.entry.path) : `${urls.raw(page.entry.path)}#navpanes=0&view=FitH`}
             title={page.entry.name}
-            // A page that has loaded may not be painted yet: see `PAINT_WAIT`. By the time the wait is over a
-            // move of the cursor may have taken this frame away, and its page is not brought back.
+            // A page that has loaded may not be painted yet: see `DROP_WAIT` and `PAINT_WAIT`. By the time the wait
+            // is over a move of the cursor may have taken this frame away, and its page is not brought back.
             onLoad={
               page === next
-                ? ({ currentTarget: frame }) => setTimeout(() => frame.isConnected && setShown(page), (performance.now() - began.current) * PAINT_WAIT)
+                ? ({ currentTarget: frame }) => setTimeout(() => frame.isConnected && setShown(page), isDark() ? DROP_WAIT : (performance.now() - began.current) * PAINT_WAIT)
                 : undefined
             }
           />

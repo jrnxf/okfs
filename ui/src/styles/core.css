@@ -118,9 +118,12 @@ kbd {
 .pv-center img, .pv-center video { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; border-radius: min(var(--radius), 4px); display: block; }
 .pv-center img { box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
 .pv-ph { width: min(100%, 520px); aspect-ratio: 3/2; border-radius: var(--radius); }
-.pv-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; display: block; }
-/* The next page loading under the frame on screen, at the size it will be shown at. Covered, not hidden: a hidden frame is not painted. */
+/* The frame's own background is the canvas of the scheme, as a page opened by itself has: white in the light scheme. */
+.pv-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: Canvas; display: block; }
+/* The next page, at the size it will be shown at. Light scheme: under the frame on screen. Covered, not hidden: a hidden frame is not painted. */
 .pv-next { position: absolute; inset: 0; height: 100%; z-index: -1; }
+/* Dark scheme: on top and see-through, so the frame on screen shows until the next page paints over it. */
+:root[data-scheme="dark"] .pv-next { z-index: auto; background: transparent; }
 .pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
 .pv-audio { display: grid; gap: 22px; justify-items: center; width: min(100%, 420px); }
 .pv-audio .ic { width: 44px; height: 44px; }
