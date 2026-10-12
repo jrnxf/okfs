@@ -49,7 +49,13 @@ const FIRST_ROWS = 100;
 /** Entries past the cursor, in the direction it moves, that are asked for before the cursor gets there. */
 const AHEAD = 16;
 /** Pictures cost more to hold than text does: fewer of them are loaded ahead. */
-const AHEAD_PICTURES = 3;
+const AHEAD_PICTURES = 10;
+/**
+ * The nearest of those are also unpacked, so they are drawn in the frame the cursor reaches them. An unpacked
+ * picture takes four bytes a pixel, so only a few are, and none larger than this many pixels.
+ */
+const AHEAD_UNPACKED = 3;
+const UNPACK_PIXELS = 8_000_000;
 /** Requests of the pane on their way at once. Past this the oldest gives way. */
 const FLIGHTS = 12;
 
@@ -121,6 +127,20 @@ const startUrl = (path: string): string => `${urls.preview(path)}&lines=${FIRST_
 /** Pictures loaded ahead of the cursor, held so the browser keeps them. */
 const pictures: HTMLImageElement[] = [];
 
+/** Pictures that have been unpacked, or are being. */
+const unpacked = new WeakSet<HTMLImageElement>();
+
+/** Unpacks a picture loaded ahead once its size is known, unless it is too large to hold unpacked. */
+function unpack(picture: HTMLImageElement): void {
+  if (unpacked.has(picture)) return;
+  unpacked.add(picture);
+  const sized = () => {
+    if (picture.naturalWidth * picture.naturalHeight <= UNPACK_PIXELS) picture.decode().catch(() => undefined);
+  };
+  if (picture.complete) sized();
+  else picture.addEventListener("load", sized, { once: true });
+}
+
 /** The JSON the pane asks for when the cursor is on `entry`, if it asks for any. */
 function addressOf(entry: Entry): string | null {
   switch (entry.kind) {
@@ -159,11 +179,14 @@ export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp:
       if (flights.size < FLIGHTS) ask(url).catch(() => undefined);
     } else if (entry.kind === "image" && i <= AHEAD_PICTURES) {
       const src = `${urls.raw(entry.path)}?v=${stamp(entry)}`;
-      if (pictures.some((picture) => picture.getAttribute("src") === src)) continue;
-      const picture = new Image();
-      picture.src = src;
-      pictures.push(picture);
-      if (pictures.length > AHEAD_PICTURES * 2) pictures.shift();
+      let picture = pictures.find((kept) => kept.getAttribute("src") === src);
+      if (!picture) {
+        picture = new Image();
+        picture.src = src;
+        pictures.push(picture);
+        if (pictures.length > AHEAD_PICTURES * 2) pictures.shift();
+      }
+      if (i <= AHEAD_UNPACKED) unpack(picture);
     }
   }
   // One request for all of them, once half of what lies ahead is unknown or the cursor is about to reach
