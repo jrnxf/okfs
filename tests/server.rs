@@ -804,7 +804,7 @@ async fn recent_stops_at_the_eight_newest_files() {
     for path in ["a.txt", "file10.txt", "file2.txt", "sub/b.txt", "sub/deep/c.rs"] {
         written_at(site.served.join(path), 10);
     }
-    let place = |n: u64| format!("{}/n{n:02}.txt", if n % 2 == 0 { "sub" } else { "sub/deep" });
+    let place = |n: u64| format!("{}/n{n:02}.txt", if n.is_multiple_of(2) { "sub" } else { "sub/deep" });
     for n in 0..12 {
         fs::write(site.served.join(place(n)), "new").unwrap();
         written_at(site.served.join(place(n)), 1000 + n);
