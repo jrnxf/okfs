@@ -264,8 +264,9 @@ function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; ope
   // The pages in the pane, in the order they were asked for. A page is another file, or the same file
   // rewritten. Dark scheme: each is laid on top of the one before it, and the pane shows the newest that has
   // painted. Light scheme: the next page is laid under the one on screen, which stays until the next takes
-  // over, and a page still beneath when the cursor moves on is taken away. So the pane is never empty, and
-  // never the white of a frame that has not painted yet.
+  // over, and a page still beneath when the cursor moves on is taken away. So the pane does not go empty
+  // between two pages, or to the white of a frame that has not painted yet, except where a wait is too
+  // short: see `FRAME_WAIT` and `PAINT_WAIT`.
   const [pages, setPages] = useState<Page[]>([]);
   // A page that is ready has the pages before it taken away, after a wait: see `DROP_WAIT` and `PAINT_WAIT`.
   // It is ready when it has loaded, or `FRAME_WAIT` after it was put in the pane.
