@@ -61,8 +61,6 @@ const AHEAD_PICTURES = 10;
  */
 const AHEAD_UNPACKED = 3;
 const UNPACK_PIXELS = 8_000_000;
-/** Players made ahead: each fetches the start of its file only, enough to know its length and first picture. */
-const AHEAD_PLAYERS = 2;
 /** Requests of the pane on their way at once. Past this the oldest gives way. */
 const FLIGHTS = 12;
 
@@ -134,25 +132,6 @@ const startUrl = (path: string): string => `${urls.preview(path)}&lines=${FIRST_
 /** Pictures loaded ahead of the cursor, held so the browser keeps them. */
 const pictures: HTMLImageElement[] = [];
 
-/** Players loaded ahead of the cursor, held so the browser keeps what they fetched. */
-const players: HTMLMediaElement[] = [];
-
-/** Starts a player for a file ahead of the cursor. The one the pane makes later finds the file's start already here. */
-function warmPlayer(kind: "video" | "audio", src: string): void {
-  if (players.some((player) => player.getAttribute("src") === src)) return;
-  const player = document.createElement(kind);
-  player.preload = "metadata";
-  player.muted = true;
-  player.src = src;
-  players.push(player);
-  if (players.length > AHEAD_PLAYERS * 2) {
-    // A player lets go of its file only when told to.
-    const dropped = players.shift() as HTMLMediaElement;
-    dropped.removeAttribute("src");
-    dropped.load();
-  }
-}
-
 /** Pictures that have been unpacked, or are being. */
 const unpacked = new WeakSet<HTMLImageElement>();
 
@@ -213,8 +192,6 @@ export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp:
         if (pictures.length > AHEAD_PICTURES * 2) pictures.shift();
       }
       if (i <= AHEAD_UNPACKED) unpack(picture);
-    } else if ((entry.kind === "video" || entry.kind === "audio") && i <= AHEAD_PLAYERS) {
-      warmPlayer(entry.kind, `${urls.raw(entry.path)}?v=${stamp(entry)}`);
     }
   }
   // One request for all of them, once half of what lies ahead is unknown or the cursor is about to reach
