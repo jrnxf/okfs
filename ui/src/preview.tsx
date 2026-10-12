@@ -19,6 +19,12 @@ const STALE = 250;
  * enough for a heavy local page to load, short enough that the old page is not taken for the new file.
  */
 const FRAME_WAIT = 500;
+/**
+ * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
+ * painted, and a long page is still being laid out after it has loaded. So a loaded page waits before it is
+ * shown: a millisecond for each of this many bytes, and never more than half of `FRAME_WAIT`.
+ */
+const PAINT_RATE = 2000;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -242,11 +248,15 @@ function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boo
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
             src={html ? urls.raw(page.path) : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
             title={page.name}
-            // A page that has loaded may not be painted yet: it takes over two animation frames later. By then
-            // a move of the cursor may have taken this frame away, and its page is not brought back.
+            // A page that has loaded may not be painted yet: it takes over after a wait for its size and two
+            // animation frames. By then a move of the cursor may have taken this frame away, and its page is not brought back.
             onLoad={
               page === next
-                ? ({ currentTarget: frame }) => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page)))
+                ? ({ currentTarget: frame }) =>
+                    setTimeout(
+                      () => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page))),
+                      html ? Math.min(page.size / PAINT_RATE, FRAME_WAIT / 2) : 0,
+                    )
                 : undefined
             }
           />
