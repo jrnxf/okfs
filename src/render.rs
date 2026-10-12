@@ -2,6 +2,7 @@
 //! Highlighted code uses five classes, one per `--syn-*` token.
 
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
@@ -117,12 +118,22 @@ fn syntax_for(name: &str, first_line: &str) -> Option<&'static SyntaxReference> 
         .filter(|syntax| syntax.name != "Plain Text")
 }
 
-/// Colors one run of source, calling `line` with the markup of each line.
-fn highlight_lines(src: &str, syntax: &SyntaxReference, mut line: impl FnMut(&str)) -> Option<()> {
+/// Lines colored between two looks at whether the reader is still there.
+const LOOK_EVERY: usize = 16;
+
+/// For coloring nobody can walk away from: a fenced block, a tile's cover.
+static STAYS: AtomicBool = AtomicBool::new(false);
+
+/// Colors one run of source, calling `line` with the markup of each line. Stops with
+/// `None` once `gone` is true: the reader left, and the rest would be thrown away.
+fn highlight_lines(src: &str, syntax: &SyntaxReference, gone: &AtomicBool, mut line: impl FnMut(&str)) -> Option<()> {
     let mut state = ParseState::new(syntax);
     let mut stack = ScopeStack::new();
     let mut html = String::new();
-    for text in LinesWithEndings::from(src) {
+    for (count, text) in LinesWithEndings::from(src).enumerate() {
+        if count % LOOK_EVERY == 0 && gone.load(Ordering::Relaxed) {
+            return None;
+        }
         html.clear();
         let ops = state.parse_line(text, &SYNTAXES).ok()?;
         let mut at = 0;
@@ -180,16 +191,32 @@ fn colorable(src: &str) -> bool {
     src.len() <= MAX_HIGHLIGHT && src.lines().all(|line| line.len() <= MAX_LINE)
 }
 
-/// A whole file as numbered lines.
+/// A file, or its start, as numbered lines.
 pub struct Code {
     pub html: String,
+    /// The lines of the whole file, whatever part of it is in `html`.
     pub lines: usize,
     pub highlighted: bool,
+    /// Only the start of the file is in `html`.
+    pub more: bool,
 }
 
 /// Renders a source file. `name` picks the syntax; unknown names come out plain.
 pub fn code(src: &str, name: &str) -> Code {
-    let src = src.strip_suffix('\n').unwrap_or(src);
+    code_start(src, name, None, &STAYS)
+}
+
+/// Renders a source file, or with `first` only that many of its lines: coloring costs by
+/// the line, and a file passed under a held key shows one screen of them. The limits on
+/// size and line length then apply to that part alone. `gone` turning true stops the
+/// coloring; what comes back is then not worth sending.
+pub fn code_start(src: &str, name: &str, first: Option<usize>, gone: &AtomicBool) -> Code {
+    let whole = src.strip_suffix('\n').unwrap_or(src);
+    let end = first
+        .and_then(|limit| whole.match_indices('\n').nth(limit.saturating_sub(1)))
+        .map_or(whole.len(), |(at, _)| at);
+    let more = end < whole.len();
+    let src = &whole[..end];
     let syntax = colorable(src)
         .then(|| syntax_for(name, src.lines().next().unwrap_or("")))
         .flatten();
@@ -201,7 +228,7 @@ pub fn code(src: &str, name: &str) -> Code {
         html.push_str("</span>");
         lines += 1;
     };
-    let highlighted = syntax.is_some_and(|syntax| highlight_lines(src, syntax, &mut push).is_some());
+    let highlighted = syntax.is_some_and(|syntax| highlight_lines(src, syntax, gone, &mut push).is_some());
     if !highlighted {
         html.clear();
         lines = 0;
@@ -215,10 +242,14 @@ pub fn code(src: &str, name: &str) -> Code {
             lines += 1;
         }
     }
+    if more {
+        lines = whole.lines().count();
+    }
     Code {
         html,
         lines,
         highlighted,
+        more,
     }
 }
 
@@ -229,7 +260,7 @@ fn fence(src: &str, lang: &str) -> String {
         .flatten();
     let mut html = String::with_capacity(src.len() * 2);
     let done = syntax.is_some_and(|syntax| {
-        highlight_lines(src, syntax, |markup| {
+        highlight_lines(src, syntax, &STAYS, |markup| {
             html.push_str(markup);
             html.push('\n');
         })
@@ -427,6 +458,30 @@ mod tests {
             "{}",
             out.html
         );
+    }
+
+    #[test]
+    fn code_start_colors_the_first_lines_and_counts_them_all() {
+        let src = "let a = 1;\nlet b = 2;\nlet c = 3;\n";
+        let start = code_start(src, "a.js", Some(2), &STAYS);
+        assert!(start.more);
+        assert_eq!(start.lines, 3);
+        assert_eq!(start.html.matches("class=\"ln\"").count(), 2);
+        assert!(start.highlighted);
+        // A file no longer than the limit is whole.
+        let whole = code_start(src, "a.js", Some(3), &STAYS);
+        assert!(!whole.more);
+        assert_eq!(whole.html, code(src, "a.js").html);
+        // A long line further down does not cost the start its colors.
+        let long = format!("let a = 1;\nlet x = \"{}\";", "a".repeat(MAX_LINE));
+        assert!(code_start(&long, "a.js", Some(1), &STAYS).highlighted);
+    }
+
+    #[test]
+    fn coloring_stops_for_a_reader_who_left() {
+        let gone = AtomicBool::new(true);
+        let out = code_start("let a = 1;\n", "a.js", None, &gone);
+        assert!(!out.highlighted);
     }
 
     #[test]

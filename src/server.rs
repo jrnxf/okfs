@@ -5,6 +5,7 @@ use std::convert::Infallible;
 use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,7 +19,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
 use axum::{Json, Router};
-use futures_util::{StreamExt, stream};
+use futures_util::{StreamExt, future, stream};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
@@ -191,6 +192,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/list", get(list))
         .route("/api/entry", delete(delete_entry))
         .route("/api/preview", get(preview_file))
+        .route("/api/previews", get(preview_many))
         .route("/api/search", get(search))
         .route("/api/recent", get(recent))
         .route("/api/archive", get(archive_list))
@@ -434,21 +436,81 @@ struct PreviewQuery {
     path: String,
     /// Send only the start of the file, for a grid tile.
     head: Option<u8>,
+    /// Send only this many lines of source code. The page asks for a screen of them
+    /// first, and for the whole file once the cursor rests on it.
+    lines: Option<usize>,
+}
+
+/// Files previewed in one answer, at most.
+const MAX_PREVIEWS: usize = 64;
+
+/// Says that the reader has left when it is dropped, which is when the request is:
+/// the page gave it up, or the answer was sent.
+struct Gone(Arc<AtomicBool>);
+
+impl Drop for Gone {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Builds the preview of one file. `None` when there is no such file.
+async fn build_preview(
+    app: &App,
+    path: &str,
+    head: bool,
+    lines: Option<usize>,
+) -> Option<std::io::Result<preview::Preview>> {
+    let found = app.root.resolve(path).filter(|found| found.meta.is_file())?;
+    let size = found.meta.len();
+    let gone = Gone(Arc::new(AtomicBool::new(false)));
+    let flag = Arc::clone(&gone.0);
+    let work = move || {
+        if head {
+            preview::head(&found.abs, &found.rel)
+        } else {
+            preview::of(&found.abs, &found.rel, size, lines, &flag)
+        }
+    };
+    Some(
+        heavy(app, work)
+            .await
+            .unwrap_or_else(|| Err(std::io::Error::other("the work was dropped"))),
+    )
 }
 
 async fn preview_file(State(app): State<Arc<App>>, Query(query): Query<PreviewQuery>) -> Response {
-    let Some(found) = app.root.resolve(&query.path).filter(|found| found.meta.is_file()) else {
-        return not_found();
-    };
-    let size = found.meta.len();
-    let work = move || match query.head {
-        Some(_) => preview::head(&found.abs, &found.rel),
-        None => preview::of(&found.abs, &found.rel, size),
-    };
-    match heavy(&app, work).await {
+    match build_preview(&app, &query.path, query.head.is_some(), query.lines).await {
+        None => not_found(),
         Some(Ok(preview)) => Json(preview).into_response(),
-        _ => fail(StatusCode::INTERNAL_SERVER_ERROR, "the file could not be read"),
+        Some(Err(_)) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the file could not be read"),
     }
+}
+
+/// The previews of several files in one answer, by path: `?lines=80&p=a.rs&p=b.rs`.
+/// The page asks this way for what lies ahead of a moving cursor. A file that is
+/// missing or cannot be read is left out.
+async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
+    let mut lines = None;
+    let mut paths = Vec::new();
+    for pair in uri.query().unwrap_or("").split('&') {
+        let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = percent_decode_str(&value.replace('+', " "))
+            .decode_utf8_lossy()
+            .into_owned();
+        match name {
+            "lines" => lines = value.parse().ok(),
+            "p" if paths.len() < MAX_PREVIEWS => paths.push(value),
+            _ => {}
+        }
+    }
+    let built = future::join_all(paths.iter().map(|path| build_preview(&app, path, false, lines))).await;
+    let previews: std::collections::BTreeMap<String, preview::Preview> = paths
+        .into_iter()
+        .zip(built)
+        .filter_map(|(path, built)| Some((path, built?.ok()?)))
+        .collect();
+    Json(previews).into_response()
 }
 
 #[derive(Deserialize)]

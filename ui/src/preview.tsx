@@ -1,16 +1,14 @@
 // What the right pane shows for the file or folder under the cursor.
 
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Archive, type Listing, type TextPreview, getJson, pathOf, urls } from "./api";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
 import type { Entry } from "./store";
 
-/** Wait this long before asking the server, so holding `j` does not ask for every file passed. */
-const SETTLE = 25;
-/** Frames and players cost more to start, so they wait a little longer. */
+/** Frames and players cost a lot to start, so they wait until the cursor has stopped for this long. */
 const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
@@ -18,6 +16,23 @@ const STALE = 250;
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
 const FOLDER_PEEK = 14;
+/**
+ * Lines of a source file asked for first: a screen or two of them. Coloring costs by the line, and so does
+ * drawing, so the start of a file can be on screen in the frame the cursor reaches it.
+ */
+const FIRST_LINES = 80;
+/**
+ * The whole of a file is asked for once the cursor has rested on it this long. Longer than a keyboard waits
+ * before a held key repeats: at 150 a walk began by drawing the whole of the file it started on, which stalls
+ * the page for half a second on a file of 1 MB.
+ */
+const WHOLE_REST = 500;
+/** Entries past the cursor, in the direction it moves, that are asked for before the cursor gets there. */
+const AHEAD = 16;
+/** Pictures cost more to hold than text does: fewer of them are loaded ahead. */
+const AHEAD_PICTURES = 3;
+/** Requests of the pane on their way at once. Past this the oldest gives way. */
+const FLIGHTS = 12;
 
 /** Reports facts learned by showing a file, such as an image's size, for the pane's header. */
 export type Report = (path: string, facts: string[]) => void;
@@ -42,7 +57,114 @@ export function forgetAnswers(stale: (path: string) => boolean = () => true): vo
     return path === null || stale(path);
   };
   for (const url of [...answers.keys()]) if (dropped(url)) answers.delete(url);
+  // A request on its way was made before the change: its answer is not kept, and what is on screen asks again.
+  for (const url of [...flights.keys()]) if (dropped(url)) flights.delete(url);
   for (const asker of askers) if (dropped(asker.url)) asker.again();
+}
+
+/** Requests on their way that a move of the cursor does not cancel, oldest first. */
+const flights = new Map<string, { abort: AbortController; done: Promise<unknown> }>();
+
+function land(url: string, flight: { abort: AbortController }): void {
+  if (flights.get(url)?.abort === flight.abort) flights.delete(url);
+}
+
+/**
+ * Asks for an address once, however many ask and whether or not the cursor stays, and keeps the answer.
+ * Holding an arrow key passes a file in a thirtieth of a second: a request cancelled on the way past would
+ * never be answered, and one that is answered is wanted again as soon as the cursor comes back.
+ */
+function ask<T>(url: string): Promise<T> {
+  const known = answers.get(url);
+  if (known !== undefined) return Promise.resolve(known as T);
+  const going = flights.get(url);
+  if (going) return going.done as Promise<T>;
+  if (flights.size >= FLIGHTS) {
+    const [oldest, flight] = flights.entries().next().value as [string, { abort: AbortController }];
+    flights.delete(oldest);
+    flight.abort.abort();
+  }
+  const flight = { abort: new AbortController(), done: Promise.resolve() as Promise<unknown> };
+  flight.done = getJson<T>(url, flight.abort.signal)
+    .then((data) => {
+      // An answer to a request that was dropped describes a file that has changed since.
+      if (flights.get(url)?.abort === flight.abort) remember(url, data);
+      return data;
+    })
+    .finally(() => land(url, flight));
+  flights.set(url, flight);
+  return flight.done as Promise<T>;
+}
+
+/** The start of a text file: what the pane asks for first. */
+const startUrl = (path: string): string => `${urls.preview(path)}&lines=${FIRST_LINES}`;
+
+/** Pictures loaded ahead of the cursor, held so the browser keeps them. */
+const pictures: HTMLImageElement[] = [];
+
+/** The JSON the pane asks for when the cursor is on `entry`, if it asks for any. */
+function addressOf(entry: Entry): string | null {
+  switch (entry.kind) {
+    case "folder":
+      return urls.list(entry.path, FOLDER_PEEK);
+    case "image":
+    case "video":
+    case "audio":
+    case "pdf":
+    case "html":
+      return null;
+    case "archive":
+      return entry.ext === "zip" ? urls.archive(entry.path) : null;
+    default:
+      return startUrl(entry.path);
+  }
+}
+
+/**
+ * Asks for what lies past the cursor in the direction it moves, so a preview is here before the cursor is.
+ * `stamp` gives the stamp a picture is loaded under.
+ */
+export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string): void {
+  // Text files whose start is not known and not on its way, nearest first.
+  const unknown: { url: string; path: string }[] = [];
+  let nearest = 0;
+  for (let i = 1; i <= AHEAD; i++) {
+    const entry = entries[cursor + step * i];
+    if (!entry) break;
+    const url = addressOf(entry);
+    if (url === startUrl(entry.path)) {
+      if (answers.get(url) !== undefined || flights.has(url)) continue;
+      if (!unknown.length) nearest = i;
+      unknown.push({ url, path: entry.path });
+    } else if (url) {
+      if (flights.size < FLIGHTS) ask(url).catch(() => undefined);
+    } else if (entry.kind === "image" && i <= AHEAD_PICTURES) {
+      const src = `${urls.raw(entry.path)}?v=${stamp(entry)}`;
+      if (pictures.some((picture) => picture.getAttribute("src") === src)) continue;
+      const picture = new Image();
+      picture.src = src;
+      pictures.push(picture);
+      if (pictures.length > AHEAD_PICTURES * 2) pictures.shift();
+    }
+  }
+  // One request for all of them, once half of what lies ahead is unknown or the cursor is about to reach
+  // it. A request for each file needs several turns of the page to land, and a held key leaves it few.
+  if (!unknown.length || (unknown.length < AHEAD / 2 && nearest > 3)) return;
+  const flight = { abort: new AbortController(), done: Promise.resolve() as Promise<unknown> };
+  const all = getJson<Record<string, unknown>>(urls.previews(unknown.map((file) => file.path), FIRST_LINES), flight.abort.signal);
+  for (const file of unknown) {
+    const one = { abort: flight.abort, done: flight.done };
+    one.done = all
+      .then((found) => {
+        const data = found[file.path];
+        if (data === undefined) throw new Error("no preview");
+        if (flights.get(file.url)?.abort === one.abort) remember(file.url, data);
+        return data;
+      })
+      .finally(() => land(file.url, one));
+    one.done.catch(() => undefined);
+    flights.set(file.url, one);
+  }
 }
 
 interface Loaded<T> {
@@ -52,8 +174,14 @@ interface Loaded<T> {
   failed?: boolean;
 }
 
-/** Fetches JSON for the pane. Keeps the last answer on screen until the next one arrives. */
-export function useLoaded<T>(url: string, settle = SETTLE): Loaded<T> {
+/**
+ * Fetches JSON for the pane. Keeps the last answer on screen until the next one arrives.
+ *
+ * Without `wait` the request goes out in the task of the move that asked for it, and outlives the move: see
+ * `ask`. With `wait` it goes out that many ms later and is cancelled when the address changes first. That is
+ * for what is costly and seldom wanted twice: a tile scrolled past, the whole of a large file.
+ */
+export function useLoaded<T>(url: string, wait?: number): Loaded<T> {
   const [state, setState] = useState<Loaded<T>>({ url, data: answers.get(url) as T | undefined });
   // Counts the times the answers were dropped while this was on screen. Each one asks again.
   const [dropped, setDropped] = useState(0);
@@ -66,31 +194,48 @@ export function useLoaded<T>(url: string, settle = SETTLE): Loaded<T> {
       askers.delete(self);
     };
   }, []);
-  useEffect(() => {
+  // A layout effect runs with the draw that changed the address. A plain effect waits for the next paint,
+  // which is half of the time a file has under a held key.
+  useLayoutEffect(() => {
     const known = answers.get(url) as T | undefined;
     if (known !== undefined) {
       setState({ url, data: known });
       return;
     }
+    let here = true;
     const abort = new AbortController();
-    const ask = setTimeout(() => {
-      getJson<T>(url, abort.signal).then(
+    const take = (asked: Promise<T>) =>
+      asked.then(
         (data) => {
-          remember(url, data);
-          setState({ url, data });
+          if (here) setState({ url, data });
         },
         () => {
-          if (!abort.signal.aborted) setState({ url, failed: true });
+          // A request that was cancelled or pushed out says nothing about the file.
+          if (here && !abort.signal.aborted && answers.get(url) === undefined && !flights.has(url)) setState({ url, failed: true });
         },
       );
-    }, settle);
+    const timer =
+      wait === undefined
+        ? (take(ask<T>(url)), undefined)
+        : setTimeout(() => {
+            take(
+              getJson<T>(url, abort.signal).then((data) => {
+                remember(url, data);
+                return data;
+              }),
+            );
+          }, wait);
     const clear = setTimeout(() => setState((old) => (old.url === url ? old : { url: old.url })), STALE);
     return () => {
-      clearTimeout(ask);
+      here = false;
+      clearTimeout(timer);
       clearTimeout(clear);
       abort.abort();
     };
-  }, [url, settle, dropped]);
+  }, [url, wait, dropped]);
+  // An answer that is kept is drawn with the move itself, not one draw later.
+  const known = answers.get(url) as T | undefined;
+  if (known !== undefined && state.url !== url) return { url, data: known };
   return state;
 }
 
@@ -352,7 +497,19 @@ export function Prose({ html, class: extra }: { html: string; class?: string }) 
 }
 
 function Text({ entry, report }: { entry: Entry; report: Report }) {
-  const { data, failed, url } = useLoaded<TextPreview>(urls.preview(entry.path));
+  // The start of the file comes first. The whole of it is asked for once the cursor has rested, and only
+  // when the start says there is more: a short file, a table and a Markdown file are whole already.
+  const whole = urls.preview(entry.path);
+  const start = startUrl(entry.path);
+  const rested = useSettled(entry.path, WHOLE_REST);
+  const head = useLoaded<TextPreview>(start);
+  const cut = head.url === start && head.data?.kind === "code" && head.data.more === true;
+  const wanted = cut && (rested || answers.has(whole));
+  const rest = useLoaded<TextPreview>(wanted ? whole : start, wanted ? 0 : undefined);
+  const { data, failed, url: from } = wanted && rest.url === whole && rest.data ? rest : head;
+  // A preview is known by the file's address whichever part is shown, so the pane keeps its scroll
+  // position when the whole file takes the place of its start.
+  const url = from.replace(/&lines=\d+$/, "");
   useEffect(() => {
     if (!data || url !== urls.preview(entry.path)) return;
     if (data.kind === "table") report(entry.path, [`${fmt.count(data.total)} ${data.total === 1 ? "row" : "rows"}`]);

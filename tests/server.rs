@@ -554,6 +554,68 @@ async fn text_previews_are_bounded() {
 }
 
 #[tokio::test]
+async fn the_start_of_a_source_file_can_be_asked_for_alone() {
+    let site = Site::new();
+    let app = site.router();
+    fs::write(site.served.join("long.rs"), "fn a() {}\n".repeat(200)).unwrap();
+    fs::write(site.served.join("short.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+
+    // The first lines only, colored, with the count of all of them and a note that there is more.
+    let start = json(&app, "/api/preview?path=long.rs&lines=80").await;
+    assert_eq!(
+        (start["kind"].as_str(), start["lines"].as_u64()),
+        (Some("code"), Some(200))
+    );
+    assert_eq!(start["more"], true);
+    let html = start["html"].as_str().unwrap();
+    assert_eq!(html.matches("class=\"ln\"").count(), 80);
+    assert!(html.contains("tk-k"));
+    // Without the limit the whole file comes, and says nothing of more.
+    let whole = json(&app, "/api/preview?path=long.rs").await;
+    assert_eq!(whole["html"].as_str().unwrap().matches("class=\"ln\"").count(), 200);
+    assert!(whole.get("more").is_none());
+
+    // A file shorter than the limit is whole already.
+    let short = json(&app, "/api/preview?path=short.rs&lines=80").await;
+    assert_eq!(short["lines"], 2);
+    assert!(short.get("more").is_none());
+}
+
+#[tokio::test]
+async fn several_previews_come_in_one_answer_by_path() {
+    let site = Site::new();
+    let app = site.router();
+    fs::write(site.served.join("long.rs"), "fn a() {}\n".repeat(200)).unwrap();
+    fs::write(site.served.join("data.json"), "{\"a\": [1, 2]}").unwrap();
+
+    let many = json(
+        &app,
+        "/api/previews?lines=80&p=long.rs&p=sub%2Fdeep%2Fc.rs&p=data.json&p=gone.rs&p=sub",
+    )
+    .await;
+    let found = many.as_object().unwrap();
+    // A missing file and a folder are left out; the rest are told by their paths.
+    assert_eq!(
+        found.keys().collect::<Vec<_>>(),
+        ["data.json", "long.rs", "sub/deep/c.rs"]
+    );
+    assert_eq!(many["long.rs"]["more"], true);
+    assert_eq!(many["long.rs"], json(&app, "/api/preview?path=long.rs&lines=80").await);
+    assert_eq!(
+        many["sub/deep/c.rs"],
+        json(&app, "/api/preview?path=sub/deep/c.rs").await
+    );
+    assert_eq!(many["data.json"]["kind"], "json");
+
+    // Nothing asked for, nothing sent; a path outside the served folder is left out like a missing one.
+    assert_eq!(json(&app, "/api/previews").await, serde_json::json!({}));
+    assert_eq!(
+        json(&app, "/api/previews?p=..%2Foutside.txt").await,
+        serde_json::json!({})
+    );
+}
+
+#[tokio::test]
 async fn a_theme_file_that_fails_the_checker_is_refused_with_the_reason() {
     let site = Site::new();
     let root = Root::new(&site.served, false).unwrap();
