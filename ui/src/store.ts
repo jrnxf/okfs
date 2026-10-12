@@ -269,10 +269,11 @@ export class Store {
   }
 
   /**
-   * Changes whenever the file is rewritten. A picture or a frame is loaded by an address that carries it,
-   * so the new contents are loaded and the old are not shown from memory. It starts as the file's time and
-   * size. It moves when the server names the file as written, and when a call to catch up on everything
-   * finds the file with another time or size than it was loaded with.
+   * Changes whenever the file is rewritten. A picture, a video or a sound is loaded by an address that
+   * carries it, and a frame is made again for each one, so the new contents are loaded and the old are not
+   * shown from memory. It starts as the file's time and size. It moves when the server names the file as
+   * written, and when a call to catch up on everything does not find the file listed with the time and size
+   * it was loaded with.
    */
   stamp(entry: Entry): string {
     let kept = this.stamps.get(entry.path);
