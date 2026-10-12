@@ -15,15 +15,16 @@ const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
 /**
- * A frame that has not loaded after this long is shown as it is, in place of the page before it. Long
- * enough for a heavy local page to load, short enough that the old page is not taken for the new file.
+ * A frame whose page is not ready after this long is shown as it is, in place of the page before it. Long
+ * enough for a heavy local page, short enough that the old page is not taken for the new file.
  */
 const FRAME_WAIT = 500;
 /**
  * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
- * painted, and a page that was slow to load, for its length or for the work of its script, is still being laid
- * out after it has loaded. So a loaded page waits before it is shown: this many times as long as it took to
- * load, and never more than half of `FRAME_WAIT`.
+ * painted, and a long page is still being laid out after it has loaded. So a loaded page waits before it is
+ * shown, this many times as long as it took to load. It is a guess, since nothing tells the app when a frame
+ * has painted. Measured: with no wait a page of 1 KB shows white on most moves, with once the load time a page
+ * of 400 KB does on one move in six, with twice on about one move in a hundred. Three times is no better.
  */
 const PAINT_WAIT = 2;
 /** Children of one JSON object or array shown before "show more". */
@@ -282,15 +283,11 @@ function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; ope
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
             src={html ? urls.raw(page.entry.path) : `${urls.raw(page.entry.path)}#navpanes=0&view=FitH`}
             title={page.entry.name}
-            // A page that has loaded may not be painted yet: it takes over after a wait for its load and two
-            // animation frames. By then a move of the cursor may have taken this frame away, and its page is not brought back.
+            // A page that has loaded may not be painted yet: see `PAINT_WAIT`. By the time the wait is over a
+            // move of the cursor may have taken this frame away, and its page is not brought back.
             onLoad={
               page === next
-                ? ({ currentTarget: frame }) =>
-                    setTimeout(
-                      () => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page))),
-                      html ? Math.min((performance.now() - began.current) * PAINT_WAIT, FRAME_WAIT / 2) : 0,
-                    )
+                ? ({ currentTarget: frame }) => setTimeout(() => frame.isConnected && setShown(page), (performance.now() - began.current) * PAINT_WAIT)
                 : undefined
             }
           />
