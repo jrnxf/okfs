@@ -16,22 +16,22 @@ const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
 /**
- * A frame whose page is not ready after this long is shown as it is, in place of the page before it. Long
- * enough for a heavy local page, short enough that the old page is not taken for the new file.
+ * A page that has not loaded after this long counts as ready all the same. Long enough for a heavy local
+ * page, short enough that the page before it is not taken for the new file.
  */
 const FRAME_WAIT = 500;
 /**
  * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
- * painted. In the dark scheme that does not matter: the next frame lies on top of the one on screen and is
- * see-through until its page paints, so the browser itself makes the change, and the frame beneath is only
- * taken away this long after the load. A page that sets no background and declares no dark scheme still
- * paints a white one there, because its colour scheme differs from the frame's. One that declares a dark
- * scheme stays see-through, and is drawn over the page beneath until that page is taken away.
+ * painted. In the dark scheme that does not matter: a page lies on top of the ones before it and is
+ * see-through until it paints, so the browser itself makes the change, and the pages beneath are only taken
+ * away this long after it is ready. A page that sets no background and declares no dark scheme still paints
+ * a white one there, because its colour scheme differs from the frame's. One that declares a dark scheme
+ * stays see-through, and is drawn over the page beneath until that page is taken away.
  */
 const DROP_WAIT = 250;
 /**
  * In the light scheme a page that sets no background is see-through for good, and on top it would be drawn
- * over the page before it. So there the next frame loads beneath the one on screen and takes over after a
+ * over the page before it. So there the next page loads beneath the one on screen and takes over after a
  * wait of this many times its load time. That is a guess. Measured: with no wait a page of 1 KB shows white
  * on most moves, with once the load time a page of 400 KB does on one move in six, with twice on about
  * three moves in a hundred. Three times is no better.
@@ -255,65 +255,57 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
 interface Page {
   id: string;
   entry: Entry;
+  /** When the page was put in the pane. */
+  at: number;
 }
 
 function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  // The frame on screen stays until the next one has painted, then the next takes its place in one step:
-  // the pane is never empty, and never the white of a frame that has not painted yet.
-  // The next page is another file, or the same file rewritten. `under` is the page that `shown` replaced,
-  // kept beneath it for a moment in the dark scheme: see `DROP_WAIT`.
-  const [{ shown, under }, setHeld] = useState<{ shown: Page | null; under: Page | null }>({ shown: null, under: null });
+  // The pages in the pane, in the order they were asked for: each is laid on the one before it, and the pane
+  // shows the newest that has painted. So it is never empty, and never the white of a frame that has not
+  // painted yet. A page is another file, or the same file rewritten.
+  const [pages, setPages] = useState<Page[]>([]);
+  // A page that is ready has the pages before it taken away, after a wait: see `DROP_WAIT` and `PAINT_WAIT`.
+  // It is ready when it has loaded, or `FRAME_WAIT` after it was put in the pane.
+  const ready = (page: Page, loaded: boolean) => {
+    const wait = isDark() ? DROP_WAIT : loaded ? (performance.now() - page.at) * PAINT_WAIT : 0;
+    setTimeout(() => setPages((old) => (old.indexOf(page) > 0 ? old.slice(old.indexOf(page)) : old)), wait);
+  };
+  const id = `${entry.path}\n${stamp}`;
+  useLayoutEffect(() => {
+    if (!settled) return;
+    const page: Page = { id, entry, at: performance.now() };
+    setTimeout(() => ready(page, false), FRAME_WAIT);
+    setPages((old) => {
+      // The cursor is back on a page that is still in the pane: it is the top page again.
+      const kept = old.findIndex((had) => had.id === id);
+      if (kept >= 0) return kept === old.length - 1 ? old : old.slice(0, kept + 1);
+      // Dark scheme: nothing that may have painted is taken away for a new page, up to four pages; past that
+      // the oldest above the bottom one goes. Light scheme: only the page on screen is kept.
+      const under = !isDark() ? old.slice(0, 1) : old.length < 4 ? old : [old[0] as Page, ...old.slice(2)];
+      return [...under, page];
+    });
+  }, [settled && id]);
   // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
   useEffect(() => {
-    if (open && phone) setHeld((held) => (held.shown?.entry.path === entry.path ? held : { shown: null, under: null }));
+    if (open && phone) setPages((old) => (old.every((page) => page.entry.path === entry.path) ? old : old.filter((page) => page.entry.path === entry.path)));
   }, [open]);
-  const id = `${entry.path}\n${stamp}`;
-  const next: Page | null = settled && shown?.id !== id ? { id, entry } : null;
-  // When the next frame was put in the pane, to tell how long its page took to load.
-  const began = useRef(0);
-  // A layout effect: the timer is cleared in the step that takes its frame away, so it cannot bring that page back.
-  useLayoutEffect(() => {
-    if (!next) return;
-    began.current = performance.now();
-    const timer = setTimeout(() => setHeld({ shown: next, under: null }), FRAME_WAIT);
-    return () => clearTimeout(timer);
-  }, [next?.id]);
-  // Oldest first, and a page keeps its place in that order from frame to frame: a frame moved in the pane would load again.
+  // Oldest first, and a page keeps its place in that order: a frame moved in the pane would load again.
   return (
     <>
-      {[under, shown, next].map((page, layer) => {
-        if (!page) return null;
+      {pages.map((page, layer) => {
         const html = page.entry.kind === "html";
-        // A frame with a page beneath it is laid over that page: see `.pv-next`.
-        const over = layer === 1 ? under : layer === 2 ? shown : null;
         return (
           <iframe
             // A new frame for each page: changing the address of one frame would add to the back button's history.
             key={page.id}
-            class={over ? "pv-frame pv-next" : "pv-frame"}
+            class={layer ? "pv-frame pv-next" : "pv-frame"}
             // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
             // The server sends the same restriction as a header, so it holds when the page is opened directly too.
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
             src={html ? urls.raw(page.entry.path) : `${urls.raw(page.entry.path)}#navpanes=0&view=FitH`}
             title={page.entry.name}
-            // A page that has loaded may not be painted yet: see `DROP_WAIT` and `PAINT_WAIT`.
-            onLoad={
-              page === next
-                ? ({ currentTarget: frame }) => {
-                    const dark = isDark();
-                    // Dark scheme: the loaded page is the one shown from now on, with the page it replaced beneath
-                    // it. No later move or rewrite can then bring back a page older than this one.
-                    if (dark) setHeld((held) => ({ shown: page, under: held.shown }));
-                    // After the wait this page stands alone, unless a newer one has taken its place (dark) or a
-                    // move of the cursor has taken its frame away (light).
-                    setTimeout(
-                      () => setHeld((held) => ((dark ? held.shown?.id === page.id : frame.isConnected) ? { shown: page, under: null } : held)),
-                      dark ? DROP_WAIT : (performance.now() - began.current) * PAINT_WAIT,
-                    );
-                  }
-                : undefined
-            }
+            onLoad={() => ready(page, true)}
           />
         );
       })}
