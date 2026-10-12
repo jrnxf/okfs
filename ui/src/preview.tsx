@@ -211,11 +211,15 @@ function Media({ entry, report }: { entry: Entry; report: Report }) {
   );
 }
 
-function Frame({ entry }: { entry: Entry }) {
+function Frame({ entry, hidden }: { entry: Entry; hidden: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
   // The frame on screen stays until the next one has loaded behind it, then the next takes its place in
   // one step: the pane is never empty, and never the white of a frame that has not painted yet.
   const [shown, setShown] = useState<Entry | null>(null);
+  // A page that loaded while the pane was hidden was never on screen: it is not kept for another file.
+  useEffect(() => {
+    if (!hidden) setShown((page) => (page?.path === entry.path ? page : null));
+  }, [hidden]);
   const next = settled && shown?.path !== entry.path ? entry : null;
   useEffect(() => {
     if (!next) return;
@@ -415,7 +419,7 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
   }
 }
 
-export function Preview({ entry, report }: { entry: Entry; report: Report }) {
+export function Preview({ entry, report, hidden }: { entry: Entry; report: Report; hidden: boolean }) {
   switch (entry.kind) {
     case "folder":
       return <Folder entry={entry} report={report} />;
@@ -427,7 +431,7 @@ export function Preview({ entry, report }: { entry: Entry; report: Report }) {
     case "pdf":
     case "html":
       // One `Frame` for every file, so it can keep the page on screen while the next one loads.
-      return <Frame entry={entry} />;
+      return <Frame entry={entry} hidden={hidden} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;

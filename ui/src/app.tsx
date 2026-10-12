@@ -501,7 +501,7 @@ export function App() {
         </section>
         <section class="right">
           <div class="ph">{header}</div>
-          <div class="pv">{shown && <Preview entry={shown} report={report} />}</div>
+          <div class="pv">{shown && <Preview entry={shown} report={report} hidden={phone() && !s.open} />}</div>
         </section>
       </div>
       <footer class={filtering || s.filter ? "status filtering" : "status"}>
