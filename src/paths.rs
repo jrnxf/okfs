@@ -5,6 +5,7 @@ use std::ffi::OsStr;
 use std::fs::{self, FileType, Metadata};
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 /// The served folder and the rules for what inside it may be shown.
 #[derive(Debug, Clone)]
@@ -158,6 +159,13 @@ impl Root {
         })
     }
 
+    /// Where a resolved path really is, relative to the served folder. It differs from
+    /// the path that was asked for when a link inside the served folder was followed.
+    pub fn place(&self, found: &Resolved) -> Option<String> {
+        let inner = found.abs.strip_prefix(&self.dir).ok()?;
+        Some(inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/"))
+    }
+
     /// Finds the entry a request path names, for removing it. Unlike `resolve`, the
     /// last name is not followed when it is a link: the link is what gets removed, and
     /// not what it points at. Only a link that is shown is found. The folder holding
@@ -288,6 +296,13 @@ impl Root {
         })
     }
 
+    /// When the file `name` in the folder `dir` was last written. Only a plain file has
+    /// a time here: a link is not followed and has none, and neither has a folder.
+    pub fn modified(&self, dir: &Path, name: &str) -> Option<SystemTime> {
+        let meta = fs::symlink_metadata(dir.join(name)).ok()?;
+        meta.is_file().then(|| meta.modified().ok()).flatten()
+    }
+
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
     pub fn scan(&self, abs: &Path) -> io::Result<Vec<Seen>> {
         let mut out = Vec::new();
@@ -401,6 +416,22 @@ mod tests {
     fn untouched(outside: &Path) -> bool {
         let kept = |name: &str| fs::read_to_string(outside.join(name)).is_ok_and(|text| text == "kept");
         kept("kept.txt") && kept("inner/kept.txt")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_plain_file_has_a_time() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, _outside) = served_beside_outside();
+        let served = root.dir();
+        fs::create_dir_all(served.join("folder")).unwrap();
+        fs::write(served.join("file.txt"), "inside").unwrap();
+        symlink(served.join("file.txt"), served.join("link.txt")).unwrap();
+
+        assert!(root.modified(served, "file.txt").is_some());
+        for name in ["link.txt", "folder", "missing.txt"] {
+            assert!(root.modified(served, name).is_none(), "{name}");
+        }
     }
 
     #[cfg(unix)]

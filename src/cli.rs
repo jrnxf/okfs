@@ -1,5 +1,6 @@
 //! The command line: `okfs [PATH]`, `okfs theme check <file>` and `okfs theme list`.
 
+use std::io::IsTerminal;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -7,6 +8,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 
 use crate::index::Index;
+use crate::lan::{self, Scan};
 use crate::paths::Root;
 use crate::server::{self, App, Options, ThemeChoice};
 use crate::theme;
@@ -16,6 +18,7 @@ Examples:
   okfs                            serve this folder at http://127.0.0.1:8080/
   okfs ~/photos --port 9000       serve another folder on another port
   okfs --bind 0.0.0.0             let other machines on the network in
+  okfs --bind 0.0.0.0 --qr        and print a QR code a phone can scan to open it
   okfs --index index.html         open a folder that holds an index.html as that page
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
   okfs --theme ./mine.css         start in your own theme
@@ -47,6 +50,10 @@ struct Serve {
     /// Port to listen on
     #[arg(short, long, default_value_t = 8080)]
     port: u16,
+
+    /// Print a QR code for the address another device can use. Needs a terminal
+    #[arg(long)]
+    qr: bool,
 
     /// Open a folder that holds a file of this name as that page: --index index.html
     #[arg(long, value_name = "FILE")]
@@ -188,7 +195,8 @@ fn serve(args: Serve) -> Result<(), String> {
         ThemeChoice::BuiltIn(name) => name.clone(),
         ThemeChoice::File(path) => path.display().to_string(),
     };
-    let app = App::new(root.clone(), Index::spawn(root.clone()), options)?;
+    let index = Index::spawn(root.clone());
+    let app = App::new(root.clone(), std::sync::Arc::clone(&index), options)?;
     std::thread::spawn(crate::render::warm);
 
     let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start: {error}"))?;
@@ -205,11 +213,34 @@ fn serve(args: Serve) -> Result<(), String> {
             "read only"
         };
         println!("  serving  {} ({writes})", root.dir().display());
-        println!("  at       http://{address}/");
+        let addresses = lan::addresses(address.ip(), &lan::found());
+        for (index, ip) in addresses.iter().enumerate() {
+            let label = if index == 0 { "at" } else { "" };
+            println!("  {label:<8} {}", lan::link(*ip, address.port()));
+        }
         println!("  theme    {theme_name}");
+        if args.qr {
+            match lan::scan(
+                address.ip(),
+                &addresses,
+                address.port(),
+                std::io::stdout().is_terminal(),
+            ) {
+                Scan::Code(lines) => {
+                    println!();
+                    for line in lines {
+                        println!("  {line}");
+                    }
+                }
+                Scan::Nothing(why) => println!("  qr       {why}"),
+                Scan::Skipped => {}
+            }
+        }
         axum::serve(listener, server::router(app))
-            .with_graceful_shutdown(async {
+            .with_graceful_shutdown(async move {
                 let _ = tokio::signal::ctrl_c().await;
+                // An open page holds a stream that would never end by itself.
+                index.feed().close();
             })
             .await
             .map_err(|error| format!("the server stopped: {error}"))

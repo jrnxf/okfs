@@ -2,7 +2,7 @@
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type Listing, type TextPreview, getJson, urls } from "./api";
+import { type Archive, type Listing, type TextPreview, getJson, pathOf, urls } from "./api";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
@@ -35,8 +35,8 @@ const FOLDER_PEEK = 14;
 export type Report = (path: string, facts: string[]) => void;
 
 const answers = new Map<string, unknown>();
-/** One for each `useLoaded` on screen: called when the answers are dropped. */
-const askers = new Set<() => void>();
+/** One for each `useLoaded` on screen: the address it shows, and what to call when its answer is dropped. */
+const askers = new Set<{ url: string; again: () => void }>();
 function remember(url: string, data: unknown): void {
   answers.delete(url);
   answers.set(url, data);
@@ -44,10 +44,17 @@ function remember(url: string, data: unknown): void {
   if (answers.size > 200) answers.delete(answers.keys().next().value as string);
 }
 
-/** Drops every answer kept, and asks again for those on screen. After a delete, some of them describe what is gone. */
-export function forgetAnswers(): void {
-  answers.clear();
-  for (const again of askers) again();
+/**
+ * Drops the answers kept about the paths that `stale` picks, or every answer, and asks again for those
+ * on screen. After a delete or a change on disk, some of them describe what is gone or was rewritten.
+ */
+export function forgetAnswers(stale: (path: string) => boolean = () => true): void {
+  const dropped = (url: string): boolean => {
+    const path = pathOf(url);
+    return path === null || stale(path);
+  };
+  for (const url of [...answers.keys()]) if (dropped(url)) answers.delete(url);
+  for (const asker of askers) if (dropped(asker.url)) asker.again();
 }
 
 interface Loaded<T> {
@@ -62,11 +69,13 @@ export function useLoaded<T>(url: string, settle = SETTLE): Loaded<T> {
   const [state, setState] = useState<Loaded<T>>({ url, data: answers.get(url) as T | undefined });
   // Counts the times the answers were dropped while this was on screen. Each one asks again.
   const [dropped, setDropped] = useState(0);
+  const asker = useRef({ url, again: () => setDropped((count) => count + 1) });
+  asker.current.url = url;
   useEffect(() => {
-    const again = () => setDropped((count) => count + 1);
-    askers.add(again);
+    const self = asker.current;
+    askers.add(self);
     return () => {
-      askers.delete(again);
+      askers.delete(self);
     };
   }, []);
   useEffect(() => {
@@ -172,30 +181,43 @@ function Folder({ entry, report }: { entry: Entry; report: Report }) {
   );
 }
 
-function Picture({ entry, report }: { entry: Entry; report: Report }) {
+function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
+  // The stamp makes a rewritten picture a new address: a page keeps the pictures it has loaded by address.
+  const src = `${urls.raw(entry.path)}?v=${stamp}`;
   const [broken, setBroken] = useState("");
-  if (broken === entry.path) return <Card entry={entry} line="This image could not be shown" />;
+  if (broken === src) return <Card entry={entry} line="This image could not be shown" />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
   return (
     <div class="pv-center">
       <img
-        src={urls.raw(entry.path)}
+        src={src}
         alt={entry.name}
         onLoad={(event) => {
           const { naturalWidth, naturalHeight } = event.currentTarget;
           if (naturalWidth) report(entry.path, [`${naturalWidth} × ${naturalHeight}`]);
         }}
-        onError={() => setBroken(entry.path)}
+        onError={() => setBroken(src)}
       />
     </div>
   );
 }
 
-function Media({ entry, report }: { entry: Entry; report: Report }) {
-  const [broken, setBroken] = useState(false);
+function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
+  const [broken, setBroken] = useState("");
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  if (broken) return <Card entry={entry} line="This browser cannot play this file" />;
-  const src = settled ? urls.raw(entry.path) : undefined;
+  // A rewritten file is loaded again only once nothing is playing: a player is never cut off.
+  const [playing, setPlaying] = useState(false);
+  const [loaded, setLoaded] = useState(stamp);
+  useEffect(() => {
+    if (!playing) setLoaded(stamp);
+  }, [stamp, playing]);
+  const src = settled ? `${urls.raw(entry.path)}?v=${loaded}` : undefined;
+  if (broken === src) return <Card entry={entry} line="This browser cannot play this file" />;
+  const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
+  const onError = () => {
+    setPlaying(false);
+    setBroken(src ?? "");
+  };
   const onMeta = (event: { currentTarget: HTMLMediaElement }) => {
     const media = event.currentTarget;
     const frame = media instanceof HTMLVideoElement && media.videoWidth ? [`${media.videoWidth} × ${media.videoHeight}`] : [];
@@ -206,28 +228,36 @@ function Media({ entry, report }: { entry: Entry; report: Report }) {
       <div class="pv-center">
         <div class="pv-audio">
           <KindIcon kind="audio" />
-          <audio src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={() => setBroken(!!src)} />
+          <audio src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
         </div>
       </div>
     );
   }
   return (
     <div class="pv-center">
-      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onError={() => setBroken(!!src)} />
+      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
     </div>
   );
 }
 
-function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boolean }) {
+/** What one frame holds: a file as it was when it was loaded. A rewritten file has a new stamp, and is a new page. */
+interface Page {
+  id: string;
+  entry: Entry;
+}
+
+function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
   // The frame on screen stays until the next one has loaded and painted behind it, then the next takes its
   // place in one step: the pane is never empty, and never the white of a frame that has not painted yet.
-  const [shown, setShown] = useState<Entry | null>(null);
+  // The next page is another file, or the same file rewritten.
+  const [shown, setShown] = useState<Page | null>(null);
   // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
   useEffect(() => {
-    if (open && phone) setShown((page) => (page?.path === entry.path ? page : null));
+    if (open && phone) setShown((page) => (page?.entry.path === entry.path ? page : null));
   }, [open]);
-  const next = settled && shown?.path !== entry.path ? entry : null;
+  const id = `${entry.path}\n${stamp}`;
+  const next: Page | null = settled && shown?.id !== id ? { id, entry } : null;
   // When the next frame was put in the pane, to tell how long its page took to load.
   const began = useRef(0);
   // A layout effect: the timer is cleared in the step that takes its frame away, so it cannot bring that page back.
@@ -236,22 +266,22 @@ function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boo
     began.current = performance.now();
     const timer = setTimeout(() => setShown(next), FRAME_WAIT);
     return () => clearTimeout(timer);
-  }, [next?.path]);
+  }, [next?.id]);
   return (
     <>
       {[shown, next].map((page) => {
         if (!page) return null;
-        const html = page.kind === "html";
+        const html = page.entry.kind === "html";
         return (
           <iframe
-            // A new frame for each file: changing the address of one frame would add to the back button's history.
-            key={page.path}
+            // A new frame for each page: changing the address of one frame would add to the back button's history.
+            key={page.id}
             class={page === next && shown ? "pv-frame pv-next" : "pv-frame"}
             // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
             // The server sends the same restriction as a header, so it holds when the page is opened directly too.
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
-            src={html ? urls.raw(page.path) : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
-            title={page.name}
+            src={html ? urls.raw(page.entry.path) : `${urls.raw(page.entry.path)}#navpanes=0&view=FitH`}
+            title={page.entry.name}
             // A page that has loaded may not be painted yet: it takes over after a wait for its load and two
             // animation frames. By then a move of the cursor may have taken this frame away, and its page is not brought back.
             onLoad={
@@ -440,19 +470,23 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
   }
 }
 
-export function Preview({ entry, report, open, phone }: { entry: Entry; report: Report; open: boolean; phone: boolean }) {
+/**
+ * `stamp` changes when the file is rewritten: what is loaded by address is then loaded again. `open` and
+ * `phone` tell a frame whether the pane was in sight while its page loaded.
+ */
+export function Preview({ entry, stamp, report, open, phone }: { entry: Entry; stamp: string; report: Report; open: boolean; phone: boolean }) {
   switch (entry.kind) {
     case "folder":
       return <Folder entry={entry} report={report} />;
     case "image":
-      return <Picture entry={entry} report={report} />;
+      return <Picture entry={entry} stamp={stamp} report={report} />;
     case "video":
     case "audio":
-      return <Media key={entry.path} entry={entry} report={report} />;
+      return <Media key={entry.path} entry={entry} stamp={stamp} report={report} />;
     case "pdf":
     case "html":
       // One `Frame` for every file, so it can keep the page on screen while the next one loads.
-      return <Frame entry={entry} open={open} phone={phone} />;
+      return <Frame entry={entry} stamp={stamp} open={open} phone={phone} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;

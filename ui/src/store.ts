@@ -1,7 +1,7 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
 import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
-import { config } from "./config";
+import { type Config, config, locate } from "./config";
 import { type Kind, extension, kindOf } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
@@ -62,6 +62,8 @@ export interface State {
   help: boolean;
   /** What the delete dialog is asking about, while it is up. */
   doomed: Doomed | null;
+  /** Counts the times the list caught up with the disk by itself. The list does not scroll for those. */
+  caught: number;
 }
 
 type HistoryMode = "push" | "replace" | "none";
@@ -93,6 +95,9 @@ function toEntry(item: Item, dir: string, rank: number): Entry {
   };
 }
 
+/** The time and size a listing gives for an entry. They move when a file is rewritten. */
+const versionOf = (entry: Entry): string => `${entry.mtime}.${entry.size}`;
+
 function savedSort(): Sort {
   const [key, dir] = (prefs.get("sort") ?? "").split(":");
   const known = SORT_KEYS.find((candidate) => candidate === key);
@@ -116,6 +121,7 @@ export class Store {
     palette: false,
     help: false,
     doomed: null,
+    caught: 0,
   };
 
   private readonly listeners = new Set<() => void>();
@@ -123,6 +129,18 @@ export class Store {
   private turn = 0;
   /** Where the cursor was in each folder visited, by name. */
   private readonly remembered = new Map<string, string>();
+  /** Where the folder being shown really is: the path its changes on disk are told by. */
+  private real = "";
+  /** Counts what the server told, so a folder that was on its way while something came in is read once more. */
+  private heard = 0;
+  /** What the next catch-up has to do, while one is due. See `catchUp`. */
+  private due: { all: boolean } | null = null;
+  private catching = false;
+  /** True while a delete of our own runs. It shows the folder itself when it is done. */
+  private removing = false;
+  /** The stamp of each file shown by its address, and the time and size the file had when it was loaded. See `stamp`. */
+  private readonly stamps = new Map<string, { stamp: string; seen?: string }>();
+  private stamped = 0;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -177,6 +195,24 @@ export class Store {
     history.replaceState(mode === "push" || dir ? state : history.state, "", url);
   }
 
+  /** Takes a listing as the folder being shown. */
+  private take(listing: Listing): void {
+    const { s } = this;
+    s.status = "ready";
+    s.path = listing.path;
+    this.real = listing.real ?? listing.path;
+    s.link = listing.link === true;
+    s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
+    s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
+    s.readme = listing.readme;
+  }
+
+  /** Shows that nothing is at a path. */
+  private lose(path: string): void {
+    this.real = path;
+    Object.assign(this.s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+  }
+
   /**
    * Shows a folder. `select` puts the cursor on a name; `open` also gives that file the full width.
    * A folder holding the `--index` file opens that file, under the folder's own address, unless
@@ -188,6 +224,7 @@ export class Store {
   ): Promise<void> {
     const { s } = this;
     const turn = ++this.turn;
+    const heard = this.heard;
     const leaving = this.cur();
     if (leaving && s.status === "ready") this.remembered.set(s.path, leaving.name);
 
@@ -197,7 +234,7 @@ export class Store {
     } catch (error) {
       if (turn !== this.turn) return;
       if (!(error instanceof HttpError)) throw error;
-      Object.assign(s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+      this.lose(path);
       this.setUrl(opts.history ?? "push", path, true);
       this.emit();
       return;
@@ -205,12 +242,7 @@ export class Store {
     if (turn !== this.turn) return;
 
     const changed = s.path !== listing.path || s.status !== "ready";
-    s.status = "ready";
-    s.path = listing.path;
-    s.link = listing.link === true;
-    s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
-    s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
-    s.readme = listing.readme;
+    this.take(listing);
     if (changed) s.filter = "";
     this.compute();
     const asked = opts.open !== undefined || opts.select !== undefined || opts.listing === true;
@@ -232,6 +264,170 @@ export class Store {
     if (!s.open || paged || (mode === "push" && changed)) this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex() });
     if (s.open && !paged) this.setUrl(mode, s.open.path, false, { opened: true });
     this.emit();
+    // A change told while the listing was on its way may not be in it.
+    if (heard !== this.heard) this.catchUp();
+  }
+
+  /**
+   * Changes whenever the file is rewritten. A picture, a video or a sound is loaded by an address that
+   * carries it, and a frame is made again for each one, so the new contents are loaded and the old are not
+   * shown from memory. It starts as the file's time and size. It moves when the server names the file as
+   * written, and when a call to catch up on everything does not find the file listed with the time and size
+   * it was loaded with.
+   */
+  stamp(entry: Entry): string {
+    let kept = this.stamps.get(entry.path);
+    if (!kept) {
+      kept = { stamp: versionOf(entry) };
+      this.stamps.set(entry.path, kept);
+      // Oldest first out: a Map keeps insertion order. A file dropped here starts again from its time and size.
+      if (this.stamps.size > 500) this.stamps.delete(this.stamps.keys().next().value as string);
+    }
+    // The listing was read before the file is loaded under this stamp: what is loaded is never older.
+    kept.seen ??= versionOf(entry);
+    return kept.stamp;
+  }
+
+  /** Marks a file that has been shown as rewritten: it is loaded again the next time it is shown. */
+  private restamp(path: string): void {
+    if (this.stamps.has(path)) this.stamps.set(path, { stamp: `r${++this.stamped}` });
+  }
+
+  /**
+   * Nothing that is kept can be trusted. A stamp stays only where the folder on screen lists its file with
+   * the time and size it was loaded with, and every answer is asked for again.
+   */
+  private distrust(): void {
+    const listed = new Map(this.s.all.map((entry) => [entry.path, versionOf(entry)]));
+    for (const [path, kept] of [...this.stamps]) if (kept.seen !== listed.get(path)) this.restamp(path);
+    forgetAnswers();
+  }
+
+  /** A folder's real path, as the path the page knows it by. They differ under a folder reached through a link. */
+  private local(dir: string): string {
+    const { path } = this.s;
+    const { real } = this;
+    if (real === path) return dir;
+    if (dir === real) return path;
+    if (!real) return joinPath(path, dir);
+    return dir.startsWith(`${real}/`) ? path + dir.slice(real.length) : dir;
+  }
+
+  /**
+   * The server says a folder changed on disk: entries came or went, or the files named were written.
+   * Only what is on screen is read again.
+   */
+  changed(dir: string, files: string[]): void {
+    const { s } = this;
+    this.heard++;
+    const here = this.local(dir);
+    const named = new Set(files);
+    // A file on screen is loaded again once its folder has been read: see `stamp`.
+    for (const name of files) this.restamp(joinPath(here, name));
+    // What is kept about the folder and about the files written in it is out of date, on screen or not.
+    forgetAnswers((path) => path === here || (parentOf(path) === here && path !== here && named.has(nameOf(path))));
+    if (s.status === "loading") return;
+    // The folder on screen shows its own entries, how many each folder in it holds, and that it is there at all.
+    const inside = dir !== "" && parentOf(dir) === this.real;
+    const above = dir !== this.real && (dir === "" || this.real.startsWith(`${dir}/`));
+    if (dir === this.real || inside || above) this.catchUp();
+  }
+
+  /** The server says more changed than it names, or nothing was heard for a while: nothing kept can be trusted. */
+  sync(): void {
+    this.heard++;
+    this.catchUp(true);
+  }
+
+  /**
+   * Reads the folder on screen again, soon, or asks again for an address that had nothing. `all`: the files
+   * that were written are not known by name, so they are told by their time and size, and nothing kept about
+   * the other folders is trusted.
+   */
+  private catchUp(all = false): void {
+    this.due = { all: all || this.due?.all === true };
+    void this.drain();
+  }
+
+  private async drain(): Promise<void> {
+    if (this.catching || this.removing) return;
+    this.catching = true;
+    try {
+      while (this.due) {
+        const { all } = this.due;
+        this.due = null;
+        await this.reread(all);
+      }
+    } finally {
+      this.catching = false;
+    }
+  }
+
+  /**
+   * Shows the folder as it is on disk now and leaves the rest as it is: the filter, the sort, the view,
+   * the scroll position and the open file. The cursor stays on its entry by name.
+   */
+  private async reread(all: boolean): Promise<void> {
+    const { s } = this;
+    const { path } = s;
+    const turn = this.turn;
+    if (s.status === "loading") return;
+    if (s.status === "missing") return this.arrive(all);
+    let listing: Listing | null = null;
+    try {
+      listing = await getJson<Listing>(urls.list(path));
+    } catch (error) {
+      // The server did not answer: the stream drops too, and catches up when it is back.
+      if (!(error instanceof HttpError)) return;
+    }
+    // The reader went elsewhere meanwhile, and that folder is read as it is now. A call to catch up on everything still stands.
+    if (turn !== this.turn || path !== s.path) {
+      if (all) this.catchUp(true);
+      return;
+    }
+    if (!listing) {
+      this.lose(path);
+      this.distrust();
+      this.emit();
+      return;
+    }
+
+    const order = s.entries.map((entry) => entry.name);
+    const at = s.cursor;
+    this.take(listing);
+    this.compute();
+    const now = new Map(s.all.map((entry) => [entry.name, entry]));
+    const place = new Map(s.entries.map((entry, index) => [entry.name, index]));
+    // The cursor's entry may be gone: the nearest one that is left takes it, the next one first.
+    const nearest = [...order.slice(at), ...order.slice(0, at).reverse()].find((name) => place.has(name));
+    s.cursor = (nearest === undefined ? undefined : place.get(nearest)) ?? 0;
+    if (s.open) {
+      const still = now.get(s.open.name);
+      s.open = still && !still.dir ? still : null;
+      // The address of a file that is gone gives way to its folder's.
+      if (!s.open) this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
+    }
+
+    if (all) this.distrust();
+    s.caught++;
+    this.emit();
+  }
+
+  /**
+   * Nothing is at the page's address. Asks the server for it again, the way a reload does, and shows what
+   * is there now: a folder and a file come back the same way.
+   */
+  private async arrive(all: boolean): Promise<void> {
+    const turn = this.turn;
+    // The server may not answer: the stream drops too, and catches up when it is back.
+    const found = await locate().catch(() => undefined);
+    // The reader went elsewhere meanwhile. A call to catch up on everything still stands.
+    if (turn !== this.turn || this.s.status !== "missing") {
+      if (all) this.catchUp(true);
+      return;
+    }
+    if (all) this.distrust();
+    if (found) await this.land(found).catch(() => undefined);
   }
 
   /** Goes to any path in the tree: a folder is shown, a file is opened in its folder. */
@@ -240,16 +436,18 @@ export class Store {
     return this.showDir(parentOf(path), { open: nameOf(path), history });
   }
 
-  start(): Promise<void> {
-    const { path, kind } = config.target;
-    addEventListener("popstate", () => void this.route());
-    if (kind === "missing") {
-      Object.assign(this.s, { status: "missing", path });
-      this.emit();
-      return Promise.resolve();
-    }
+  /** Shows what the server found at the page's address: a folder, a file in its folder, or nothing. */
+  private land({ path, kind }: Config["target"]): Promise<void> {
     // A reload of a folder whose index page was closed stays on the listing.
-    return this.go(path, kind === "dir", "replace", mark().listing === true);
+    if (kind !== "missing") return this.go(path, kind === "dir", "replace", mark().listing === true);
+    this.lose(path);
+    this.emit();
+    return Promise.resolve();
+  }
+
+  start(): Promise<void> {
+    addEventListener("popstate", () => void this.route());
+    return this.land(config.target);
   }
 
   /** Follows the address bar after back or forward. */
@@ -392,6 +590,17 @@ export class Store {
 
   /** Deletes what the dialog asked about, then shows the folder without it. Fails with the server's reason. */
   async remove(doomed: Doomed): Promise<void> {
+    this.removing = true;
+    try {
+      await this.removeNow(doomed);
+    } finally {
+      this.removing = false;
+      // What other programs changed meanwhile was left waiting.
+      void this.drain();
+    }
+  }
+
+  private async removeNow(doomed: Doomed): Promise<void> {
     const { s } = this;
     const here = doomed.path === s.path;
     // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.
