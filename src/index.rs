@@ -1,12 +1,14 @@
-//! Every name in the served tree, held in memory for the palette's search.
-//! One walk at start builds it; a file watcher keeps it fresh after that.
+//! Every name in the served tree, held in memory for the palette's search, with the
+//! time each file was last written. One walk at start builds it; a file watcher keeps
+//! it fresh after that.
 
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::event::{EventKind, ModifyKind};
 use notify::{RecursiveMode, Watcher};
@@ -30,6 +32,9 @@ struct Node {
     dir: bool,
     /// A real folder, not a link to one: the walk goes in.
     walk: bool,
+    /// When a file was last written, in seconds. Zero for a folder and for a time that
+    /// could not be read. Kept as 32 bits so a node stays as small as it was.
+    modified: u32,
 }
 
 #[derive(Default)]
@@ -62,6 +67,20 @@ pub struct Found {
     pub total: usize,
     pub indexed: usize,
     pub ready: bool,
+}
+
+/// One file among the most recently written.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Changed {
+    pub path: String,
+    /// When it was last written, in seconds.
+    pub m: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Recent {
+    /// Newest first. Files with the same time are in path order.
+    pub files: Vec<Changed>,
 }
 
 impl Index {
@@ -122,39 +141,75 @@ impl Index {
 
     /// Walks the whole served folder and replaces the index with what it finds.
     pub fn build(&self) {
-        let fresh = self.walk("");
-        *self.tree.write().expect("the index lock") = fresh;
+        if self.ready() {
+            let fresh = self.walk("");
+            *self.tree.write().expect("the index lock") = fresh;
+        } else {
+            // The first walk of a big tree takes a while: each folder is shown as soon as
+            // it is read, so the palette has something to list meanwhile.
+            self.walk_with("", |dir, nodes| {
+                let mut tree = self.tree.write().expect("the index lock");
+                tree.count += nodes.len();
+                tree.dirs.insert(dir, nodes);
+            });
+        }
         self.ready.store(true, Ordering::Release);
     }
 
     fn walk(&self, from: &str) -> Tree {
         let mut tree = Tree::default();
-        let mut todo = vec![from.to_owned()];
-        while let Some(dir) = todo.pop() {
-            let Some(nodes) = self.read(&dir) else { continue };
-            todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
+        self.walk_with(from, |dir, nodes| {
             tree.count += nodes.len();
             tree.dirs.insert(dir, nodes);
-        }
+        });
         tree
     }
 
-    fn read(&self, dir: &str) -> Option<Vec<Node>> {
+    fn walk_with(&self, from: &str, mut keep: impl FnMut(String, Vec<Node>)) {
+        let mut todo = vec![from.to_owned()];
+        while let Some(dir) = todo.pop() {
+            let Some(nodes) = self.read(&dir, None) else { continue };
+            todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
+            keep(dir, nodes);
+        }
+    }
+
+    /// The names in one folder. A file that `old` already holds keeps its time, and only
+    /// a name that is new is looked at on the disk: a long folder is not read file by
+    /// file each time one name in it changes. `restamp` brings the times up to date.
+    fn read(&self, dir: &str, old: Option<&[Node]>) -> Option<Vec<Node>> {
         let at = self.root.dir().join(dir);
         let seen = self.root.scan(&at).ok()?;
+        let kept: HashMap<&str, u32> = old
+            .into_iter()
+            .flatten()
+            .filter(|n| !n.dir && n.modified != 0)
+            .map(|n| (&*n.name, n.modified))
+            .collect();
         Some(
             seen.into_iter()
-                .map(|s| Node {
-                    name: s.name.into_boxed_str(),
-                    dir: s.dir,
-                    walk: s.dir && !s.link,
+                .map(|s| {
+                    let modified = match kept.get(s.name.as_str()) {
+                        _ if s.dir => 0,
+                        Some(&time) => time,
+                        None => seconds(self.root.modified(&at, &s.name)),
+                    };
+                    Node {
+                        name: s.name.into_boxed_str(),
+                        dir: s.dir,
+                        walk: s.dir && !s.link,
+                        modified,
+                    }
                 })
                 .collect(),
         )
     }
 
     fn absorb(&self, batch: Vec<notify::Result<notify::Event>>) {
-        let mut dirty = HashSet::new();
+        // Paths whose name came or went: the folder holding each is read again.
+        let mut named = HashSet::new();
+        // Paths whose content may have changed, with no name changing.
+        let mut written = HashSet::new();
         for event in batch {
             let Ok(event) = event else {
                 return self.build();
@@ -162,20 +217,56 @@ impl Index {
             if event.need_rescan() {
                 return self.build();
             }
-            if matches!(
-                event.kind,
-                EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
-            ) {
-                continue;
-            }
-            for path in &event.paths {
-                if let Some(dir) = self.dir_of(path) {
-                    dirty.insert(dir);
+            match event.kind {
+                EventKind::Access(_) => {}
+                EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => written.extend(event.paths),
+                EventKind::Remove(_) => named.extend(event.paths),
+                // A file written over by a rename has the same name and a new time.
+                _ => {
+                    written.extend(event.paths.iter().cloned());
+                    named.extend(event.paths);
                 }
             }
         }
+        let dirty: HashSet<String> = named.iter().filter_map(|path| self.dir_of(path)).collect();
         for dir in dirty {
             self.reread(&dir);
+        }
+        self.restamp(written);
+    }
+
+    /// Reads the time of each file again and writes it into the index: one look at the
+    /// disk per file, and one for all of them however often a file was written to
+    /// since the last batch.
+    fn restamp(&self, written: HashSet<PathBuf>) {
+        let mut stamps: HashMap<String, HashMap<String, u32>> = HashMap::new();
+        for path in written {
+            let Some(rel) = path.strip_prefix(self.root.dir()).ok().and_then(Path::to_str) else {
+                continue;
+            };
+            let rel = rel.replace(std::path::MAIN_SEPARATOR, "/");
+            let Some(found) = self.root.resolve(&rel).filter(|found| found.meta.is_file()) else {
+                continue;
+            };
+            let time = seconds(found.meta.modified().ok());
+            stamps
+                .entry(paths::parent(&found.rel).to_owned())
+                .or_default()
+                .insert(paths::file_name(&found.rel).to_owned(), time);
+        }
+        if stamps.is_empty() {
+            return;
+        }
+        let mut tree = self.tree.write().expect("the index lock");
+        for (dir, times) in stamps {
+            let Some(nodes) = tree.dirs.get_mut(&dir) else {
+                continue;
+            };
+            for node in nodes.iter_mut().filter(|n| !n.dir) {
+                if let Some(&time) = times.get(&*node.name) {
+                    node.modified = time;
+                }
+            }
         }
     }
 
@@ -189,17 +280,24 @@ impl Index {
     /// Reads one folder again and folds what changed into the index. The watcher does
     /// this by itself a moment later; a delete calls it so the entry is gone at once.
     pub fn reread(&self, dir: &str) {
-        let Some(nodes) = self.read(dir) else {
-            return self.forget(dir);
-        };
-        let known: HashSet<String> = {
+        let (nodes, known) = {
             let tree = self.tree.read().expect("the index lock");
-            match tree.dirs.get(dir) {
-                Some(old) => old.iter().filter(|n| n.walk).map(|n| n.name.to_string()).collect(),
-                // Not indexed yet: its parent's reread will walk it.
-                None if !dir.is_empty() => return,
-                None => HashSet::new(),
+            let old = tree.dirs.get(dir);
+            // Not indexed yet: its parent's reread will walk it.
+            if old.is_none() && !dir.is_empty() {
+                return;
             }
+            let Some(nodes) = self.read(dir, old.map(Vec::as_slice)) else {
+                drop(tree);
+                return self.forget(dir);
+            };
+            let known: HashSet<String> = old
+                .into_iter()
+                .flatten()
+                .filter(|n| n.walk)
+                .map(|n| n.name.to_string())
+                .collect();
+            (nodes, known)
         };
         let now: HashSet<&str> = nodes.iter().filter(|n| n.walk).map(|n| &*n.name).collect();
         let added: Vec<Tree> = now
@@ -262,6 +360,36 @@ impl Index {
     pub fn child_count(&self, dir: &str) -> Option<usize> {
         let tree = self.tree.read().expect("the index lock");
         tree.dirs.get(dir).map(Vec::len)
+    }
+
+    /// The `limit` files written last, newest first. Read from memory: the disk is not
+    /// looked at. Folders never appear, and neither does a file whose time is unknown.
+    pub fn recent(&self, limit: usize) -> Recent {
+        let tree = self.tree.read().expect("the index lock");
+        // Newer is greater, and of two with the same time the earlier path is greater.
+        // The heap keeps the `limit` greatest, its least on top.
+        let mut best = BinaryHeap::with_capacity(limit.saturating_add(1).min(1024));
+        if limit > 0 {
+            for (dir, nodes) in &tree.dirs {
+                for node in nodes.iter().filter(|n| !n.dir && n.modified != 0) {
+                    best.push(Reverse((node.modified, Reverse(dir.as_str()), Reverse(&*node.name))));
+                    if best.len() > limit {
+                        best.pop();
+                    }
+                }
+            }
+        }
+        let mut files: Vec<_> = best.into_iter().map(|Reverse(key)| key).collect();
+        files.sort_unstable_by(|a, b| b.cmp(a));
+        Recent {
+            files: files
+                .into_iter()
+                .map(|(m, Reverse(dir), Reverse(name))| Changed {
+                    path: paths::join(dir, name),
+                    m,
+                })
+                .collect(),
+        }
     }
 
     /// Fuzzy search over every path. Returns the best `limit` matches.
@@ -332,6 +460,12 @@ impl Index {
         }
         found
     }
+}
+
+/// A time as the index keeps it: whole seconds, with zero for one that is not known.
+fn seconds(time: Option<SystemTime>) -> u32 {
+    time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |since| u32::try_from(since.as_secs()).unwrap_or(u32::MAX))
 }
 
 /// One match: score, folder, position in that folder, and whether the name itself matched.

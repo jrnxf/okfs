@@ -1,8 +1,8 @@
 // The palette: find any file or folder in the whole tree, or run a command.
 
-import type { ComponentChildren } from "preact";
+import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Found, type Hit, getJson, nameOf, parentOf, urls } from "./api";
+import { type Changed, type Found, type Hit, type Recent, getJson, nameOf, parentOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
@@ -12,6 +12,8 @@ import { isDark, setScheme, setTheme } from "./theme";
 
 /** Typing pauses this long before the server is asked. */
 const SETTLE = 40;
+/** How many recently changed files the palette lists before anything is typed. */
+const RECENT = 8;
 
 /** The modifier this platform uses for shortcuts, as it is written on the key. */
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
@@ -83,12 +85,14 @@ function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; from?: n
   return <>{out}</>;
 }
 
-type Row = { command: Command; idx: number[] } | { hit: Hit };
+type Row = { command: Command; idx: number[] } | { hit: Hit } | { recent: Changed };
 
 export function Palette() {
   const [value, setValue] = useState("");
   const [selected, setSelected] = useState(0);
   const [found, setFound] = useState<Found | null>(null);
+  // Asked for once, when the palette opens: it does not change while the palette is up.
+  const [recent, setRecent] = useState<Changed[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
 
@@ -97,6 +101,12 @@ export function Palette() {
   const searching = !asCommand && query !== "";
 
   useEffect(() => input.current?.focus(), []);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    getJson<Recent>(urls.recent(RECENT), abort.signal).then((answer) => setRecent(answer.files), () => {});
+    return () => abort.abort();
+  }, []);
 
   // An empty query still asks once, for the count of indexed entries shown in the footer.
   useEffect(() => {
@@ -122,7 +132,9 @@ export function Palette() {
       return match ? [{ command, ...match }] : [];
     });
     if (query) matched.sort((a, b) => b.score - a.score);
-    rows = matched;
+    // Nothing typed: the newest files first, then the commands. `>` means commands only.
+    const newest: Row[] = value.trim() === "" ? recent.map((file) => ({ recent: file })) : [];
+    rows = [...newest, ...matched];
   }
   const at = Math.min(selected, Math.max(0, rows.length - 1));
 
@@ -135,6 +147,7 @@ export function Palette() {
     if (!row) return;
     store.setPalette(false);
     if ("command" in row) row.command.run();
+    else if ("recent" in row) void store.go(row.recent.path, false);
     else void store.go(row.hit.path, row.hit.dir);
   };
 
@@ -149,7 +162,9 @@ export function Palette() {
   };
 
   const total = found?.total ?? 0;
-  const heading = searching ? `${fmt.count(total)} ${total === 1 ? "match" : "matches"}` : "Commands";
+  const matches = `${fmt.count(total)} ${total === 1 ? "match" : "matches"}`;
+  // The group a row belongs to, which gets its label above the first row of the run.
+  const groupOf = (row: Row): string => ("recent" in row ? "Recently changed" : "command" in row ? "Commands" : matches);
   const waiting = searching && !found;
 
   return (
@@ -175,19 +190,43 @@ export function Palette() {
         </div>
         <div class="pal-list" ref={list}>
           {rows.length === 0 && !waiting && <div class="pal-empty">Nothing matches “{query}”.</div>}
-          {rows.length > 0 && <div class="pal-group label">{heading}</div>}
           {rows.map((row, index) => {
             const common = { class: "pal-row", "aria-selected": index === at, onClick: () => pick(index) };
+            const group = groupOf(row);
+            const previous = rows[index - 1];
+            const label = (!previous || groupOf(previous) !== group) && <div class="pal-group label">{group}</div>;
             if ("command" in row) {
               return (
-                <div key={row.command.title} {...common}>
-                  <Icon name="right" />
-                  <span class="nm trunc">
-                    <Marked text={row.command.title} idx={row.idx} />
-                  </span>
-                  <span class="dir" />
-                  {row.command.key && <kbd>{row.command.key}</kbd>}
-                </div>
+                <Fragment key={`command:${row.command.title}`}>
+                  {label}
+                  <div {...common}>
+                    <Icon name="right" />
+                    <span class="nm trunc">
+                      <Marked text={row.command.title} idx={row.idx} />
+                    </span>
+                    <span class="dir" />
+                    {row.command.key && <kbd>{row.command.key}</kbd>}
+                  </div>
+                </Fragment>
+              );
+            }
+            if ("recent" in row) {
+              const { path, m } = row.recent;
+              const [dir, name] = [parentOf(path), nameOf(path)];
+              return (
+                <Fragment key={`recent:${path}`}>
+                  {label}
+                  <div {...common}>
+                    <KindIcon kind={kindOf(name, false)} />
+                    <span class="nm trunc">{name}</span>
+                    <span class="dir trunc">
+                      <bdi>{dir || "/"}</bdi>
+                    </span>
+                    <span class="age" title={fmt.abs(m)}>
+                      {fmt.rel(m)}
+                    </span>
+                  </div>
+                </Fragment>
               );
             }
             const { hit } = row;
@@ -195,15 +234,18 @@ export function Palette() {
             // A match on the whole path counts characters from its start: the name begins after the folder and a slash.
             const offset = hit.name ? 0 : Array.from(dir).length + (dir ? 1 : 0);
             return (
-              <div key={hit.path} {...common}>
-                <KindIcon kind={kindOf(name, hit.dir)} />
-                <span class="nm trunc">
-                  <Marked text={name} idx={hit.idx} from={offset} />
-                </span>
-                <span class="dir trunc">
-                  <bdi>{hit.name ? dir || "/" : <Marked text={dir || "/"} idx={hit.idx} />}</bdi>
-                </span>
-              </div>
+              <Fragment key={`hit:${hit.path}`}>
+                {label}
+                <div {...common}>
+                  <KindIcon kind={kindOf(name, hit.dir)} />
+                  <span class="nm trunc">
+                    <Marked text={name} idx={hit.idx} from={offset} />
+                  </span>
+                  <span class="dir trunc">
+                    <bdi>{hit.name ? dir || "/" : <Marked text={dir || "/"} idx={hit.idx} />}</bdi>
+                  </span>
+                </div>
+              </Fragment>
             );
           })}
         </div>

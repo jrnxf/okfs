@@ -736,6 +736,190 @@ async fn search_finds_names_across_the_tree_and_follows_changes() {
     wait_for("zebra", 0).await;
 }
 
+/// Sets when a file or folder was last written, in seconds since the epoch.
+fn written_at(path: impl AsRef<Path>, seconds: u64) {
+    let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+    let file = fs::File::open(path.as_ref()).unwrap();
+    file.set_modified(time).unwrap();
+}
+
+/// The paths in an answer of `/api/recent`, newest first.
+fn recent_paths(answer: &Value) -> Vec<&str> {
+    answer["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn recent_lists_the_newest_files_across_folders_and_only_files_that_are_shown() {
+    let site = Site::new();
+    for (path, seconds) in [
+        ("a.txt", 1000),
+        ("file10.txt", 2000),
+        ("file2.txt", 3000),
+        ("sub/b.txt", 4000),
+        ("sub/deep/c.rs", 5000),
+        // Never shown without --hidden, and the target of a link that leaves the folder.
+        (".hidden", 9000),
+    ] {
+        written_at(site.served.join(path), seconds);
+    }
+    written_at(site.outside.join("secret.txt"), 9500);
+    // Folders are never listed however new they are.
+    written_at(site.served.join("sub"), 99_000);
+    written_at(site.served.join("sub/deep"), 99_000);
+    let app = site.router();
+
+    let answer = json(&app, "/api/recent").await;
+    let mut want = vec!["sub/deep/c.rs"];
+    // The link to a file inside the folder has the file's time, and comes before it on a tie.
+    if cfg!(unix) {
+        want.push("link-in.txt");
+    }
+    want.extend(["sub/b.txt", "file2.txt", "file10.txt", "a.txt"]);
+    assert_eq!(recent_paths(&answer), want);
+    assert_eq!(answer["files"][0]["m"], 5000);
+    assert_eq!(answer["files"].as_array().unwrap().last().unwrap()["m"], 1000);
+
+    let answer = json(&app, "/api/recent?limit=2").await;
+    assert_eq!(recent_paths(&answer), want[..2]);
+    assert!(
+        json(&app, "/api/recent?limit=0").await["files"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    // The default is a short list.
+    assert!(json(&app, "/api/recent").await["files"].as_array().unwrap().len() <= 8);
+
+    // The same order every time.
+    for _ in 0..3 {
+        assert_eq!(recent_paths(&json(&app, "/api/recent").await), want);
+    }
+
+    // With --hidden the dotfile shows. A file behind a link that leaves the folder still does not.
+    let app = site.serving(true, Options::default());
+    let answer = json(&app, "/api/recent").await;
+    let shown = recent_paths(&answer);
+    assert_eq!(shown[0], ".hidden");
+    assert!(
+        shown
+            .iter()
+            .all(|path| !path.contains("link-out") && !path.contains("secret"))
+    );
+    assert!(!String::from_utf8_lossy(&get(&app, "/api/recent?limit=50").await.1).contains("TOP SECRET"));
+}
+
+#[tokio::test]
+async fn files_with_one_time_come_in_path_order() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("m/n")).unwrap();
+    for path in ["zeta.txt", "m/n/x.txt", "m/y.txt", "alpha.txt"] {
+        fs::write(site.served.join(path), "same").unwrap();
+    }
+    for path in ["a.txt", "file10.txt", "file2.txt", "sub/b.txt", "sub/deep/c.rs"] {
+        written_at(site.served.join(path), 10);
+    }
+    for path in ["zeta.txt", "m/n/x.txt", "m/y.txt", "alpha.txt"] {
+        written_at(site.served.join(path), 500);
+    }
+    let first = recent_paths(&json(&site.router(), "/api/recent").await).join(",");
+    for _ in 0..3 {
+        // A fresh index each time, so the order does not come from how the walk ran.
+        let again = recent_paths(&json(&site.router(), "/api/recent").await).join(",");
+        assert_eq!(again, first);
+    }
+    assert!(first.starts_with("alpha.txt,zeta.txt,m/y.txt,m/n/x.txt,"), "{first}");
+}
+
+#[tokio::test]
+async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
+    let site = Site::new();
+    for (path, seconds) in [
+        ("a.txt", 1000),
+        ("file10.txt", 2000),
+        ("file2.txt", 3000),
+        ("sub/b.txt", 4000),
+        ("sub/deep/c.rs", 5000),
+    ] {
+        written_at(site.served.join(path), seconds);
+    }
+    let root = Root::new(&site.served, false).unwrap();
+    let index = Index::spawn(root.clone());
+    let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
+    let wait_for_first = |want: &'static str| {
+        let app = app.clone();
+        async move {
+            for _ in 0..200 {
+                let answer = json(&app, "/api/recent?limit=50").await;
+                if recent_paths(&answer).first() == Some(&want) {
+                    return answer;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            panic!("{want} never came first");
+        }
+    };
+    wait_for_first("sub/deep/c.rs").await;
+
+    // The same name and the same size: only its content and time change.
+    fs::write(site.served.join("a.txt"), "9876543210zyxwvutsrq").unwrap();
+    let answer = wait_for_first("a.txt").await;
+    assert!(answer["files"][0]["m"].as_u64().unwrap() > 5000);
+
+    // Times are in whole seconds, so what follows is dated ahead to come before the rewrite above.
+    let ahead = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // A file written by making a new one and renaming it over the old, as editors do.
+    fs::write(site.served.join("tmp.swp"), "new").unwrap();
+    written_at(site.served.join("tmp.swp"), ahead + 1000);
+    fs::rename(site.served.join("tmp.swp"), site.served.join("sub/b.txt")).unwrap();
+    wait_for_first("sub/b.txt").await;
+
+    // A new file, in a new folder.
+    fs::create_dir_all(site.served.join("fresh/inner")).unwrap();
+    fs::write(site.served.join("fresh/inner/zebra.txt"), "new").unwrap();
+    written_at(site.served.join("fresh/inner/zebra.txt"), ahead + 2000);
+    wait_for_first("fresh/inner/zebra.txt").await;
+
+    fs::remove_file(site.served.join("fresh/inner/zebra.txt")).unwrap();
+    fs::remove_file(site.served.join("sub/b.txt")).unwrap();
+    for _ in 0..200 {
+        let answer = json(&app, "/api/recent?limit=50").await;
+        let paths = recent_paths(&answer);
+        if !paths.contains(&"fresh/inner/zebra.txt") && !paths.contains(&"sub/b.txt") {
+            assert_eq!(paths.first(), Some(&"a.txt"));
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("removed files stayed in the list");
+}
+
+#[tokio::test]
+async fn recent_is_refused_for_a_wrong_host_like_every_route() {
+    let site = Site::new();
+    let app = site.app(Options {
+        check_host: true,
+        ..Options::default()
+    });
+    let ask = |host: &'static str| {
+        Request::get("/api/recent")
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(send(&app, ask("localhost:8080")).await.0.status(), StatusCode::OK);
+    let (response, body) = send(&app, ask("evil.example")).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(!String::from_utf8_lossy(&body).contains("a.txt"));
+}
+
 #[tokio::test]
 async fn deleting_is_off_unless_asked_for() {
     let site = Site::new();

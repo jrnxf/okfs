@@ -5,6 +5,7 @@ use std::ffi::OsStr;
 use std::fs::{self, FileType, Metadata};
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 /// The served folder and the rules for what inside it may be shown.
 #[derive(Debug, Clone)]
@@ -286,6 +287,12 @@ impl Root {
             dir: target.is_dir(),
             link: true,
         })
+    }
+
+    /// When the file `name` in the folder `dir` was last written. A link is followed:
+    /// `scan` has already checked that it leads somewhere that is shown.
+    pub fn modified(&self, dir: &Path, name: &str) -> Option<SystemTime> {
+        fs::metadata(dir.join(name)).ok()?.modified().ok()
     }
 
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
