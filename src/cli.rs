@@ -188,7 +188,8 @@ fn serve(args: Serve) -> Result<(), String> {
         ThemeChoice::BuiltIn(name) => name.clone(),
         ThemeChoice::File(path) => path.display().to_string(),
     };
-    let app = App::new(root.clone(), Index::spawn(root.clone()), options)?;
+    let index = Index::spawn(root.clone());
+    let app = App::new(root.clone(), std::sync::Arc::clone(&index), options)?;
     std::thread::spawn(crate::render::warm);
 
     let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start: {error}"))?;
@@ -208,8 +209,10 @@ fn serve(args: Serve) -> Result<(), String> {
         println!("  at       http://{address}/");
         println!("  theme    {theme_name}");
         axum::serve(listener, server::router(app))
-            .with_graceful_shutdown(async {
+            .with_graceful_shutdown(async move {
                 let _ = tokio::signal::ctrl_c().await;
+                // An open page holds a stream that would never end by itself.
+                index.feed().close();
             })
             .await
             .map_err(|error| format!("the server stopped: {error}"))

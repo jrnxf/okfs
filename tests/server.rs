@@ -701,6 +701,158 @@ async fn other_host_names_are_refused_on_a_loopback_address() {
     }
 }
 
+/// The next thing a stream of changes says, as its event name and its data. `None`
+/// when it says nothing for a while.
+async fn next_change(stream: &mut Body) -> Option<(String, Value)> {
+    let wait = std::time::Duration::from_secs(2);
+    loop {
+        let frame = tokio::time::timeout(wait, stream.frame()).await.ok()??.unwrap();
+        let text = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
+        let field = |name: &str| text.lines().find_map(|line| line.strip_prefix(name));
+        // A line that starts with a colon is a comment: it only keeps the stream open.
+        if let (Some(event), Some(data)) = (field("event: "), field("data: ")) {
+            return Some((event.to_owned(), serde_json::from_str(data).unwrap()));
+        }
+    }
+}
+
+async fn listen(app: &axum::Router) -> Body {
+    let request = Request::get("/api/events").body(Body::empty()).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.into_body()
+}
+
+#[tokio::test]
+async fn the_stream_of_changes_is_guarded_and_sent_as_it_is() {
+    let site = Site::new();
+    let app = site.app(Options {
+        check_host: true,
+        ..Options::default()
+    });
+    let from = |host: &'static str| {
+        Request::get("/api/events")
+            .header(header::HOST, host)
+            .header(header::ACCEPT_ENCODING, "gzip, br")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (response, body) = send(&app, from("evil.example")).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(String::from_utf8_lossy(&body).contains("--allow-host"));
+
+    let response = app.clone().oneshot(from(HOME)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "text/event-stream");
+    assert_eq!(response.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    // Packed, a change would wait in the packer for more to pack it with.
+    assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+    // The first line is there at once, so nothing on the way holds the answer back.
+    let first = response.into_body().frame().await.unwrap().unwrap();
+    assert!(first.into_data().unwrap().starts_with(b":"));
+
+    // It only tells: no other method reaches it.
+    for method in ["POST", "PUT", "DELETE"] {
+        let request = Request::builder()
+            .method(method)
+            .uri("/api/events")
+            .header(header::HOST, HOME)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            send(&app, request).await.0.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_open_page_is_told_of_what_changes_on_disk() {
+    let site = Site::new();
+    let root = Root::new(&site.served, false).unwrap();
+    let index = Index::spawn(root.clone());
+    let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
+    for _ in 0..200 {
+        if index.ready() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let mut stream = listen(&app).await;
+
+    // What a listing does not show is written first, and is never told of.
+    fs::write(site.served.join(".hidden"), "still secret").unwrap();
+    fs::write(site.outside.join("secret.txt"), "still secret").unwrap();
+    // A watcher may take a moment to start, so each change is made until it is heard.
+    let mut heard = Vec::new();
+    let mut until = async |make: &dyn Fn(usize), dir: &str, file: Option<&str>| {
+        for turn in 0..20 {
+            make(turn);
+            while let Some((event, data)) = next_change(&mut stream).await {
+                heard.push(data.to_string());
+                assert_eq!(event, "change", "{data}");
+                let named = |name| data["files"].as_array().unwrap().contains(&Value::from(name));
+                if data["dir"] == dir && file.is_none_or(named) {
+                    return;
+                }
+            }
+        }
+        panic!("the stream never told of {file:?} in {dir:?}");
+    };
+
+    let fresh = site.served.join("sub/fresh.txt");
+    until(
+        &|turn| fs::write(&fresh, format!("new {turn}")).unwrap(),
+        "sub",
+        Some("fresh.txt"),
+    )
+    .await;
+    until(
+        &|turn| fs::write(site.served.join("a.txt"), format!("rewritten {turn}")).unwrap(),
+        "",
+        Some("a.txt"),
+    )
+    .await;
+    let moved = site.served.join("sub/moved.txt");
+    until(&|_| drop(fs::rename(&fresh, &moved)), "sub", Some("moved.txt")).await;
+    until(&|_| drop(fs::remove_file(&moved)), "sub", None).await;
+
+    let all = heard.join("\n");
+    assert!(
+        !all.contains("hidden") && !all.contains("secret") && !all.contains("link-out"),
+        "{all}"
+    );
+}
+
+#[tokio::test]
+async fn a_delete_is_told_to_every_open_page() {
+    let site = Site::new();
+    let app = site.deleting();
+    let mut other_tab = listen(&app).await;
+    assert_eq!(delete(&app, "sub/b.txt").await, StatusCode::NO_CONTENT);
+    let (event, data) = next_change(&mut other_tab).await.unwrap();
+    assert_eq!(
+        (event.as_str(), data),
+        ("change", serde_json::json!({ "dir": "sub", "files": [] }))
+    );
+    // A delete that is refused changes nothing, and tells nothing.
+    assert_eq!(delete(&app, ".hidden").await, StatusCode::FORBIDDEN);
+    assert_eq!(next_change(&mut other_tab).await, None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_reached_through_a_link_says_where_it_really_is() {
+    use std::os::unix::fs::symlink;
+    let site = Site::new();
+    symlink(site.served.join("sub"), site.served.join("latest")).unwrap();
+    let app = site.router();
+    // Changes are told by the real place, so the page has to know it.
+    assert_eq!(json(&app, "/api/list?path=latest/deep").await["real"], "sub/deep");
+    assert_eq!(json(&app, "/api/list?path=sub/deep").await["real"], Value::Null);
+}
+
 #[tokio::test]
 async fn search_finds_names_across_the_tree_and_follows_changes() {
     let site = Site::new();

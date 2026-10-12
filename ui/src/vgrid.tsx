@@ -28,6 +28,8 @@ interface Props {
   count: number;
   grid: boolean;
   cursor: number;
+  /** Changes when the list caught up with the disk by itself: the scroll position is then left alone. */
+  caught: number;
   /** Changes when the list is a different list: the scroll position starts over. */
   listKey: string;
   render: (index: number, cell: Cell) => ComponentChildren;
@@ -47,7 +49,7 @@ function layoutFor(width: number, grid: boolean, rowH: number): Layout {
   return { cols, colW, rowH: Math.round(colW * 0.82 + 30), gap, pad, padX };
 }
 
-export function VGrid({ scroller, count, grid, cursor, listKey, render, onCols, empty, children }: Props) {
+export function VGrid({ scroller, count, grid, cursor, caught, listKey, render, onCols, empty, children }: Props) {
   const inner = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ width: 0, height: 0, rowH: 34 });
@@ -82,9 +84,17 @@ export function VGrid({ scroller, count, grid, cursor, listKey, render, onCols, 
 
   // A new list starts at the top; after that the cursor is kept in view.
   const shownKey = useRef(listKey);
+  const shownCaught = useRef(caught);
   useLayoutEffect(() => {
     const outer = scroller.current;
     if (!outer || !box.height) return;
+    // Entries that came or went on disk may have moved the cursor's row: the reader did not ask to go there.
+    if (shownCaught.current !== caught && shownKey.current === listKey) {
+      shownCaught.current = caught;
+      setScrollTop(outer.scrollTop);
+      return;
+    }
+    shownCaught.current = caught;
     if (shownKey.current !== listKey) {
       shownKey.current = listKey;
       outer.scrollTop = 0;
@@ -95,7 +105,7 @@ export function VGrid({ scroller, count, grid, cursor, listKey, render, onCols, 
     else if (y < outer.scrollTop) outer.scrollTop = y - L.gap;
     else if (y + L.rowH > outer.scrollTop + outer.clientHeight) outer.scrollTop = y + L.rowH - outer.clientHeight + L.gap;
     setScrollTop(outer.scrollTop);
-  }, [cursor, listKey, L, step, box.height, scroller]);
+  }, [cursor, caught, listKey, L, step, box.height, scroller]);
 
   const first = Math.max(0, Math.floor((scrollTop - L.pad) / step) - OVERSCAN);
   const last = Math.min(rows, Math.ceil((scrollTop - L.pad + box.height) / step) + OVERSCAN);

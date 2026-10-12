@@ -62,6 +62,8 @@ export interface State {
   help: boolean;
   /** What the delete dialog is asking about, while it is up. */
   doomed: Doomed | null;
+  /** Counts the times the list caught up with the disk by itself. The list does not scroll for those. */
+  caught: number;
 }
 
 type HistoryMode = "push" | "replace" | "none";
@@ -116,6 +118,7 @@ export class Store {
     palette: false,
     help: false,
     doomed: null,
+    caught: 0,
   };
 
   private readonly listeners = new Set<() => void>();
@@ -123,6 +126,18 @@ export class Store {
   private turn = 0;
   /** Where the cursor was in each folder visited, by name. */
   private readonly remembered = new Map<string, string>();
+  /** Where the folder being shown really is: the path its changes on disk are told by. */
+  private real = "";
+  /** Counts what the server told, so a folder that was on its way while something came in is read once more. */
+  private heard = 0;
+  /** What the next catch-up has to do, while one is due. See `catchUp`. */
+  private due: { blind: boolean; all: boolean } | null = null;
+  private catching = false;
+  /** True while a delete of our own runs. It shows the folder itself when it is done. */
+  private removing = false;
+  /** The stamp of each file shown by its address. See `stamp`. */
+  private readonly stamps = new Map<string, string>();
+  private stamped = 0;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -177,6 +192,24 @@ export class Store {
     history.replaceState(mode === "push" || dir ? state : history.state, "", url);
   }
 
+  /** Takes a listing as the folder being shown. */
+  private take(listing: Listing): void {
+    const { s } = this;
+    s.status = "ready";
+    s.path = listing.path;
+    this.real = listing.real ?? listing.path;
+    s.link = listing.link === true;
+    s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
+    s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
+    s.readme = listing.readme;
+  }
+
+  /** Shows that there is no folder at a path. */
+  private lose(path: string): void {
+    this.real = path;
+    Object.assign(this.s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+  }
+
   /**
    * Shows a folder. `select` puts the cursor on a name; `open` also gives that file the full width.
    * A folder holding the `--index` file opens that file, under the folder's own address, unless
@@ -188,6 +221,7 @@ export class Store {
   ): Promise<void> {
     const { s } = this;
     const turn = ++this.turn;
+    const heard = this.heard;
     const leaving = this.cur();
     if (leaving && s.status === "ready") this.remembered.set(s.path, leaving.name);
 
@@ -197,7 +231,7 @@ export class Store {
     } catch (error) {
       if (turn !== this.turn) return;
       if (!(error instanceof HttpError)) throw error;
-      Object.assign(s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+      this.lose(path);
       this.setUrl(opts.history ?? "push", path, true);
       this.emit();
       return;
@@ -205,12 +239,7 @@ export class Store {
     if (turn !== this.turn) return;
 
     const changed = s.path !== listing.path || s.status !== "ready";
-    s.status = "ready";
-    s.path = listing.path;
-    s.link = listing.link === true;
-    s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
-    s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
-    s.readme = listing.readme;
+    this.take(listing);
     if (changed) s.filter = "";
     this.compute();
     const asked = opts.open !== undefined || opts.select !== undefined || opts.listing === true;
@@ -231,6 +260,148 @@ export class Store {
     // A file opened from elsewhere gets its folder as the entry before it, so closing lands there.
     if (!s.open || paged || (mode === "push" && changed)) this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex() });
     if (s.open && !paged) this.setUrl(mode, s.open.path, false, { opened: true });
+    this.emit();
+    // A change told while the listing was on its way may not be in it.
+    if (heard !== this.heard) this.catchUp();
+  }
+
+  /**
+   * Changes whenever the file is rewritten. A picture or a frame is loaded by an address that carries it,
+   * so the new contents are loaded and the old are not shown from memory. It starts as the file's time and
+   * size and moves only when the server says the file has settled: never while it is still being written.
+   */
+  stamp(entry: Entry): string {
+    let stamp = this.stamps.get(entry.path);
+    if (stamp === undefined) {
+      stamp = `${entry.mtime}.${entry.size}`;
+      this.stamps.set(entry.path, stamp);
+      // Oldest first out: a Map keeps insertion order. A file dropped here starts again from its time and size.
+      if (this.stamps.size > 500) this.stamps.delete(this.stamps.keys().next().value as string);
+    }
+    return stamp;
+  }
+
+  /** Marks a file that has been shown as rewritten. */
+  private restamp(path: string): void {
+    if (this.stamps.has(path)) this.stamps.set(path, `r${++this.stamped}`);
+  }
+
+  /** A folder's real path, as the path the page knows it by. They differ under a folder reached through a link. */
+  private local(dir: string): string {
+    const { path } = this.s;
+    const { real } = this;
+    if (real === path) return dir;
+    if (dir === real) return path;
+    if (!real) return joinPath(path, dir);
+    return dir.startsWith(`${real}/`) ? path + dir.slice(real.length) : dir;
+  }
+
+  /**
+   * The server says a folder changed on disk: entries came or went, or the files named were written.
+   * Without names, any file in it may have been. Only what is on screen is read again.
+   */
+  changed(dir: string, files: string[] | null): void {
+    const { s } = this;
+    this.heard++;
+    const here = this.local(dir);
+    const named = files && new Set(files);
+    for (const name of files ?? []) this.restamp(joinPath(here, name));
+    // What is kept about the folder and about the files written in it is out of date, on screen or not.
+    forgetAnswers((path) => path === here || (parentOf(path) === here && path !== here && (!named || named.has(nameOf(path)))));
+    if (files?.length) this.emit();
+    if (s.status === "loading") return;
+    // The folder on screen shows its own entries, how many each folder in it holds, and that it is there at all.
+    const inside = dir !== "" && parentOf(dir) === this.real;
+    const above = dir !== this.real && (dir === "" || this.real.startsWith(`${dir}/`));
+    if (dir === this.real || inside || above) this.catchUp(dir === this.real && !files);
+  }
+
+  /** The server says more changed than it names, or nothing was heard for a while: nothing kept can be trusted. */
+  sync(): void {
+    this.heard++;
+    this.catchUp(true, true);
+  }
+
+  /**
+   * Reads the folder on screen again, soon. `blind`: the files that were written are not known by name,
+   * so they are told by their time and size. `all`: neither is anything about the other folders.
+   */
+  private catchUp(blind = false, all = false): void {
+    this.due = { blind: blind || this.due?.blind === true, all: all || this.due?.all === true };
+    void this.drain();
+  }
+
+  private async drain(): Promise<void> {
+    if (this.catching || this.removing) return;
+    this.catching = true;
+    try {
+      while (this.due) {
+        const { blind, all } = this.due;
+        this.due = null;
+        await this.reread(blind, all);
+      }
+    } finally {
+      this.catching = false;
+    }
+  }
+
+  /**
+   * Shows the folder as it is on disk now and leaves the rest as it is: the filter, the sort, the view,
+   * the scroll position and the open file. The cursor stays on its entry by name.
+   */
+  private async reread(blind: boolean, all: boolean): Promise<void> {
+    const { s } = this;
+    const turn = this.turn;
+    if (s.status === "loading") return;
+    let listing: Listing | null = null;
+    try {
+      listing = await getJson<Listing>(urls.list(s.path));
+    } catch (error) {
+      // The server did not answer: the stream drops too, and catches up when it is back.
+      if (!(error instanceof HttpError)) return;
+    }
+    // The reader went elsewhere meanwhile, and that folder is read as it is now.
+    if (turn !== this.turn) {
+      if (all) forgetAnswers();
+      return;
+    }
+    if (!listing) {
+      if (s.status === "missing") return;
+      this.lose(s.path);
+      forgetAnswers();
+      this.emit();
+      return;
+    }
+
+    const before = new Map(s.all.map((entry) => [entry.name, entry]));
+    const order = s.entries.map((entry) => entry.name);
+    const at = s.cursor;
+    this.take(listing);
+    this.compute();
+    const now = new Map(s.all.map((entry) => [entry.name, entry]));
+    const place = new Map(s.entries.map((entry, index) => [entry.name, index]));
+    // The cursor's entry may be gone: the nearest one that is left takes it, the next one first.
+    const nearest = [...order.slice(at), ...order.slice(0, at).reverse()].find((name) => place.has(name));
+    s.cursor = (nearest === undefined ? undefined : place.get(nearest)) ?? 0;
+    if (s.open) {
+      const still = now.get(s.open.name);
+      s.open = still && !still.dir ? still : null;
+      // The address of a file that is gone gives way to its folder's.
+      if (!s.open) this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
+    }
+
+    if (blind) {
+      const same = (old: Entry | undefined, entry: Entry): boolean =>
+        old !== undefined && !entry.dir && !old.dir && old.mtime === entry.mtime && old.size === entry.size;
+      const kept = new Set([...now.values()].filter((entry) => same(before.get(entry.name), entry)).map((entry) => entry.path));
+      for (const path of [...this.stamps.keys()]) {
+        if (kept.has(path)) continue;
+        if (parentOf(path) === s.path) this.restamp(path);
+        else if (all) this.stamps.delete(path);
+      }
+      forgetAnswers((path) => !kept.has(path) && (all || parentOf(path) === s.path));
+    }
+    s.caught++;
     this.emit();
   }
 
@@ -392,6 +563,17 @@ export class Store {
 
   /** Deletes what the dialog asked about, then shows the folder without it. Fails with the server's reason. */
   async remove(doomed: Doomed): Promise<void> {
+    this.removing = true;
+    try {
+      await this.removeNow(doomed);
+    } finally {
+      this.removing = false;
+      // What other programs changed meanwhile was left waiting.
+      void this.drain();
+    }
+  }
+
+  private async removeNow(doomed: Doomed): Promise<void> {
     const { s } = this;
     const here = doomed.path === s.path;
     // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.

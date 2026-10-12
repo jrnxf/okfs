@@ -158,6 +158,13 @@ impl Root {
         })
     }
 
+    /// Where a resolved path really is, relative to the served folder. It differs from
+    /// the path that was asked for when a link inside the served folder was followed.
+    pub fn place(&self, found: &Resolved) -> Option<String> {
+        let inner = found.abs.strip_prefix(&self.dir).ok()?;
+        Some(inner.to_str()?.replace(std::path::MAIN_SEPARATOR, "/"))
+    }
+
     /// Finds the entry a request path names, for removing it. Unlike `resolve`, the
     /// last name is not followed when it is a link: the link is what gets removed, and
     /// not what it points at. Only a link that is shown is found. The folder holding

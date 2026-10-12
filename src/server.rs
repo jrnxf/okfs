@@ -1,11 +1,12 @@
 //! The HTTP side: every route okfs answers. All of them read, except the one that
 //! deletes, and that one refuses unless okfs was started with `--allow-delete`.
 
+use std::convert::Infallible;
 use std::fs;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::QueryRejection;
@@ -13,15 +14,18 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::header::{self, HeaderMap, HeaderValue};
 use axum::http::{Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
 use axum::{Json, Router};
+use futures_util::{StreamExt, stream};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::Index;
+use crate::live::Change;
 use crate::paths::{self, Kept, NoEntry, Resolved, Root, Unshown};
 use crate::render::{self, encode_path, view_url};
 use crate::theme::{self, Swatch, Theme};
@@ -38,6 +42,9 @@ const PAGE_POLICY: &str = "default-src 'self'; img-src 'self' data: blob: https:
 /// in a frame. Another site that could would hide it and steer a visitor's clicks
 /// onto the delete button and through the dialog.
 const NO_FRAMING: &str = "frame-ancestors 'self'";
+/// How often a stream of changes with nothing to tell sends a comment line, so that
+/// no proxy on the way takes it for dead and cuts it.
+const STREAM_BEAT: Duration = Duration::from_secs(15);
 /// The id of a theme read from a file, as the switcher knows it.
 const CUSTOM: &str = "custom";
 /// The header, and its value, that the page sends with a delete. See `own_page`.
@@ -192,8 +199,10 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/-/", get(page))
         .fallback(page_or_refuse)
         .layer(CompressionLayer::new());
-    // Sent as they are: ranges and compression do not mix, and images are packed already.
+    // Sent as they are: ranges and compression do not mix, images are packed already,
+    // and a change has to leave the moment it is written.
     let plain = Router::new()
+        .route("/api/events", get(events))
         .route("/api/thumb", get(thumbnail))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
@@ -310,6 +319,10 @@ struct Readme {
 #[derive(Serialize)]
 struct Listing {
     path: String,
+    /// Where the folder really is, when a link was followed to reach it. Changes on
+    /// disk are told by this path. Told with a whole listing only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    real: Option<String>,
     /// The path's last name is a link to this folder. A delete removes only the link.
     /// Told with a whole listing only, as the notes are.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -365,7 +378,12 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
             })
         })
         .collect();
+    let real = app
+        .root
+        .place(&found)
+        .filter(|real| query.limit.is_none() && *real != found.rel);
     Some(Listing {
+        real,
         link: query.limit.is_none() && app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
         path: found.rel,
         entries,
@@ -380,6 +398,33 @@ async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Re
         Ok(Some(listing)) => Json(listing).into_response(),
         _ => not_found(),
     }
+}
+
+/// The changes to the served folder as they happen, as server-sent events, for as
+/// long as the page listens. A `change` names a folder and the files written in it.
+/// A `sync` says to read again whatever is on screen.
+async fn events(State(app): State<Arc<App>>) -> Response {
+    let told = app.index.feed().follow().map(|change| {
+        let event = match change {
+            Change::Folder { dir, files } => Event::default()
+                .event("change")
+                .data(serde_json::json!({ "dir": dir, "files": files }).to_string()),
+            Change::Sync => Event::default().event("sync").data("{}"),
+        };
+        Ok::<_, Infallible>(event)
+    });
+    // One line goes out at once: a proxy may hold an answer back until it has a body.
+    let hello = stream::once(async { Ok(Event::default().comment("okfs")) });
+    let stream = Sse::new(hello.chain(told)).keep_alive(KeepAlive::new().interval(STREAM_BEAT));
+    // The second header asks a proxy that buffers answers not to buffer this one.
+    (
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+        ],
+        stream,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]

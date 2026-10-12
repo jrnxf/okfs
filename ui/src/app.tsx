@@ -366,7 +366,8 @@ export function App() {
       return (
         <div class="tile" role="option" aria-selected={on} data-i={index} style={style} key={entry.path}>
           <div class="box">
-            <Thumb entry={entry} width={cell.width} />
+            {/* A cover that failed while its file was being written is tried again when the file has changed. */}
+            <Thumb key={`${entry.mtime} ${entry.size}`} entry={entry} width={cell.width} />
           </div>
           <div class="nm trunc">{entry.name}</div>
         </div>
@@ -483,6 +484,7 @@ export function App() {
             count={s.entries.length}
             grid={s.view === "grid"}
             cursor={s.cursor}
+            caught={s.caught}
             listKey={`${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
             render={renderCell}
             onCols={onCols}
@@ -501,7 +503,7 @@ export function App() {
         </section>
         <section class="right">
           <div class="ph">{header}</div>
-          <div class="pv">{shown && <Preview entry={shown} report={report} />}</div>
+          <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} />}</div>
         </section>
       </div>
       <footer class={filtering || s.filter ? "status filtering" : "status"}>

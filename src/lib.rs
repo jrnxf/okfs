@@ -5,6 +5,7 @@ pub mod archive;
 pub mod assets;
 pub mod cli;
 pub mod index;
+pub mod live;
 pub mod paths;
 pub mod preview;
 pub mod raw;

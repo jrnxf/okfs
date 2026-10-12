@@ -17,6 +17,8 @@ export interface Readme {
 
 export interface Listing {
   path: string;
+  /** Where the folder really is, when a link was followed to reach it. Changes on disk are told by this path. */
+  real?: string;
   /** The folder is reached through a link. Deleting it removes the link only. Sent with a whole listing only. */
   link?: boolean;
   entries: Item[];
@@ -67,6 +69,8 @@ export const urls = {
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
   thumb: (path: string, width: number, modified: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}`,
+  /** The stream of changes to the served folder. */
+  events: "/api/events",
   /** One entry, for deleting it. */
   entry: (path: string) => `/api/entry?path=${encodeURIComponent(path)}`,
   raw: (path: string) => `/raw/${encode(path)}`,
@@ -124,6 +128,9 @@ export async function deleteEntry(path: string): Promise<void> {
   const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
   throw new DeleteError(reason, body.partial === true);
 }
+
+/** The served path an address of the server asks about, or `null` when it names none. */
+export const pathOf = (url: string): string | null => new URL(url, location.href).searchParams.get("path");
 
 export const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 export const nameOf = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
