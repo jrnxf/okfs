@@ -6,7 +6,7 @@ import { type Archive, type Listing, type TextPreview, getJson, pathOf, urls } f
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
-import type { Entry } from "./store";
+import { type Entry, toEntry, versionOf } from "./store";
 
 /**
  * Frames and players cost a lot to start. Under a held key, which passes a file faster than one can start,
@@ -31,6 +31,10 @@ const KEEP = 100;
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
 const FOLDER_PEEK = 14;
+/** Once the cursor has rested on a folder this long, its first files are asked for: it may be entered next. */
+const FOLDER_REST = 150;
+/** How many of them. */
+const FOLDER_WARM = 10;
 /**
  * Lines of a source file asked for first: a screen or two of them. Coloring costs by the line, and so does
  * drawing, so the start of a file can be on screen in the frame the cursor reaches it.
@@ -363,6 +367,14 @@ function Folder({ entry, report }: { entry: Entry; report: Report }) {
   useEffect(() => {
     if (total !== undefined && url === urls.list(entry.path, FOLDER_PEEK)) report(entry.path, [fmt.items(total)]);
   }, [entry.path, total, url, report]);
+  // The first move into a folder is the one move nothing was loaded ahead for. A folder the cursor rests on
+  // is likely to be entered, so its first previews are asked for now, as they would be on the way in.
+  const rested = useSettled(entry.path, FOLDER_REST);
+  useEffect(() => {
+    if (!rested || !data || url !== urls.list(entry.path, FOLDER_PEEK)) return;
+    const first = data.entries.slice(0, FOLDER_WARM).map((item, rank) => toEntry(item, data.path, rank));
+    lookAhead(first, -1, 1, versionOf);
+  }, [rested, data, url, entry.path]);
   if (!data) return null;
   const more = data.total - data.entries.length;
   return (

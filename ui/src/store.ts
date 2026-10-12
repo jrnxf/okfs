@@ -78,7 +78,7 @@ interface Mark {
 
 const mark = (): Mark => (history.state as Mark | null) ?? {};
 
-function toEntry(item: Item, dir: string, rank: number): Entry {
+export function toEntry(item: Item, dir: string, rank: number): Entry {
   const isDir = item.d === true;
   return {
     name: item.n,
@@ -96,7 +96,8 @@ function toEntry(item: Item, dir: string, rank: number): Entry {
 }
 
 /** The time and size a listing gives for an entry. They move when a file is rewritten. */
-const versionOf = (entry: Entry): string => `${entry.mtime}.${entry.size}`;
+/** What a file is loaded under until it is seen to change: its time and size. */
+export const versionOf = (entry: Entry): string => `${entry.mtime}.${entry.size}`;
 
 function savedSort(): Sort {
   const [key, dir] = (prefs.get("sort") ?? "").split(":");
