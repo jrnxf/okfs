@@ -8,9 +8,9 @@
 
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
-- A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder.
+- A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page or a PDF waits until the key is let go.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
-- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, and lists the most recently changed files before you type.
+- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
 - Themes: one CSS file each, five built in, light and dark.
 - Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
@@ -156,7 +156,7 @@ okfs --theme ./mine.css      # start in your own
 okfs theme check ./mine.css  # check a file against the contract
 ```
 
-Visitors can switch between the built-in themes in the page. The choice is remembered per browser.
+Visitors can switch between the built-in themes in the page, with `Theme` in the palette. Moving over a theme shows it and `Enter` chooses it. The choice is remembered per browser.
 
 ### Write one
 
@@ -235,6 +235,13 @@ cd ui && bun run check                      # type check the page
 ```
 
 The server is Rust (axum, tokio). The page is TypeScript and Preact in `ui/`, built by `build.rs` into the binary. To work on the page without rebuilding the binary each time, run a debug build with `OKFS_UI_DIR=ui/dist` and rebuild the page with `cd ui && bun run build`.
+
+The pictures in `docs/screenshots/` are shot again with one command, from a release build and a folder to serve. It needs `chrome-devtools-axi` and nix. The script says which files the folder must hold:
+
+```sh
+cargo build --release
+scripts/shoot-readme.sh path/to/tidewater
+```
 
 ## License
 
