@@ -8,7 +8,7 @@
 
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
-- A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page or a PDF waits until the key is let go.
+- A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page of 256 KB or more, a PDF and a player wait until the key is let go.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
