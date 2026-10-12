@@ -191,7 +191,7 @@ function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report
 }
 
 function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
-  const [broken, setBroken] = useState(false);
+  const [broken, setBroken] = useState("");
   const settled = useSettled(entry.path, SETTLE_HEAVY);
   // A rewritten file is loaded again only once nothing is playing: a player is never cut off.
   const [playing, setPlaying] = useState(false);
@@ -199,9 +199,13 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
   useEffect(() => {
     if (!playing) setLoaded(stamp);
   }, [stamp, playing]);
-  if (broken) return <Card entry={entry} line="This browser cannot play this file" />;
   const src = settled ? `${urls.raw(entry.path)}?v=${loaded}` : undefined;
+  if (broken === src) return <Card entry={entry} line="This browser cannot play this file" />;
   const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
+  const onError = () => {
+    setPlaying(false);
+    setBroken(src ?? "");
+  };
   const onMeta = (event: { currentTarget: HTMLMediaElement }) => {
     const media = event.currentTarget;
     const frame = media instanceof HTMLVideoElement && media.videoWidth ? [`${media.videoWidth} × ${media.videoHeight}`] : [];
@@ -212,14 +216,14 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
       <div class="pv-center">
         <div class="pv-audio">
           <KindIcon kind="audio" />
-          <audio src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={() => setBroken(!!src)} {...state} />
+          <audio src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
         </div>
       </div>
     );
   }
   return (
     <div class="pv-center">
-      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onError={() => setBroken(!!src)} {...state} />
+      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
     </div>
   );
 }

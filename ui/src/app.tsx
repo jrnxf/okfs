@@ -123,9 +123,11 @@ function Thumb({ entry, width }: { entry: Entry; width: number }) {
   if (entry.dir) return <FolderCover entry={entry} />;
   if (COVER_KINDS.has(entry.kind)) return <TextCover entry={entry} />;
   if (entry.ext === "zip") return <ZipCover entry={entry} />;
+  // The file itself is asked for by an address that moves when it is rewritten, as the thumbnail's does.
+  const raw = `${urls.raw(entry.path)}?v=${entry.mtime}.${entry.size}`;
   if (entry.kind === "image" && stage < 2) {
     const wanted = Math.ceil(width * (window.devicePixelRatio || 1));
-    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime) : urls.raw(entry.path);
+    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime) : raw;
     return (
       <div class="th">
         <img src={src} loading="lazy" alt="" onError={() => setStage(stage + 1)} />
@@ -135,7 +137,7 @@ function Thumb({ entry, width }: { entry: Entry; width: number }) {
   if (entry.kind === "video" && stage < 2) {
     return (
       <div class="th">
-        <video src={`${urls.raw(entry.path)}#t=2`} preload="metadata" muted playsInline onError={() => setStage(2)} />
+        <video src={`${raw}#t=2`} preload="metadata" muted playsInline onError={() => setStage(2)} />
       </div>
     );
   }

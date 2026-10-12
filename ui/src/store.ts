@@ -95,6 +95,9 @@ function toEntry(item: Item, dir: string, rank: number): Entry {
   };
 }
 
+/** The time and size a listing gives for an entry. They move when a file is rewritten. */
+const versionOf = (entry: Entry): string => `${entry.mtime}.${entry.size}`;
+
 function savedSort(): Sort {
   const [key, dir] = (prefs.get("sort") ?? "").split(":");
   const known = SORT_KEYS.find((candidate) => candidate === key);
@@ -131,12 +134,12 @@ export class Store {
   /** Counts what the server told, so a folder that was on its way while something came in is read once more. */
   private heard = 0;
   /** What the next catch-up has to do, while one is due. See `catchUp`. */
-  private due: { blind: boolean; all: boolean } | null = null;
+  private due: { all: boolean } | null = null;
   private catching = false;
   /** True while a delete of our own runs. It shows the folder itself when it is done. */
   private removing = false;
-  /** The stamp of each file shown by its address. See `stamp`. */
-  private readonly stamps = new Map<string, string>();
+  /** The stamp of each file shown by its address, and the time and size the file had when it was loaded. See `stamp`. */
+  private readonly stamps = new Map<string, { stamp: string; seen?: string }>();
   private stamped = 0;
 
   subscribe(listener: () => void): () => void {
@@ -268,22 +271,35 @@ export class Store {
   /**
    * Changes whenever the file is rewritten. A picture or a frame is loaded by an address that carries it,
    * so the new contents are loaded and the old are not shown from memory. It starts as the file's time and
-   * size and moves only when the server says the file has settled: never while it is still being written.
+   * size. It moves when the server names the file as written, and when a call to catch up on everything
+   * finds the file with another time or size than it was loaded with.
    */
   stamp(entry: Entry): string {
-    let stamp = this.stamps.get(entry.path);
-    if (stamp === undefined) {
-      stamp = `${entry.mtime}.${entry.size}`;
-      this.stamps.set(entry.path, stamp);
+    let kept = this.stamps.get(entry.path);
+    if (!kept) {
+      kept = { stamp: versionOf(entry) };
+      this.stamps.set(entry.path, kept);
       // Oldest first out: a Map keeps insertion order. A file dropped here starts again from its time and size.
       if (this.stamps.size > 500) this.stamps.delete(this.stamps.keys().next().value as string);
     }
-    return stamp;
+    // The listing was read before the file is loaded under this stamp: what is loaded is never older.
+    kept.seen ??= versionOf(entry);
+    return kept.stamp;
   }
 
-  /** Marks a file that has been shown as rewritten. */
+  /** Marks a file that has been shown as rewritten: it is loaded again the next time it is shown. */
   private restamp(path: string): void {
-    if (this.stamps.has(path)) this.stamps.set(path, `r${++this.stamped}`);
+    if (this.stamps.has(path)) this.stamps.set(path, { stamp: `r${++this.stamped}` });
+  }
+
+  /**
+   * Nothing that is kept can be trusted. A stamp stays only where the folder on screen lists its file with
+   * the time and size it was loaded with, and every answer is asked for again.
+   */
+  private distrust(): void {
+    const listed = new Map(this.s.all.map((entry) => [entry.path, versionOf(entry)]));
+    for (const [path, kept] of [...this.stamps]) if (kept.seen !== listed.get(path)) this.restamp(path);
+    forgetAnswers();
   }
 
   /** A folder's real path, as the path the page knows it by. They differ under a folder reached through a link. */
@@ -298,36 +314,36 @@ export class Store {
 
   /**
    * The server says a folder changed on disk: entries came or went, or the files named were written.
-   * Without names, any file in it may have been. Only what is on screen is read again.
+   * Only what is on screen is read again.
    */
-  changed(dir: string, files: string[] | null): void {
+  changed(dir: string, files: string[]): void {
     const { s } = this;
     this.heard++;
     const here = this.local(dir);
-    const named = files && new Set(files);
-    for (const name of files ?? []) this.restamp(joinPath(here, name));
+    const named = new Set(files);
+    // A file on screen is loaded again once its folder has been read: see `stamp`.
+    for (const name of files) this.restamp(joinPath(here, name));
     // What is kept about the folder and about the files written in it is out of date, on screen or not.
-    forgetAnswers((path) => path === here || (parentOf(path) === here && path !== here && (!named || named.has(nameOf(path)))));
-    if (files?.length) this.emit();
+    forgetAnswers((path) => path === here || (parentOf(path) === here && path !== here && named.has(nameOf(path))));
     if (s.status === "loading") return;
     // The folder on screen shows its own entries, how many each folder in it holds, and that it is there at all.
     const inside = dir !== "" && parentOf(dir) === this.real;
     const above = dir !== this.real && (dir === "" || this.real.startsWith(`${dir}/`));
-    if (dir === this.real || inside || above) this.catchUp(dir === this.real && !files);
+    if (dir === this.real || inside || above) this.catchUp();
   }
 
   /** The server says more changed than it names, or nothing was heard for a while: nothing kept can be trusted. */
   sync(): void {
     this.heard++;
-    this.catchUp(true, true);
+    this.catchUp(true);
   }
 
   /**
-   * Reads the folder on screen again, soon. `blind`: the files that were written are not known by name,
-   * so they are told by their time and size. `all`: neither is anything about the other folders.
+   * Reads the folder on screen again, soon. `all`: the files that were written are not known by name,
+   * so they are told by their time and size, and nothing kept about the other folders is trusted.
    */
-  private catchUp(blind = false, all = false): void {
-    this.due = { blind: blind || this.due?.blind === true, all: all || this.due?.all === true };
+  private catchUp(all = false): void {
+    this.due = { all: all || this.due?.all === true };
     void this.drain();
   }
 
@@ -336,9 +352,9 @@ export class Store {
     this.catching = true;
     try {
       while (this.due) {
-        const { blind, all } = this.due;
+        const { all } = this.due;
         this.due = null;
-        await this.reread(blind, all);
+        await this.reread(all);
       }
     } finally {
       this.catching = false;
@@ -349,31 +365,31 @@ export class Store {
    * Shows the folder as it is on disk now and leaves the rest as it is: the filter, the sort, the view,
    * the scroll position and the open file. The cursor stays on its entry by name.
    */
-  private async reread(blind: boolean, all: boolean): Promise<void> {
+  private async reread(all: boolean): Promise<void> {
     const { s } = this;
+    const { path } = s;
     const turn = this.turn;
     if (s.status === "loading") return;
     let listing: Listing | null = null;
     try {
-      listing = await getJson<Listing>(urls.list(s.path));
+      listing = await getJson<Listing>(urls.list(path));
     } catch (error) {
       // The server did not answer: the stream drops too, and catches up when it is back.
       if (!(error instanceof HttpError)) return;
     }
-    // The reader went elsewhere meanwhile, and that folder is read as it is now.
-    if (turn !== this.turn) {
-      if (all) forgetAnswers();
+    // The reader went elsewhere meanwhile, and that folder is read as it is now. A call to catch up on everything still stands.
+    if (turn !== this.turn || path !== s.path) {
+      if (all) this.catchUp(true);
       return;
     }
     if (!listing) {
-      if (s.status === "missing") return;
-      this.lose(s.path);
-      forgetAnswers();
+      if (s.status === "missing" && !all) return;
+      this.lose(path);
+      this.distrust();
       this.emit();
       return;
     }
 
-    const before = new Map(s.all.map((entry) => [entry.name, entry]));
     const order = s.entries.map((entry) => entry.name);
     const at = s.cursor;
     this.take(listing);
@@ -390,17 +406,7 @@ export class Store {
       if (!s.open) this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
     }
 
-    if (blind) {
-      const same = (old: Entry | undefined, entry: Entry): boolean =>
-        old !== undefined && !entry.dir && !old.dir && old.mtime === entry.mtime && old.size === entry.size;
-      const kept = new Set([...now.values()].filter((entry) => same(before.get(entry.name), entry)).map((entry) => entry.path));
-      for (const path of [...this.stamps.keys()]) {
-        if (kept.has(path)) continue;
-        if (parentOf(path) === s.path) this.restamp(path);
-        else if (all) this.stamps.delete(path);
-      }
-      forgetAnswers((path) => !kept.has(path) && (all || parentOf(path) === s.path));
-    }
+    if (all) this.distrust();
     s.caught++;
     this.emit();
   }
@@ -415,7 +421,7 @@ export class Store {
     const { path, kind } = config.target;
     addEventListener("popstate", () => void this.route());
     if (kind === "missing") {
-      Object.assign(this.s, { status: "missing", path });
+      this.lose(path);
       this.emit();
       return Promise.resolve();
     }

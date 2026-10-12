@@ -27,7 +27,7 @@ function open(): void {
     store.sync();
   };
   source.addEventListener("change", (event) => {
-    const { dir, files }: { dir: string; files: string[] | null } = JSON.parse(event.data);
+    const { dir, files }: { dir: string; files: string[] } = JSON.parse(event.data);
     store.changed(dir, files);
   });
   source.addEventListener("sync", () => store.sync());

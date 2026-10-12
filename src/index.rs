@@ -3,7 +3,7 @@
 //! watcher is what open pages follow: every change it reads is told to the feed.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, RwLock};
@@ -15,7 +15,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
-use crate::live::{BACKLOG, Change, Feed};
+use crate::live::{Change, Feed};
 use crate::paths::{self, Root};
 
 /// How long the tree must be quiet before changes are read.
@@ -24,22 +24,8 @@ const SETTLE: Duration = Duration::from_millis(150);
 const MAX_WAIT: Duration = Duration::from_secs(2);
 /// How often the tree is walked again when no watcher could be set up.
 const POLL: Duration = Duration::from_secs(30);
-/// A file that is written without a pause for longer than this is told all the same,
-/// so that a log that never rests still moves on the page.
-const MAX_HOLD: Duration = Duration::from_secs(10);
-/// One read that finds more changed folders than this tells the pages to read
-/// everything again. It leaves room in the feed, so a page in step stays in step.
-const MAX_TOLD: usize = BACKLOG / 2;
-/// More written files than this in one folder are not named one by one.
-const MAX_NAMED: usize = 32;
 /// A match on the name itself outranks a match somewhere in the path.
 const NAME_BONUS: u32 = 64;
-
-/// What the watcher saw, each with the time it was read.
-type Batch = Vec<(Instant, notify::Result<notify::Event>)>;
-/// Paths the watcher touched and the pages have not been told of yet, each with the
-/// first and the last time it was seen.
-type Held = HashMap<PathBuf, (Instant, Instant)>;
 
 struct Node {
     name: Box<str>,
@@ -131,33 +117,17 @@ impl Index {
             }
         };
 
-        let mut held = Held::new();
-        loop {
-            // While files are held back the wait is short: they are told once they rest.
-            let first = if held.is_empty() {
-                events.recv().map_err(|_| RecvTimeoutError::Disconnected)
-            } else {
-                events.recv_timeout(SETTLE)
-            };
+        while let Ok(first) = events.recv() {
             let started = Instant::now();
-            let mut batch = Batch::new();
-            // True while the tree has not been quiet since the last event.
-            let mut busy = match first {
-                Ok(event) => {
-                    batch.push((started, event));
-                    true
-                }
-                Err(RecvTimeoutError::Timeout) => false,
-                Err(RecvTimeoutError::Disconnected) => return,
-            };
-            while busy && started.elapsed() < MAX_WAIT {
+            let mut batch = vec![first];
+            while started.elapsed() < MAX_WAIT {
                 match events.recv_timeout(SETTLE) {
-                    Ok(event) => batch.push((Instant::now(), event)),
-                    Err(RecvTimeoutError::Timeout) => busy = false,
+                    Ok(event) => batch.push(event),
+                    Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            self.absorb(batch, busy, &mut held);
+            self.absorb(batch);
         }
     }
 
@@ -205,19 +175,15 @@ impl Index {
         self.feed.tell(Change::Sync);
     }
 
-    /// Folds what the watcher saw into the index and tells the pages. `busy` says the
-    /// tree was still changing when the batch was cut off. `held` carries the files
-    /// that are still being written over to the next batch: a page is told of a written
-    /// file once it has settled, so a preview never shows one half written.
-    fn absorb(&self, batch: Batch, busy: bool, held: &mut Held) {
+    /// Folds what the watcher saw into the index and tells the pages.
+    fn absorb(&self, batch: Vec<notify::Result<notify::Event>>) {
         let mut dirty = HashSet::new();
-        for (at, event) in batch {
+        let mut touched = HashSet::new();
+        for event in batch {
             let Ok(event) = event else {
-                held.clear();
                 return self.rebuild();
             };
             if event.need_rescan() {
-                held.clear();
                 return self.rebuild();
             }
             if matches!(event.kind, EventKind::Access(_)) {
@@ -232,42 +198,26 @@ impl Index {
                 if !written && let Some(dir) = self.dir_of(&path) {
                     dirty.insert(dir);
                 }
-                held.entry(path).or_insert((at, at)).1 = at;
+                touched.insert(path);
             }
         }
 
-        // The files that have settled, by folder. Only what a listing shows is named.
-        let mut settled: HashMap<String, Vec<String>> = HashMap::new();
-        held.retain(|path, (first, last)| {
-            if busy && last.elapsed() < SETTLE && first.elapsed() < MAX_HOLD {
-                return true;
-            }
-            if let Some(dir) = self.dir_of(path) {
-                let names = settled.entry(dir).or_default();
-                if names.len() <= MAX_NAMED
-                    && let Some(name) = self.shown_file(path)
-                {
-                    names.push(name);
-                }
-            }
-            false
-        });
-
-        let mut told = Vec::new();
-        let dirs: HashSet<String> = dirty.iter().chain(settled.keys()).cloned().collect();
-        for dir in dirs {
-            let reshaped = dirty.contains(&dir) && self.refresh(&dir);
-            let names = settled.remove(&dir).unwrap_or_default();
-            if reshaped || !names.is_empty() {
-                let files = (names.len() <= MAX_NAMED).then_some(names);
-                told.push(Change::Folder { dir, files });
+        // The files that were written, by folder. Only what a listing shows is named.
+        let mut told: HashMap<String, Vec<String>> = HashMap::new();
+        for path in &touched {
+            if let Some(dir) = self.dir_of(path)
+                && let Some(name) = self.shown_file(path)
+            {
+                told.entry(dir).or_default().push(name);
             }
         }
-        if told.len() > MAX_TOLD {
-            return self.feed.tell(Change::Sync);
+        for dir in dirty {
+            if self.refresh(&dir) {
+                told.entry(dir).or_default();
+            }
         }
-        for change in told {
-            self.feed.tell(change);
+        for (dir, files) in told {
+            self.feed.tell(Change::Folder { dir, files });
         }
     }
 
@@ -294,7 +244,7 @@ impl Index {
         if self.refresh(dir) {
             self.feed.tell(Change::Folder {
                 dir: dir.to_owned(),
-                files: Some(Vec::new()),
+                files: Vec::new(),
             });
         }
     }
@@ -476,6 +426,7 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
     use std::pin::Pin;
 
     use futures_util::{FutureExt, Stream, StreamExt};
@@ -491,7 +442,6 @@ mod tests {
         outside: PathBuf,
         index: Arc<Index>,
         page: Pin<Box<dyn Stream<Item = Change>>>,
-        held: Held,
     }
 
     const CREATE: EventKind = EventKind::Create(CreateKind::File);
@@ -517,21 +467,16 @@ mod tests {
                 outside,
                 index,
                 page,
-                held: Held::new(),
             }
         }
 
-        /// Hands the index what a watcher would have seen, after the tree went quiet.
+        /// Hands the index what a watcher would have seen in one batch.
         fn see(&mut self, events: &[(EventKind, &str)]) -> Vec<Change> {
-            self.see_at(events, Instant::now(), false)
-        }
-
-        fn see_at(&mut self, events: &[(EventKind, &str)], at: Instant, busy: bool) -> Vec<Change> {
             let batch = events
                 .iter()
-                .map(|(kind, path)| (at, Ok(Event::new(*kind).add_path(self.served.join(path)))))
+                .map(|(kind, path)| Ok(Event::new(*kind).add_path(self.served.join(path))))
                 .collect();
-            self.index.absorb(batch, busy, &mut self.held);
+            self.index.absorb(batch);
             self.told()
         }
 
@@ -548,7 +493,7 @@ mod tests {
     fn folder(dir: &str, files: &[&str]) -> Change {
         Change::Folder {
             dir: dir.to_owned(),
-            files: Some(files.iter().map(|name| (*name).to_owned()).collect()),
+            files: files.iter().map(|name| (*name).to_owned()).collect(),
         }
     }
 
@@ -655,60 +600,25 @@ mod tests {
     }
 
     #[test]
-    fn a_burst_of_files_in_one_folder_is_one_change_that_names_none() {
+    fn a_burst_of_files_in_one_folder_is_one_change_that_names_them_all() {
         let mut site = Watched::new(false);
-        let names: Vec<String> = (0..500).map(|at| format!("sub/burst-{at}.txt")).collect();
+        let mut names: Vec<String> = (0..500).map(|at| format!("burst-{at}.txt")).collect();
+        let paths: Vec<String> = names.iter().map(|name| format!("sub/{name}")).collect();
         let mut events = Vec::new();
-        for name in &names {
-            fs::write(site.served.join(name), "x").unwrap();
-            events.extend([(CREATE, name.as_str()), (WRITE, name.as_str())]);
+        for path in &paths {
+            fs::write(site.served.join(path), "x").unwrap();
+            events.extend([(CREATE, path.as_str()), (WRITE, path.as_str())]);
         }
         let told = site.see(&events);
-        assert_eq!(
-            told,
-            [Change::Folder {
-                dir: "sub".to_owned(),
-                files: None
-            }]
-        );
+        let [Change::Folder { dir, files }] = told.as_slice() else {
+            panic!("one change for the folder: {told:?}");
+        };
+        assert_eq!(dir, "sub");
+        let mut files = files.clone();
+        files.sort();
+        names.sort();
+        assert_eq!(files, names);
         assert_eq!(site.index.child_count("sub"), Some(501));
-    }
-
-    #[test]
-    fn a_burst_across_many_folders_is_one_call_to_catch_up() {
-        let mut site = Watched::new(false);
-        let names: Vec<String> = (0..=MAX_TOLD).map(|at| format!("dir-{at}")).collect();
-        for name in &names {
-            fs::create_dir(site.served.join(name)).unwrap();
-        }
-        site.index.build();
-        let files: Vec<String> = names.iter().map(|name| format!("{name}/new.txt")).collect();
-        for file in &files {
-            fs::write(site.served.join(file), "x").unwrap();
-        }
-        let events: Vec<_> = files.iter().map(|file| (CREATE, file.as_str())).collect();
-        assert_eq!(site.see(&events), [Change::Sync]);
-    }
-
-    #[test]
-    fn a_file_still_being_written_is_told_once_it_has_settled() {
-        let mut site = Watched::new(false);
-        fs::write(site.served.join("a.txt"), "half").unwrap();
-        // The batch was cut off while the file was still being written.
-        assert_eq!(site.see_at(&[(WRITE, "a.txt")], Instant::now(), true), []);
-        assert_eq!(site.held.len(), 1);
-        // No more came: it has settled.
-        assert_eq!(site.see(&[]), [folder("", &["a.txt"])]);
-        assert!(site.held.is_empty());
-    }
-
-    #[test]
-    fn a_file_that_never_rests_is_told_all_the_same() {
-        let mut site = Watched::new(false);
-        let long_ago = Instant::now().checked_sub(MAX_HOLD * 2).unwrap();
-        site.held.insert(site.served.join("a.txt"), (long_ago, long_ago));
-        let told = site.see_at(&[(WRITE, "a.txt")], Instant::now(), true);
-        assert_eq!(told, [folder("", &["a.txt"])]);
     }
 
     #[test]
@@ -724,8 +634,7 @@ mod tests {
     fn a_watcher_that_lost_track_tells_the_pages_to_catch_up() {
         let mut site = Watched::new(false);
         let lost = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
-        site.index
-            .absorb(vec![(Instant::now(), Ok(lost))], false, &mut site.held);
+        site.index.absorb(vec![Ok(lost)]);
         assert_eq!(site.told(), [Change::Sync]);
     }
 }

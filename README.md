@@ -53,7 +53,7 @@ okfs --bind 0.0.0.0         # let other machines on the network in
 
 A folder's `README.md` is shown under its listing.
 
-The page follows changes through a watcher on the folder. Where okfs cannot set one up, it reads the folder again every 30 seconds and the page catches up at that pace.
+The page follows changes through a watcher on the folder. Where okfs cannot set one up, it reads the folder again every 30 seconds and the page catches up at that pace. Something reached through a symbolic link is not followed as it changes: it catches up when the page is reloaded or shown again.
 
 <details>
 <summary>All flags</summary>

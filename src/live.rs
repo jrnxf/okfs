@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 /// How many changes wait for a page. One that falls further behind is told to read
 /// everything again and is sent none of them.
-pub const BACKLOG: usize = 64;
+const BACKLOG: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
@@ -19,9 +19,8 @@ pub enum Change {
     Folder {
         /// The folder's real place, relative to the served folder.
         dir: String,
-        /// The files in it that were written and have settled. `None` when there are
-        /// too many to name: any file in the folder may have changed.
-        files: Option<Vec<String>>,
+        /// The files in it that were written.
+        files: Vec<String>,
     },
     /// More changed than is worth naming: read again whatever is on screen.
     Sync,
@@ -83,7 +82,7 @@ mod tests {
     fn folder(dir: &str) -> Change {
         Change::Folder {
             dir: dir.to_owned(),
-            files: Some(Vec::new()),
+            files: Vec::new(),
         }
     }
 
