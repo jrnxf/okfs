@@ -598,6 +598,11 @@ fn index_page(app: &App, folder: &str) -> Option<Resolved> {
         .filter(|found| found.meta.is_file())
 }
 
+/// Whether an address under `/raw/` asks for the script that tells of the page's first paint: `?painted`.
+fn painted(uri: &Uri) -> bool {
+    uri.query().is_some_and(|query| query.split('&').any(|part| part == "painted"))
+}
+
 async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
     let found = match app.root.resolve(&path) {
         Some(found) if found.meta.is_file() => found,
@@ -617,7 +622,7 @@ async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Ur
         }
         _ => return not_found(),
     };
-    match raw::serve(found, &headers).await {
+    match raw::serve(found, &headers, painted(&uri)).await {
         Ok(response) => response,
         Err(_) => not_found(),
     }
@@ -628,7 +633,7 @@ async fn raw_root(state: State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Respo
     let Some(found) = index_page(&state, "") else {
         return page(state, uri).await;
     };
-    match raw::serve(found, &headers).await {
+    match raw::serve(found, &headers, painted(&uri)).await {
         Ok(response) => response,
         Err(_) => not_found(),
     }
