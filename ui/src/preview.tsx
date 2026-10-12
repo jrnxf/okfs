@@ -1,7 +1,7 @@
 // What the right pane shows for the file or folder under the cursor.
 
 import type { ComponentChildren } from "preact";
-import { useEffect, useLayoutEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Archive, type Listing, type TextPreview, getJson, urls } from "./api";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
@@ -21,10 +21,11 @@ const STALE = 250;
 const FRAME_WAIT = 500;
 /**
  * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
- * painted, and a long page is still being laid out after it has loaded. So a loaded page waits before it is
- * shown: a millisecond for each of this many bytes, and never more than half of `FRAME_WAIT`.
+ * painted, and a page that was slow to load, for its length or for the work of its script, is still being laid
+ * out after it has loaded. So a loaded page waits before it is shown: this many times as long as it took to
+ * load, and never more than half of `FRAME_WAIT`.
  */
-const PAINT_RATE = 2000;
+const PAINT_WAIT = 2;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -227,9 +228,12 @@ function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boo
     if (open && phone) setShown((page) => (page?.path === entry.path ? page : null));
   }, [open]);
   const next = settled && shown?.path !== entry.path ? entry : null;
+  // When the next frame was put in the pane, to tell how long its page took to load.
+  const began = useRef(0);
   // A layout effect: the timer is cleared in the step that takes its frame away, so it cannot bring that page back.
   useLayoutEffect(() => {
     if (!next) return;
+    began.current = performance.now();
     const timer = setTimeout(() => setShown(next), FRAME_WAIT);
     return () => clearTimeout(timer);
   }, [next?.path]);
@@ -248,14 +252,14 @@ function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boo
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
             src={html ? urls.raw(page.path) : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
             title={page.name}
-            // A page that has loaded may not be painted yet: it takes over after a wait for its size and two
+            // A page that has loaded may not be painted yet: it takes over after a wait for its load and two
             // animation frames. By then a move of the cursor may have taken this frame away, and its page is not brought back.
             onLoad={
               page === next
                 ? ({ currentTarget: frame }) =>
                     setTimeout(
                       () => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page))),
-                      html ? Math.min(page.size / PAINT_RATE, FRAME_WAIT / 2) : 0,
+                      html ? Math.min((performance.now() - began.current) * PAINT_WAIT, FRAME_WAIT / 2) : 0,
                     )
                 : undefined
             }
