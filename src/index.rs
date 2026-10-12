@@ -81,7 +81,7 @@ pub struct Changed {
 
 #[derive(Debug, Serialize)]
 pub struct Recent {
-    /// Newest first. Files with the same time are in path order.
+    /// Newest first. Files with the same time are ordered by folder, then by name.
     pub files: Vec<Changed>,
 }
 
@@ -327,7 +327,8 @@ impl Index {
     /// at. Folders and links never appear, and neither does a file whose time is unknown.
     pub fn recent(&self) -> Recent {
         let tree = self.tree.read().expect("the index lock");
-        // Newer is greater, and of two with the same time the earlier path is greater.
+        // Newer is greater, and of two with the same time the earlier folder, then the
+        // earlier name, is greater.
         // The heap keeps the `RECENT` greatest, its least on top.
         let mut best = BinaryHeap::with_capacity(RECENT + 1);
         for (dir, nodes) in &tree.dirs {
