@@ -15,10 +15,6 @@ use crate::paths::{self, Resolved};
 /// an origin of its own and can never act as the app, in a frame or opened directly.
 pub const SANDBOX: &str = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms";
 
-/// Added to the end of a page asked for with `?painted`. A sandboxed page is drawn out of sight of the
-/// page that frames it, so it says so itself: by its second animation frame, its first has been drawn.
-pub const PAINTED: &str = "<script>requestAnimationFrame(()=>requestAnimationFrame(()=>parent.postMessage(\"okfs:painted\",\"*\")))</script>";
-
 const READ_BUFFER: usize = 64 * 1024;
 
 /// The type sent for a file name, and whether a browser could run script from it.
@@ -94,8 +90,7 @@ fn etag_matches(list: &str, etag: &str) -> bool {
 }
 
 /// Answers a request for a file that has already been resolved inside the served folder.
-/// With `painted`, an HTML file is sent whole with [`PAINTED`] after it.
-pub async fn serve(found: Resolved, request: &HeaderMap, painted: bool) -> std::io::Result<Response<Body>> {
+pub async fn serve(found: Resolved, request: &HeaderMap) -> std::io::Result<Response<Body>> {
     let len = found.meta.len();
     let modified = found.meta.modified().unwrap_or(UNIX_EPOCH);
     let stamp = modified.duration_since(UNIX_EPOCH).unwrap_or_default();
@@ -104,16 +99,12 @@ pub async fn serve(found: Resolved, request: &HeaderMap, painted: bool) -> std::
     let modified = UNIX_EPOCH + std::time::Duration::from_secs(stamp.as_secs());
     let last_modified = httpdate::fmt_http_date(modified);
     let (mime, active) = content_type(paths::file_name(&found.rel));
-    let tail = if painted && mime.starts_with("text/html") { PAINTED } else { "" };
 
     let mut response = Response::builder()
         .header(header::ETAG, &etag)
         .header(header::LAST_MODIFIED, &last_modified)
+        .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "no-cache");
-    // A part of a page with the script after it is not a page: with the script, there are no ranges.
-    if tail.is_empty() {
-        response = response.header(header::ACCEPT_RANGES, "bytes");
-    }
     let since = |name| header_str(request, name).and_then(|date| httpdate::parse_http_date(date).ok());
     let unchanged = match header_str(request, header::IF_NONE_MATCH) {
         Some(tags) => etag_matches(tags, &etag),
@@ -137,7 +128,7 @@ pub async fn serve(found: Resolved, request: &HeaderMap, painted: bool) -> std::
         Some(date) => httpdate::parse_http_date(date).is_ok_and(|date| date == modified),
         None => true,
     };
-    let range = match header_str(request, header::RANGE).filter(|_| current && tail.is_empty()) {
+    let range = match header_str(request, header::RANGE).filter(|_| current) {
         Some(value) => parse_range(value, len),
         None => Range::Whole,
     };
@@ -160,13 +151,10 @@ pub async fn serve(found: Resolved, request: &HeaderMap, painted: bool) -> std::
     if first > 0 {
         file.seek(SeekFrom::Start(first)).await?;
     }
-    let body = Body::from_stream(ReaderStream::with_capacity(
-        file.take(count).chain(tail.as_bytes()),
-        READ_BUFFER,
-    ));
+    let body = Body::from_stream(ReaderStream::with_capacity(file.take(count), READ_BUFFER));
     Ok(response
         .status(status)
-        .header(header::CONTENT_LENGTH, HeaderValue::from(count + tail.len() as u64))
+        .header(header::CONTENT_LENGTH, HeaderValue::from(count))
         .body(body)
         .expect("a valid response"))
 }

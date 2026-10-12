@@ -378,43 +378,6 @@ async fn a_folder_is_listed_in_reading_order_with_what_the_page_needs() {
 }
 
 #[tokio::test]
-async fn a_page_asked_for_with_painted_ends_with_the_script_that_tells_of_its_first_paint() {
-    let site = Site::new();
-    let source = "<!doctype html><title>report</title><p>report</p>";
-    fs::write(site.served.join("page.html"), source).unwrap();
-    let app = site.router();
-
-    // The file's own address sends the file as it is.
-    let (plain, body) = get(&app, "/raw/page.html").await;
-    assert_eq!(body, source.as_bytes());
-    assert_eq!(plain.headers()[header::ACCEPT_RANGES], "bytes");
-
-    let (told, body) = get(&app, "/raw/page.html?painted").await;
-    let body = String::from_utf8(body).unwrap();
-    let script = body.strip_prefix(source).expect("the page, then the script");
-    assert!(script.starts_with("<script>") && script.ends_with("</script>"), "{script}");
-    assert!(script.contains("parent.postMessage(\"okfs:painted\""), "{script}");
-    assert_eq!(told.headers()[header::CONTENT_LENGTH], body.len().to_string().as_str());
-    let policy = told.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
-    assert!(policy.starts_with("sandbox"), "{policy}");
-
-    // A part of the page with the script after it would not be a page: it is sent whole.
-    assert!(!told.headers().contains_key(header::ACCEPT_RANGES));
-    let ranged = Request::get("/raw/page.html?painted")
-        .header(header::RANGE, "bytes=0-3")
-        .body(Body::empty())
-        .unwrap();
-    let (whole, ranged) = send(&app, ranged).await;
-    assert_eq!(whole.status(), StatusCode::OK);
-    assert_eq!(ranged, body.as_bytes());
-
-    // Only a page can run the script: any other file is sent as it is.
-    let (text, body) = get(&app, "/raw/a.txt?painted").await;
-    assert_eq!(body, b"0123456789abcdefghij");
-    assert_eq!(text.headers()[header::CONTENT_LENGTH], "20");
-}
-
-#[tokio::test]
 async fn served_pages_are_sandboxed_and_nothing_is_sniffed() {
     let site = Site::new();
     fs::write(site.served.join("page.html"), "<script>parent.document</script>").unwrap();

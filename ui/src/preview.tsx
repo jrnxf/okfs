@@ -15,12 +15,17 @@ const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
 /**
- * A frame that has not painted after this long is shown as it is, in place of the page before it. Long
- * enough for a heavy local page to paint, short enough that the old page is not taken for the new file.
+ * A frame that has not loaded after this long is shown as it is, in place of the page before it. Long
+ * enough for a heavy local page to load, short enough that the old page is not taken for the new file.
  */
 const FRAME_WAIT = 500;
-/** What a page asked for with `?painted` sends to the app once it has painted. */
-const PAINTED = "okfs:painted";
+/**
+ * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
+ * painted, and a page that was slow to load, for its length or for the work of its script, is still being laid
+ * out after it has loaded. So a loaded page waits before it is shown: this many times as long as it took to
+ * load, and never more than half of `FRAME_WAIT`.
+ */
+const PAINT_WAIT = 2;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -215,30 +220,22 @@ function Media({ entry, report }: { entry: Entry; report: Report }) {
 
 function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  // The frame on screen stays until the next one has painted behind it, then the next takes its place in
-  // one step: the pane is never empty, and never the white of a frame that has not painted yet.
+  // The frame on screen stays until the next one has loaded and painted behind it, then the next takes its
+  // place in one step: the pane is never empty, and never the white of a frame that has not painted yet.
   const [shown, setShown] = useState<Entry | null>(null);
   // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
   useEffect(() => {
     if (open && phone) setShown((page) => (page?.path === entry.path ? page : null));
   }, [open]);
   const next = settled && shown?.path !== entry.path ? entry : null;
-  const upcoming = useRef<HTMLIFrameElement>(null);
-  // A layout effect: the wait ends in the step that takes its frame away, so it cannot bring that page back.
+  // When the next frame was put in the pane, to tell how long its page took to load.
+  const began = useRef(0);
+  // A layout effect: the timer is cleared in the step that takes its frame away, so it cannot bring that page back.
   useLayoutEffect(() => {
     if (!next) return;
-    const show = () => setShown(next);
-    const timer = setTimeout(show, FRAME_WAIT);
-    // A page is drawn by a process of its own, out of the app's sight: only the page can tell that it has
-    // painted. The server ends it with a script that does. A page that forbids the script is shown by the timer.
-    const told = (event: MessageEvent) => {
-      if (event.data === PAINTED && event.source === upcoming.current?.contentWindow) show();
-    };
-    addEventListener("message", told);
-    return () => {
-      clearTimeout(timer);
-      removeEventListener("message", told);
-    };
+    began.current = performance.now();
+    const timer = setTimeout(() => setShown(next), FRAME_WAIT);
+    return () => clearTimeout(timer);
   }, [next?.path]);
   return (
     <>
@@ -249,18 +246,21 @@ function Frame({ entry, open, phone }: { entry: Entry; open: boolean; phone: boo
           <iframe
             // A new frame for each file: changing the address of one frame would add to the back button's history.
             key={page.path}
-            ref={page === next ? upcoming : undefined}
             class={page === next && shown ? "pv-frame pv-next" : "pv-frame"}
             // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
             // The server sends the same restriction as a header, so it holds when the page is opened directly too.
             sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
-            src={html ? `${urls.raw(page.path)}?painted` : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
+            src={html ? urls.raw(page.path) : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
             title={page.name}
-            // A PDF cannot tell that it has painted: it takes over two animation frames after it has loaded.
-            // By then a move of the cursor may have taken this frame away, and its page is not brought back.
+            // A page that has loaded may not be painted yet: it takes over after a wait for its load and two
+            // animation frames. By then a move of the cursor may have taken this frame away, and its page is not brought back.
             onLoad={
-              page === next && !html
-                ? ({ currentTarget: frame }) => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page)))
+              page === next
+                ? ({ currentTarget: frame }) =>
+                    setTimeout(
+                      () => requestAnimationFrame(() => requestAnimationFrame(() => frame.isConnected && setShown(page))),
+                      html ? Math.min((performance.now() - began.current) * PAINT_WAIT, FRAME_WAIT / 2) : 0,
+                    )
                 : undefined
             }
           />
