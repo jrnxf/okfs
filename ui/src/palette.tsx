@@ -12,8 +12,6 @@ import { isDark, setScheme, setTheme } from "./theme";
 
 /** Typing pauses this long before the server is asked. */
 const SETTLE = 40;
-/** How many recently changed files the palette lists before anything is typed. */
-const RECENT = 8;
 
 /** The modifier this platform uses for shortcuts, as it is written on the key. */
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
@@ -104,7 +102,7 @@ export function Palette() {
 
   useEffect(() => {
     const abort = new AbortController();
-    getJson<Recent>(urls.recent(RECENT), abort.signal).then((answer) => setRecent(answer.files), () => {});
+    getJson<Recent>(urls.recent, abort.signal).then((answer) => setRecent(answer.files), () => {});
     return () => abort.abort();
   }, []);
 

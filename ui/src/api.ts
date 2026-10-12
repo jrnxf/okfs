@@ -76,7 +76,7 @@ export const urls = {
   head: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&head=1`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
-  recent: (limit: number) => `/api/recent?limit=${limit}`,
+  recent: "/api/recent",
   thumb: (path: string, width: number, modified: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}`,
   /** One entry, for deleting it. */

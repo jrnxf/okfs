@@ -289,10 +289,11 @@ impl Root {
         })
     }
 
-    /// When the file `name` in the folder `dir` was last written. A link is followed:
-    /// `scan` has already checked that it leads somewhere that is shown.
+    /// When the file `name` in the folder `dir` was last written. Only a plain file has
+    /// a time here: a link is not followed and has none, and neither has a folder.
     pub fn modified(&self, dir: &Path, name: &str) -> Option<SystemTime> {
-        fs::metadata(dir.join(name)).ok()?.modified().ok()
+        let meta = fs::symlink_metadata(dir.join(name)).ok()?;
+        meta.is_file().then(|| meta.modified().ok()).flatten()
     }
 
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
@@ -408,6 +409,22 @@ mod tests {
     fn untouched(outside: &Path) -> bool {
         let kept = |name: &str| fs::read_to_string(outside.join(name)).is_ok_and(|text| text == "kept");
         kept("kept.txt") && kept("inner/kept.txt")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_plain_file_has_a_time() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, _outside) = served_beside_outside();
+        let served = root.dir();
+        fs::create_dir_all(served.join("folder")).unwrap();
+        fs::write(served.join("file.txt"), "inside").unwrap();
+        symlink(served.join("file.txt"), served.join("link.txt")).unwrap();
+
+        assert!(root.modified(served, "file.txt").is_some());
+        for name in ["link.txt", "folder", "missing.txt"] {
+            assert!(root.modified(served, name).is_none(), "{name}");
+        }
     }
 
     #[cfg(unix)]

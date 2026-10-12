@@ -450,17 +450,11 @@ async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -
     }
 }
 
-#[derive(Deserialize)]
-struct RecentQuery {
-    limit: Option<usize>,
-}
-
 /// The files written last anywhere in the tree. Answered from the index, which holds
-/// only what the search route may show.
-async fn recent(State(app): State<Arc<App>>, Query(query): Query<RecentQuery>) -> Response {
-    let limit = query.limit.unwrap_or(8).min(50);
+/// only what the search route may show and decides how many there are.
+async fn recent(State(app): State<Arc<App>>) -> Response {
     let index = Arc::clone(&app.index);
-    match tokio::task::spawn_blocking(move || index.recent(limit)).await {
+    match tokio::task::spawn_blocking(move || index.recent()).await {
         Ok(recent) => Json(recent).into_response(),
         Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the list could not be made"),
     }

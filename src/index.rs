@@ -26,14 +26,16 @@ const MAX_WAIT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_secs(30);
 /// A match on the name itself outranks a match somewhere in the path.
 const NAME_BONUS: u32 = 64;
+/// How many files are listed as the ones written last.
+const RECENT: usize = 8;
 
 struct Node {
     name: Box<str>,
     dir: bool,
     /// A real folder, not a link to one: the walk goes in.
     walk: bool,
-    /// When a file was last written, in seconds. Zero for a folder and for a time that
-    /// could not be read. Kept as 32 bits so a node stays as small as it was.
+    /// When a file was last written, in seconds. Zero for a folder, for a link, and for
+    /// a time that could not be read. Kept as 32 bits so a node stays as small as it was.
     modified: u32,
 }
 
@@ -141,58 +143,34 @@ impl Index {
 
     /// Walks the whole served folder and replaces the index with what it finds.
     pub fn build(&self) {
-        if self.ready() {
-            let fresh = self.walk("");
-            *self.tree.write().expect("the index lock") = fresh;
-        } else {
-            // The first walk of a big tree takes a while: each folder is shown as soon as
-            // it is read, so the palette has something to list meanwhile.
-            self.walk_with("", |dir, nodes| {
-                let mut tree = self.tree.write().expect("the index lock");
-                tree.count += nodes.len();
-                tree.dirs.insert(dir, nodes);
-            });
-        }
+        let fresh = self.walk("");
+        *self.tree.write().expect("the index lock") = fresh;
         self.ready.store(true, Ordering::Release);
     }
 
     fn walk(&self, from: &str) -> Tree {
         let mut tree = Tree::default();
-        self.walk_with(from, |dir, nodes| {
+        let mut todo = vec![from.to_owned()];
+        while let Some(dir) = todo.pop() {
+            let Some(nodes) = self.read(&dir) else { continue };
+            todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
             tree.count += nodes.len();
             tree.dirs.insert(dir, nodes);
-        });
+        }
         tree
     }
 
-    fn walk_with(&self, from: &str, mut keep: impl FnMut(String, Vec<Node>)) {
-        let mut todo = vec![from.to_owned()];
-        while let Some(dir) = todo.pop() {
-            let Some(nodes) = self.read(&dir, None) else { continue };
-            todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
-            keep(dir, nodes);
-        }
-    }
-
-    /// The names in one folder. A file that `old` already holds keeps its time, and only
-    /// a name that is new is looked at on the disk: a long folder is not read file by
-    /// file each time one name in it changes. `restamp` brings the times up to date.
-    fn read(&self, dir: &str, old: Option<&[Node]>) -> Option<Vec<Node>> {
+    /// The names in one folder, each file with the time the disk has for it now.
+    fn read(&self, dir: &str) -> Option<Vec<Node>> {
         let at = self.root.dir().join(dir);
         let seen = self.root.scan(&at).ok()?;
-        let kept: HashMap<&str, u32> = old
-            .into_iter()
-            .flatten()
-            .filter(|n| !n.dir && n.modified != 0)
-            .map(|n| (&*n.name, n.modified))
-            .collect();
         Some(
             seen.into_iter()
                 .map(|s| {
-                    let modified = match kept.get(s.name.as_str()) {
-                        _ if s.dir => 0,
-                        Some(&time) => time,
-                        None => seconds(self.root.modified(&at, &s.name)),
+                    let modified = if s.dir {
+                        0
+                    } else {
+                        seconds(self.root.modified(&at, &s.name))
                     };
                     Node {
                         name: s.name.into_boxed_str(),
@@ -220,12 +198,7 @@ impl Index {
             match event.kind {
                 EventKind::Access(_) => {}
                 EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => written.extend(event.paths),
-                EventKind::Remove(_) => named.extend(event.paths),
-                // A file written over by a rename has the same name and a new time.
-                _ => {
-                    written.extend(event.paths.iter().cloned());
-                    named.extend(event.paths);
-                }
+                _ => named.extend(event.paths),
             }
         }
         let dirty: HashSet<String> = named.iter().filter_map(|path| self.dir_of(path)).collect();
@@ -235,24 +208,17 @@ impl Index {
         self.restamp(written);
     }
 
-    /// Reads the time of each file again and writes it into the index: one look at the
-    /// disk per file, and one for all of them however often a file was written to
+    /// Reads the time of each written file again, the way `read` does, and writes it
+    /// into the index: one look at the disk per file, however often it was written to
     /// since the last batch.
     fn restamp(&self, written: HashSet<PathBuf>) {
         let mut stamps: HashMap<String, HashMap<String, u32>> = HashMap::new();
         for path in written {
-            let Some(rel) = path.strip_prefix(self.root.dir()).ok().and_then(Path::to_str) else {
+            let (Some(dir), Some(name)) = (self.dir_of(&path), path.file_name().and_then(|name| name.to_str())) else {
                 continue;
             };
-            let rel = rel.replace(std::path::MAIN_SEPARATOR, "/");
-            let Some(found) = self.root.resolve(&rel).filter(|found| found.meta.is_file()) else {
-                continue;
-            };
-            let time = seconds(found.meta.modified().ok());
-            stamps
-                .entry(paths::parent(&found.rel).to_owned())
-                .or_default()
-                .insert(paths::file_name(&found.rel).to_owned(), time);
+            let time = seconds(self.root.modified(&self.root.dir().join(&dir), name));
+            stamps.entry(dir).or_default().insert(name.to_owned(), time);
         }
         if stamps.is_empty() {
             return;
@@ -280,24 +246,17 @@ impl Index {
     /// Reads one folder again and folds what changed into the index. The watcher does
     /// this by itself a moment later; a delete calls it so the entry is gone at once.
     pub fn reread(&self, dir: &str) {
-        let (nodes, known) = {
+        let Some(nodes) = self.read(dir) else {
+            return self.forget(dir);
+        };
+        let known: HashSet<String> = {
             let tree = self.tree.read().expect("the index lock");
-            let old = tree.dirs.get(dir);
-            // Not indexed yet: its parent's reread will walk it.
-            if old.is_none() && !dir.is_empty() {
-                return;
+            match tree.dirs.get(dir) {
+                Some(old) => old.iter().filter(|n| n.walk).map(|n| n.name.to_string()).collect(),
+                // Not indexed yet: its parent's reread will walk it.
+                None if !dir.is_empty() => return,
+                None => HashSet::new(),
             }
-            let Some(nodes) = self.read(dir, old.map(Vec::as_slice)) else {
-                drop(tree);
-                return self.forget(dir);
-            };
-            let known: HashSet<String> = old
-                .into_iter()
-                .flatten()
-                .filter(|n| n.walk)
-                .map(|n| n.name.to_string())
-                .collect();
-            (nodes, known)
         };
         let now: HashSet<&str> = nodes.iter().filter(|n| n.walk).map(|n| &*n.name).collect();
         let added: Vec<Tree> = now
@@ -362,20 +321,18 @@ impl Index {
         tree.dirs.get(dir).map(Vec::len)
     }
 
-    /// The `limit` files written last, newest first. Read from memory: the disk is not
-    /// looked at. Folders never appear, and neither does a file whose time is unknown.
-    pub fn recent(&self, limit: usize) -> Recent {
+    /// The files written last, newest first. Read from memory: the disk is not looked
+    /// at. Folders and links never appear, and neither does a file whose time is unknown.
+    pub fn recent(&self) -> Recent {
         let tree = self.tree.read().expect("the index lock");
         // Newer is greater, and of two with the same time the earlier path is greater.
-        // The heap keeps the `limit` greatest, its least on top.
-        let mut best = BinaryHeap::with_capacity(limit.saturating_add(1).min(1024));
-        if limit > 0 {
-            for (dir, nodes) in &tree.dirs {
-                for node in nodes.iter().filter(|n| !n.dir && n.modified != 0) {
-                    best.push(Reverse((node.modified, Reverse(dir.as_str()), Reverse(&*node.name))));
-                    if best.len() > limit {
-                        best.pop();
-                    }
+        // The heap keeps the `RECENT` greatest, its least on top.
+        let mut best = BinaryHeap::with_capacity(RECENT + 1);
+        for (dir, nodes) in &tree.dirs {
+            for node in nodes.iter().filter(|n| !n.dir && n.modified != 0) {
+                best.push(Reverse((node.modified, Reverse(dir.as_str()), Reverse(&*node.name))));
+                if best.len() > RECENT {
+                    best.pop();
                 }
             }
         }

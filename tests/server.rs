@@ -774,26 +774,11 @@ async fn recent_lists_the_newest_files_across_folders_and_only_files_that_are_sh
     let app = site.router();
 
     let answer = json(&app, "/api/recent").await;
-    let mut want = vec!["sub/deep/c.rs"];
-    // The link to a file inside the folder has the file's time, and comes before it on a tie.
-    if cfg!(unix) {
-        want.push("link-in.txt");
-    }
-    want.extend(["sub/b.txt", "file2.txt", "file10.txt", "a.txt"]);
+    // The link to `sub/b.txt` is not listed: the file it leads to is, under its own name.
+    let want = ["sub/deep/c.rs", "sub/b.txt", "file2.txt", "file10.txt", "a.txt"];
     assert_eq!(recent_paths(&answer), want);
     assert_eq!(answer["files"][0]["m"], 5000);
     assert_eq!(answer["files"].as_array().unwrap().last().unwrap()["m"], 1000);
-
-    let answer = json(&app, "/api/recent?limit=2").await;
-    assert_eq!(recent_paths(&answer), want[..2]);
-    assert!(
-        json(&app, "/api/recent?limit=0").await["files"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    // The default is a short list.
-    assert!(json(&app, "/api/recent").await["files"].as_array().unwrap().len() <= 8);
 
     // The same order every time.
     for _ in 0..3 {
@@ -810,7 +795,23 @@ async fn recent_lists_the_newest_files_across_folders_and_only_files_that_are_sh
             .iter()
             .all(|path| !path.contains("link-out") && !path.contains("secret"))
     );
-    assert!(!String::from_utf8_lossy(&get(&app, "/api/recent?limit=50").await.1).contains("TOP SECRET"));
+    assert!(!String::from_utf8_lossy(&get(&app, "/api/recent").await.1).contains("TOP SECRET"));
+}
+
+#[tokio::test]
+async fn recent_stops_at_the_eight_newest_files() {
+    let site = Site::new();
+    for path in ["a.txt", "file10.txt", "file2.txt", "sub/b.txt", "sub/deep/c.rs"] {
+        written_at(site.served.join(path), 10);
+    }
+    let place = |n: u64| format!("{}/n{n:02}.txt", if n % 2 == 0 { "sub" } else { "sub/deep" });
+    for n in 0..12 {
+        fs::write(site.served.join(place(n)), "new").unwrap();
+        written_at(site.served.join(place(n)), 1000 + n);
+    }
+    let answer = json(&site.router(), "/api/recent").await;
+    let want: Vec<String> = (4..12).rev().map(place).collect();
+    assert_eq!(recent_paths(&answer), want);
 }
 
 #[tokio::test]
@@ -854,7 +855,7 @@ async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
         let app = app.clone();
         async move {
             for _ in 0..200 {
-                let answer = json(&app, "/api/recent?limit=50").await;
+                let answer = json(&app, "/api/recent").await;
                 if recent_paths(&answer).first() == Some(&want) {
                     return answer;
                 }
@@ -879,7 +880,9 @@ async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
     fs::write(site.served.join("tmp.swp"), "new").unwrap();
     written_at(site.served.join("tmp.swp"), ahead + 1000);
     fs::rename(site.served.join("tmp.swp"), site.served.join("sub/b.txt")).unwrap();
-    wait_for_first("sub/b.txt").await;
+    let answer = wait_for_first("sub/b.txt").await;
+    // The link to it stays out of the list, as it does after a fresh walk.
+    assert!(!recent_paths(&answer).contains(&"link-in.txt"));
 
     // A new file, in a new folder.
     fs::create_dir_all(site.served.join("fresh/inner")).unwrap();
@@ -890,7 +893,7 @@ async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
     fs::remove_file(site.served.join("fresh/inner/zebra.txt")).unwrap();
     fs::remove_file(site.served.join("sub/b.txt")).unwrap();
     for _ in 0..200 {
-        let answer = json(&app, "/api/recent?limit=50").await;
+        let answer = json(&app, "/api/recent").await;
         let paths = recent_paths(&answer);
         if !paths.contains(&"fresh/inner/zebra.txt") && !paths.contains(&"sub/b.txt") {
             assert_eq!(paths.first(), Some(&"a.txt"));
