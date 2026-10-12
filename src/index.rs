@@ -2,7 +2,7 @@
 //! One walk at start builds it; a file watcher keeps it fresh after that. The same
 //! watcher is what open pages follow: every change it reads is told to the feed.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -181,7 +181,7 @@ impl Index {
         let mut dirty = HashSet::new();
         let mut touched = HashSet::new();
         // A folder that came into place brought what it holds with it, and no event names that.
-        let mut arrived = HashSet::new();
+        let mut arrived = BTreeSet::new();
         for event in batch {
             let Ok(event) = event else {
                 return self.rebuild();
@@ -197,11 +197,16 @@ impl Index {
                 event.kind,
                 EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_))
             );
+            // A folder comes into place by being made or by being given its name.
+            let placed = matches!(
+                event.kind,
+                EventKind::Any | EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
+            );
             for path in event.paths {
-                if !written {
-                    if let Some(dir) = self.dir_of(&path) {
-                        dirty.insert(dir);
-                    }
+                if !written && let Some(dir) = self.dir_of(&path) {
+                    dirty.insert(dir);
+                }
+                if placed {
                     arrived.extend(self.shown_folder(&path));
                 }
                 touched.insert(path);
@@ -218,8 +223,14 @@ impl Index {
             }
         }
         // Under a name the index already holds, it still holds the folder that was there before.
+        // They come in order, a folder before what is under it, which its walk reads too.
+        let mut walked: Vec<&str> = Vec::new();
         for dir in &arrived {
-            self.walk_again(dir);
+            let under =
+                |above: &&str| above.is_empty() || dir.strip_prefix(*above).is_some_and(|rest| rest.starts_with('/'));
+            if !walked.iter().any(under) && self.walk_again(dir) {
+                walked.push(dir);
+            }
         }
         for dir in dirty {
             if self.refresh(&dir) {
@@ -682,6 +693,33 @@ mod tests {
         };
         assert_eq!(found("fresh"), ["sub/fresh.txt"]);
         assert_eq!(found("inner"), ["sub/deep/inner.txt"]);
+    }
+
+    #[test]
+    fn a_folder_told_as_changed_is_not_one_that_came_into_place() {
+        let mut site = Watched::new(false);
+        fs::write(site.served.join("sub/new.txt"), "new").unwrap();
+        // Some watchers tell of the folder too when an entry in it comes or goes.
+        let changed = EventKind::Modify(ModifyKind::Any);
+        let told = site.see(&[(CREATE, "sub/new.txt"), (changed, "sub/new.txt"), (changed, "sub")]);
+        assert_eq!(told, [folder("sub", &["new.txt"])]);
+    }
+
+    #[test]
+    fn folders_told_late_are_walked_again_with_what_is_under_them() {
+        let mut site = Watched::new(false);
+        let made = EventKind::Create(CreateKind::Folder);
+        fs::create_dir_all(site.served.join("tree/a/b")).unwrap();
+        fs::write(site.served.join("tree/a/b/leaf.txt"), "leaf").unwrap();
+        // The first walk finds the folders under it before their own events are read.
+        assert_eq!(site.see(&[(made, "tree")]), [folder("", &[]), Change::Sync]);
+        fs::write(site.served.join("tree/a/b/more.txt"), "more").unwrap();
+        assert_eq!(site.see(&[(made, "tree/a"), (made, "tree/a/b")]), [Change::Sync]);
+        assert_eq!(site.index.child_count("tree/a"), Some(1));
+        assert_eq!(site.index.child_count("tree/a/b"), Some(2));
+        let hits = site.index.search("more", 10).hits;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "tree/a/b/more.txt");
     }
 
     #[test]
