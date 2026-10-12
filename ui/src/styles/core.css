@@ -120,7 +120,10 @@ kbd {
 .pv-center img, .pv-center video { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; border-radius: min(var(--radius), 4px); display: block; }
 .pv-center img { box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
 .pv-ph { width: min(100%, 520px); aspect-ratio: 3/2; border-radius: var(--radius); }
-.pv-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; display: block; }
+/* A frame is see-through until its page has loaded, then white behind a page that sets no background.
+   The light scheme keeps the browser from painting a backdrop of its own behind the page in a dark theme. */
+.pv-frame { flex: 1; min-height: 0; width: 100%; border: 0; display: block; color-scheme: light; }
+.pv-loaded { background: #fff; }
 /* A rewritten file loading behind the frame on screen, at the size it will be shown at. */
 .pv-next { position: absolute; inset: 0; height: 100%; visibility: hidden; }
 .pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
