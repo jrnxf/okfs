@@ -22,7 +22,7 @@ const EAGER_FRAME_BYTES = 256 * 1024;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
 /**
- * A page, or the preview before a player, stays in the pane this long after the cursor has left it, while the
+ * A page, or the preview before a video, stays in the pane this long after the cursor has left it, while the
  * next one gets ready. Past it the pane shows what main always did: under a held key it would otherwise show
  * a file from several back.
  */
@@ -427,7 +427,7 @@ function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report
   );
 }
 
-/** `waiting` keeps a player off screen until it has something to show; it says so through `onReady`. */
+/** `waiting` keeps a video off screen until it has its first picture; it says so through `onReady`. */
 function Media({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boolean; onReady: () => void }) {
   const [broken, setBroken] = useState("");
   const settled = useUnhurried();
@@ -450,8 +450,6 @@ function Media({ entry, stamp, report, waiting, onReady }: Shown & { waiting: bo
     const media = event.currentTarget;
     const frame = media instanceof HTMLVideoElement && media.videoWidth ? [`${media.videoWidth} × ${media.videoHeight}`] : [];
     report(entry.path, Number.isFinite(media.duration) ? [...frame, fmt.duration(media.duration)] : frame);
-    // A sound file has nothing more to show than its length. A video is ready with its first picture.
-    if (media instanceof HTMLAudioElement) onReady();
   };
   if (entry.kind === "audio") {
     return (
@@ -802,12 +800,12 @@ const slot = (entry: Entry): string => (entry.kind === "video" || entry.kind ===
 
 export function Preview(props: Shown) {
   const { entry } = props;
-  // A player has nothing to show until its file has answered. The preview before it stays up until then, or
-  // until `KEEP` is over, and the player takes its place at that moment: it is never shown later than it would be.
+  // A video has nothing to show until its first picture is here. The preview before it stays up until then,
+  // or until `KEEP` is over, and the player takes its place at that moment: the picture is never shown later
+  // than it would be. A sound player looks the same before and after its file answers, so it is shown at once.
   const last = useRef(props);
   const [ready, setReady] = useState("");
-  const player = entry.kind === "video" || entry.kind === "audio";
-  const waiting = player && ready !== entry.path && last.current.entry.path !== entry.path;
+  const waiting = entry.kind === "video" && ready !== entry.path && last.current.entry.path !== entry.path;
   if (!waiting) last.current = props;
   useEffect(() => {
     if (!waiting) return;
