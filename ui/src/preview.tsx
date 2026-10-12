@@ -22,10 +22,11 @@ const EAGER_FRAME_BYTES = 256 * 1024;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
 /**
- * A page stays in the pane this long after the cursor has left it, while the next one is on its way. Past it
- * the pane shows its backdrop: under a held key it would otherwise show a page from several files back.
+ * A page, or the preview before a player, stays in the pane this long after the cursor has left it, while the
+ * next one gets ready. Past it the pane shows what main always did: under a held key it would otherwise show
+ * a file from several back.
  */
-const KEEP_PAGE = 100;
+const KEEP = 100;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -414,7 +415,8 @@ function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report
   );
 }
 
-function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
+/** `waiting` keeps a player off screen until it has something to show; it says so through `onReady`. */
+function Media({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boolean; onReady: () => void }) {
   const [broken, setBroken] = useState("");
   const settled = useUnhurried();
   // A rewritten file is loaded again only once nothing is playing: a player is never cut off.
@@ -425,19 +427,23 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
   }, [stamp, playing]);
   const src = settled ? `${urls.raw(entry.path)}?v=${loaded}` : undefined;
   if (broken === src) return <Card entry={entry} line="This browser cannot play this file" />;
+  const center = waiting ? "pv-center pv-wait" : "pv-center";
   const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
   const onError = () => {
     setPlaying(false);
     setBroken(src ?? "");
+    onReady();
   };
   const onMeta = (event: { currentTarget: HTMLMediaElement }) => {
     const media = event.currentTarget;
     const frame = media instanceof HTMLVideoElement && media.videoWidth ? [`${media.videoWidth} × ${media.videoHeight}`] : [];
     report(entry.path, Number.isFinite(media.duration) ? [...frame, fmt.duration(media.duration)] : frame);
+    // A sound file has nothing more to show than its length. A video is ready with its first picture.
+    if (media instanceof HTMLAudioElement) onReady();
   };
   if (entry.kind === "audio") {
     return (
-      <div class="pv-center">
+      <div class={center}>
         <div class="pv-audio">
           <KindIcon kind="audio" />
           <audio src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
@@ -446,8 +452,8 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
     );
   }
   return (
-    <div class="pv-center">
-      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
+    <div class={center}>
+      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onLoadedData={onReady} onError={onError} {...state} />
     </div>
   );
 }
@@ -518,11 +524,11 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
     if (sent === want) return;
     const same = sent.startsWith(`${address}\n`);
     if (sent && !same && !at.current.left) at.current.left = now;
-    const stale = sent !== "" && !same && now - at.current.left > KEEP_PAGE;
+    const stale = sent !== "" && !same && now - at.current.left > KEEP;
     if (!go) {
       // Nothing is on its way to take the old page's place: it goes when its time is up.
       if (!sent) return;
-      const timer = setTimeout(() => setMade((count) => count + 1), Math.max(0, at.current.left + KEEP_PAGE - now));
+      const timer = setTimeout(() => setMade((count) => count + 1), Math.max(0, at.current.left + KEEP - now));
       return () => clearTimeout(timer);
     }
     if (stale) {
@@ -748,7 +754,13 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
 }
 
 /** `stamp` changes when the file is rewritten: what is loaded by address is then loaded again. */
-export function Preview({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
+interface Shown {
+  entry: Entry;
+  stamp: string;
+  report: Report;
+}
+
+function Kind({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boolean; onReady: () => void }) {
   switch (entry.kind) {
     case "folder":
       return <Folder entry={entry} report={report} />;
@@ -756,11 +768,10 @@ export function Preview({ entry, stamp, report }: { entry: Entry; stamp: string;
       return <Picture entry={entry} stamp={stamp} report={report} />;
     case "video":
     case "audio":
-      return <Media key={entry.path} entry={entry} stamp={stamp} report={report} />;
+      return <Media entry={entry} stamp={stamp} report={report} waiting={waiting} onReady={onReady} />;
     case "pdf":
-      return <Frame key={entry.path} entry={entry} stamp={stamp} />;
+      return <Frame entry={entry} stamp={stamp} />;
     case "html":
-      // Not keyed by the file: one frame goes from page to page. See `Page`.
       return <Page entry={entry} stamp={stamp} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
@@ -768,4 +779,33 @@ export function Preview({ entry, stamp, report }: { entry: Entry; stamp: string;
     default:
       return <Text entry={entry} report={report} />;
   }
+}
+
+/**
+ * What tells one preview from the next. A player and a PDF are made anew for each file. Every other kind
+ * goes from file to file as it is, which is how a page, a picture and a text keep the last one up until the
+ * next is here: see `Page`, `Picture` and `useLoaded`.
+ */
+const slot = (entry: Entry): string => (entry.kind === "video" || entry.kind === "audio" || entry.kind === "pdf" ? entry.path : "");
+
+export function Preview(props: Shown) {
+  const { entry } = props;
+  // A player has nothing to show until its file has answered. The preview before it stays up until then, or
+  // until `KEEP` is over, and the player takes its place at that moment: it is never shown later than it would be.
+  const last = useRef(props);
+  const [ready, setReady] = useState("");
+  const player = entry.kind === "video" || entry.kind === "audio";
+  const waiting = player && ready !== entry.path && last.current.entry.path !== entry.path;
+  if (!waiting) last.current = props;
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setReady(entry.path), KEEP);
+    return () => clearTimeout(timer);
+  }, [waiting, entry.path]);
+  return (
+    <>
+      {waiting && <Kind key={slot(last.current.entry)} {...last.current} waiting={false} onReady={() => undefined} />}
+      <Kind key={slot(entry)} {...props} waiting={waiting} onReady={() => setReady(entry.path)} />
+    </>
+  );
 }
