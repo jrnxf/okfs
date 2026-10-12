@@ -7,7 +7,8 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use qrcode::{Color, EcLevel, QrCode};
+use qrcode::render::unicode::Dense1x2;
+use qrcode::{EcLevel, QrCode};
 
 /// An address found on this machine, and whether its interface is up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,38 +114,21 @@ pub fn scan(bind: IpAddr, addresses: &[IpAddr], port: u16, terminal: bool) -> Sc
 const PAINT: &str = "\x1b[38;5;16;48;5;231m";
 const RESET: &str = "\x1b[0m";
 
-/// Modules of quiet zone on every side, as the QR standard asks.
-const QUIET: usize = 4;
-
 /// The code for `text` as terminal lines of half blocks, two modules to a line.
 fn qr_lines(text: &str) -> Option<Vec<String>> {
     let code = QrCode::with_error_correction_level(text, EcLevel::L).ok()?;
-    let width = code.width();
-    let side = width + 2 * QUIET;
-    let dark = |x: usize, y: usize| {
-        let inside = (QUIET..QUIET + width).contains(&x) && (QUIET..QUIET + width).contains(&y);
-        inside && code[(x - QUIET, y - QUIET)] == Color::Dark
-    };
-    let lines = (0..side)
-        .step_by(2)
-        .map(|y| {
-            let cells: String = (0..side)
-                .map(|x| match (dark(x, y), dark(x, y + 1)) {
-                    (true, true) => '█',
-                    (true, false) => '▀',
-                    (false, true) => '▄',
-                    (false, false) => ' ',
-                })
-                .collect();
-            format!("{PAINT}{cells}{RESET}")
-        })
-        .collect();
-    Some(lines)
+    let image = code.render::<Dense1x2>().build();
+    Some(image.lines().map(|line| format!("{PAINT}{line}{RESET}")).collect())
 }
 
 #[cfg(test)]
 mod tests {
+    use qrcode::Color;
+
     use super::*;
+
+    /// Modules of quiet zone on every side, as the QR standard asks.
+    const QUIET: usize = 4;
 
     fn up(ip: &str) -> Found {
         Found {
