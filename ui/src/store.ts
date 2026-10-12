@@ -402,7 +402,7 @@ export class Store {
       await deleteEntry(doomed.path);
     } catch (error) {
       // Part of a folder may be gone all the same: the list, the pane and the dialog show what is there now.
-      await this.showDir(s.path, { open: s.open?.name, history: "none" }).catch(() => undefined);
+      await this.showDir(s.path, { open: s.open?.name, listing: true, history: "none" }).catch(() => undefined);
       s.doomed = (here ? this.here() : s.all.find((entry) => entry.path === doomed.path)) ?? doomed;
       forgetAnswers();
       this.emit();
@@ -414,25 +414,25 @@ export class Store {
         const items = above?.entries ?? [];
         const names = [...items.filter((item) => item.d), ...items.filter((item) => !item.d)].map((item) => item.n);
         const was = names.indexOf(doomed.name);
-        await this.showDir(parentOf(doomed.path), { select: names[was + 1] ?? names[was - 1], history: "replace" });
+        await this.showDir(parentOf(doomed.path), { select: names[was + 1] ?? names[was - 1], listing: true, history: "replace" });
         return;
       }
       const at = s.entries.findIndex((entry) => entry.path === doomed.path);
       if (at < 0) {
-        await this.showDir(s.path, { history: "none" });
+        await this.showDir(s.path, { listing: true, history: "none" });
         return;
       }
       // The cursor stays where it is, on what came after; at the end of the list it steps back.
       const beside = s.entries[at + 1] ?? s.entries[at - 1];
       if (s.open?.path !== doomed.path) {
-        await this.showDir(s.path, { select: beside?.name, history: "replace" });
+        await this.showDir(s.path, { select: beside?.name, listing: true, history: "replace" });
         return;
       }
       // An open file gives its place to the next file, as stepping does. With none left, the list is back.
       const files = this.files();
       const turn = files.findIndex((entry) => entry.path === doomed.path);
       const next = files[turn + 1] ?? files[turn - 1];
-      await this.showDir(s.path, next ? { open: next.name, history: "replace" } : { select: beside?.name, history: "replace" });
+      await this.showDir(s.path, { open: next?.name, select: beside?.name, listing: true, history: "replace" });
     } finally {
       s.doomed = null;
       // After the list is back, so that nothing on screen asks about what is gone.
