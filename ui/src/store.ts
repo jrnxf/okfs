@@ -173,10 +173,8 @@ export class Store {
     if (mode === "none") return;
     const url = urls.view(path, dir) + location.search;
     if (mode === "push" && url !== location.pathname + location.search) return history.pushState(state, "", url);
-    // A replaced entry keeps what it remembered, except whether its folder stands for the listing:
-    // a delete can leave the list showing in a folder that would otherwise open its index page.
-    const kept = state.listing === undefined ? history.state : { ...mark(), listing: state.listing };
-    history.replaceState(mode === "push" ? state : kept, "", url);
+    // A replaced file entry keeps what it remembered; a folder's entry takes only the mark it is given.
+    history.replaceState(mode === "push" || dir ? state : history.state, "", url);
   }
 
   /**
@@ -313,7 +311,7 @@ export class Store {
       return;
     }
     s.open = null;
-    history.replaceState({ listing: this.hasIndex() }, "", urls.view(s.path, true) + location.search);
+    this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
     this.emit();
   }
 
