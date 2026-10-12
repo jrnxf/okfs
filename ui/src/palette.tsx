@@ -42,7 +42,6 @@ interface Menu {
 type Entry = Command | { title: string; menu: () => Menu };
 
 function themeMenu(): Menu {
-  const was = active.theme;
   return {
     title: "Theme",
     placeholder: "Filter themes",
@@ -51,8 +50,8 @@ function themeMenu(): Menu {
       peek: () => previewTheme(theme.id),
       run: () => setTheme(theme.id),
     })),
-    start: Math.max(0, config.themes.findIndex((theme) => theme.id === was)),
-    restore: () => previewTheme(was),
+    start: Math.max(0, config.themes.findIndex((theme) => theme.id === active.theme)),
+    restore: () => previewTheme(),
   };
 }
 
