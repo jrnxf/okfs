@@ -43,10 +43,15 @@ export function applyTheme(): void {
   }
 }
 
-export function setTheme(id: string): void {
+/** Shows a theme without saving it, as the palette does while a theme is only highlighted. */
+export function previewTheme(id: string): void {
   active.theme = id;
-  prefs.set("theme", id);
   applyTheme();
+}
+
+export function setTheme(id: string): void {
+  prefs.set("theme", id);
+  previewTheme(id);
 }
 
 export function setScheme(scheme: Scheme): void {

@@ -8,7 +8,7 @@ import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
-import { isDark, setScheme, setTheme } from "./theme";
+import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
 
 /** Typing pauses this long before the server is asked. */
 const SETTLE = 40;
@@ -22,9 +22,41 @@ interface Command {
   title: string;
   key?: string;
   run: () => void;
+  /** In a nested list: shows the choice while its row is only highlighted. */
+  peek?: () => void;
 }
 
-function commands(): Command[] {
+/** A list that a row opens inside the palette, in place of the top one. */
+interface Menu {
+  title: string;
+  /** What the input says while the list is up. */
+  placeholder: string;
+  items: Command[];
+  /** The row the highlight starts on. */
+  start: number;
+  /** Undoes what `peek` showed, when the list is left without a choice. */
+  restore?: () => void;
+}
+
+/** A row of the top list: it runs, or it opens a nested list. */
+type Entry = Command | { title: string; menu: () => Menu };
+
+function themeMenu(): Menu {
+  const was = active.theme;
+  return {
+    title: "Theme",
+    placeholder: "Filter themes",
+    items: config.themes.map((theme) => ({
+      title: theme.name,
+      peek: () => previewTheme(theme.id),
+      run: () => setTheme(theme.id),
+    })),
+    start: Math.max(0, config.themes.findIndex((theme) => theme.id === was)),
+    restore: () => previewTheme(was),
+  };
+}
+
+function commands(): Entry[] {
   const { s } = store;
   const under = s.open ?? store.cur();
   const here = store.here();
@@ -40,7 +72,7 @@ function commands(): Command[] {
       key: "t",
       run: () => setScheme(isDark() ? "light" : "dark"),
     },
-    ...config.themes.map((theme) => ({ title: `Theme: ${theme.name}`, run: () => setTheme(theme.id) })),
+    { title: "Theme", menu: themeMenu },
     { title: "Go to the top folder", run: () => void store.showDir("") },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
     ...deletes,
@@ -83,7 +115,7 @@ function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; from?: n
   return <>{out}</>;
 }
 
-type Row = { command: Command; idx: number[] } | { hit: Hit } | { recent: Changed };
+type Row = { command: Entry; idx: number[] } | { hit: Hit } | { recent: Changed };
 
 export function Palette() {
   const [value, setValue] = useState("");
@@ -94,9 +126,16 @@ export function Palette() {
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
 
-  const asCommand = value.startsWith(">");
-  const query = value.replace(/^>\s*/, "").trim().toLowerCase();
-  const searching = !asCommand && query !== "";
+  // The nested list that is up, with the top list's input and highlight to go back to.
+  const [nested, setNested] = useState<{ menu: Menu; value: string; selected: number } | null>(null);
+  const chosen = useRef(false);
+  const menu = nested?.menu;
+
+  // Inside a nested list the input only filters that list.
+  const asCommand = !menu && value.startsWith(">");
+  const query = (menu ? value : value.replace(/^>\s*/, "")).trim().toLowerCase();
+  const searching = !menu && !asCommand && query !== "";
+  const asked = searching ? query : "";
 
   useEffect(() => input.current?.focus(), []);
 
@@ -111,41 +150,85 @@ export function Palette() {
     const abort = new AbortController();
     const timer = setTimeout(
       () => {
-        getJson<Found>(urls.search(searching ? query : ""), abort.signal).then(setFound, () => {});
+        getJson<Found>(urls.search(asked), abort.signal).then(setFound, () => {});
       },
-      searching ? SETTLE : 0,
+      asked ? SETTLE : 0,
     );
     return () => {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [query, searching]);
+  }, [asked]);
 
-  let rows: Row[];
-  if (searching) {
-    rows = (found?.hits ?? []).map((hit) => ({ hit }));
-  } else {
-    const matched = commands().flatMap((command) => {
+  const matching = (entries: Entry[]): Row[] => {
+    const matched = entries.flatMap((command) => {
       const match = query ? fuzzy(query, command.title) : { score: 0, idx: [] };
       return match ? [{ command, ...match }] : [];
     });
     if (query) matched.sort((a, b) => b.score - a.score);
+    return matched;
+  };
+  let rows: Row[];
+  if (searching) {
+    rows = (found?.hits ?? []).map((hit) => ({ hit }));
+  } else if (menu) {
+    rows = matching(menu.items);
+  } else {
     // Nothing typed: the newest files first, then the commands. `>` means commands only.
     const newest: Row[] = value.trim() === "" ? recent.map((file) => ({ recent: file })) : [];
-    rows = [...newest, ...matched];
+    rows = [...newest, ...matching(commands())];
   }
   const at = Math.min(selected, Math.max(0, rows.length - 1));
+  const under = rows[at];
+  const lit = menu && under && "command" in under && "run" in under.command ? under.command : undefined;
+
+  // The highlighted row of a nested list shows its choice at once. With no row left, nothing is shown.
+  useEffect(() => {
+    if (!menu) return;
+    if (lit?.peek) lit.peek();
+    else menu.restore?.();
+  }, [menu, lit]);
+
+  // Leaving a nested list any way but by choosing from it undoes what its highlight showed.
+  useEffect(
+    () => () => {
+      if (!chosen.current) menu?.restore?.();
+    },
+    [menu],
+  );
 
   useLayoutEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [at, rows.length]);
 
+  const enter = (next: Menu) => {
+    setNested({ menu: next, value, selected: at });
+    setValue("");
+    setSelected(next.start);
+    input.current?.focus();
+  };
+
+  const back = () => {
+    if (!nested) return;
+    setValue(nested.value);
+    setSelected(nested.selected);
+    setNested(null);
+    input.current?.focus();
+  };
+
   const pick = (index: number) => {
     const row = rows[index];
     if (!row) return;
+    if ("command" in row) {
+      const { command } = row;
+      if ("menu" in command) return enter(command.menu());
+      chosen.current = true;
+      store.setPalette(false);
+      command.run();
+      return;
+    }
     store.setPalette(false);
-    if ("command" in row) row.command.run();
-    else if ("recent" in row) void store.go(row.recent.path, false);
+    if ("recent" in row) void store.go(row.recent.path, false);
     else void store.go(row.hit.path, row.hit.dir);
   };
 
@@ -154,7 +237,9 @@ export function Palette() {
     if (key === "ArrowDown" || (ctrlKey && key === "n")) setSelected(Math.min(at + 1, rows.length - 1));
     else if (key === "ArrowUp" || (ctrlKey && key === "p")) setSelected(Math.max(at - 1, 0));
     else if (key === "Enter") pick(at);
+    else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);
+    else if (key === "Backspace" && menu && value === "") back();
     else return;
     event.preventDefault();
   };
@@ -167,15 +252,22 @@ export function Palette() {
 
   return (
     <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && store.setPalette(false)}>
-      <div class="pal" role="dialog" aria-label="Find anything">
+      <div class="pal" role="dialog" aria-label={menu ? menu.title : "Find anything"}>
         <div class="pal-in">
-          <Icon name="search" />
+          {menu ? (
+            <button class="btn pal-up" aria-label={`${menu.title}: back to everything`} onClick={back}>
+              <Icon name="left" />
+              {menu.title}
+            </button>
+          ) : (
+            <Icon name="search" />
+          )}
           <input
             ref={input}
             type="text"
             name="find"
             value={value}
-            placeholder={`Find a file or folder anywhere in ${config.root}`}
+            placeholder={menu ? menu.placeholder : `Find a file or folder anywhere in ${config.root}`}
             spellcheck={false}
             autocomplete="off"
             onInput={(event) => {
@@ -192,18 +284,22 @@ export function Palette() {
             const common = { class: "pal-row", "aria-selected": index === at, onClick: () => pick(index) };
             const group = groupOf(row);
             const previous = rows[index - 1];
-            const label = (!previous || groupOf(previous) !== group) && <div class="pal-group label">{group}</div>;
+            // A nested list is named beside the input, so its rows go under no label.
+            const label = !menu && (!previous || groupOf(previous) !== group) && (
+              <div class="pal-group label">{group}</div>
+            );
             if ("command" in row) {
+              const { command } = row;
               return (
-                <Fragment key={`command:${row.command.title}`}>
+                <Fragment key={`command:${command.title}`}>
                   {label}
                   <div {...common}>
-                    <Icon name="right" />
                     <span class="nm trunc">
-                      <Marked text={row.command.title} idx={row.idx} />
+                      <Marked text={command.title} idx={row.idx} />
                     </span>
                     <span class="dir" />
-                    {row.command.key && <kbd>{row.command.key}</kbd>}
+                    {"key" in command && command.key && <kbd>{command.key}</kbd>}
+                    {"menu" in command && <Icon name="right" class="pal-more" />}
                   </div>
                 </Fragment>
               );
@@ -253,11 +349,17 @@ export function Palette() {
             <kbd>↓</kbd> move
           </span>
           <span>
-            <kbd>↵</kbd> open
+            <kbd>↵</kbd> {menu ? "choose" : "open"}
           </span>
-          <span>
-            <kbd>&gt;</kbd> commands
-          </span>
+          {menu ? (
+            <span>
+              <kbd>esc</kbd> back
+            </span>
+          ) : (
+            <span>
+              <kbd>&gt;</kbd> commands
+            </span>
+          )}
           <span class="sp" />
           {found && (
             <span class="num">
