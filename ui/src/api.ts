@@ -47,6 +47,17 @@ export interface Found {
   ready: boolean;
 }
 
+/** A file among the most recently written, with its time in seconds. */
+export interface Changed {
+  path: string;
+  m: number;
+}
+
+export interface Recent {
+  /** Newest first. */
+  files: Changed[];
+}
+
 export interface Archive {
   entries: { name: string; size: number; dir: boolean }[];
   total: number;
@@ -65,6 +76,7 @@ export const urls = {
   head: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&head=1`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
+  recent: "/api/recent",
   thumb: (path: string, width: number, modified: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}`,
   /** One entry, for deleting it. */

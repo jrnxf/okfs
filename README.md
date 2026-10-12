@@ -10,7 +10,7 @@
 
 - A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
-- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree.
+- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, and lists the most recently changed files before you type.
 - Themes: one CSS file each, five built in, light and dark.
 - Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
 
