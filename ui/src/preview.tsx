@@ -1,12 +1,13 @@
 // What the right pane shows for the file or folder under the cursor.
 
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Archive, type Listing, type TextPreview, getJson, pathOf, urls } from "./api";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
 import type { Entry } from "./store";
+import { isDark } from "./theme";
 
 /** Wait this long before asking the server, so holding `j` does not ask for every file passed. */
 const SETTLE = 25;
@@ -14,6 +15,28 @@ const SETTLE = 25;
 const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
+/**
+ * A page that has not loaded after this long counts as ready all the same. Long enough for a heavy local
+ * page, short enough that the page before it is not taken for the new file.
+ */
+const FRAME_WAIT = 500;
+/**
+ * A page in a frame is drawn by a process of its own, which says when the page has loaded but not when it has
+ * painted. In the dark scheme that does not matter: a page lies on top of the ones before it and is
+ * see-through until it paints, so the browser itself makes the change, and the pages beneath are only taken
+ * away this long after it is ready. A page that sets no background and declares no dark scheme still paints
+ * a white one there, because its colour scheme differs from the frame's. One that declares a dark scheme
+ * stays see-through, and is drawn over the page beneath until that page is taken away.
+ */
+const DROP_WAIT = 250;
+/**
+ * In the light scheme a page that sets no background is see-through for good, and on top it would be drawn
+ * over the page before it. So there the next page loads beneath the one on screen and takes over after a
+ * wait of this many times its load time. That is a guess. Measured: with no wait a page of 1 KB shows white
+ * on most moves, with once the load time a page of 400 KB does on one move in six, with twice on about
+ * three moves in a hundred. Three times is no better.
+ */
+const PAINT_WAIT = 2;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -228,27 +251,70 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
   );
 }
 
-function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
+/** What one frame holds: a file as it was when it was loaded. A rewritten file has a new stamp, and is a new page. */
+interface Page {
+  id: string;
+  entry: Entry;
+  /** When the page was put in the pane. */
+  at: number;
+}
+
+function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  // A rewritten file loads in a frame of its own, behind the one on screen, and takes its place once it
-  // is ready: a save never shows an empty pane.
-  const [shown, setShown] = useState(stamp);
-  if (!settled) return null;
-  const html = entry.kind === "html";
+  // The pages in the pane, in the order they were asked for. A page is another file, or the same file
+  // rewritten. Dark scheme: each is laid on top of the one before it, and the pane shows the newest that has
+  // painted. Light scheme: the next page is laid under the one on screen, which stays until the next takes
+  // over, and a page still beneath when the cursor moves on is taken away. So the pane does not go empty
+  // between two pages, or to the white of a frame that has not painted yet, except where a wait is too
+  // short: see `FRAME_WAIT` and `PAINT_WAIT`.
+  const [pages, setPages] = useState<Page[]>([]);
+  // A page that is ready has the pages before it taken away, after a wait: see `DROP_WAIT` and `PAINT_WAIT`.
+  // It is ready when it has loaded, or `FRAME_WAIT` after it was put in the pane.
+  const ready = (page: Page, loaded: boolean) => {
+    const wait = isDark() ? DROP_WAIT : loaded ? (performance.now() - page.at) * PAINT_WAIT : 0;
+    setTimeout(() => setPages((old) => (old.indexOf(page) > 0 ? old.slice(old.indexOf(page)) : old)), wait);
+  };
+  const id = `${entry.path}\n${stamp}`;
+  useLayoutEffect(() => {
+    if (!settled) {
+      if (!isDark()) setPages((old) => (old.length > 1 ? old.slice(0, 1) : old));
+      return;
+    }
+    const page: Page = { id, entry, at: performance.now() };
+    setTimeout(() => ready(page, false), FRAME_WAIT);
+    setPages((old) => {
+      // The cursor is back on a page that is still in the pane: it is the top page again.
+      const kept = old.findIndex((had) => had.id === id);
+      if (kept >= 0) return kept === old.length - 1 ? old : old.slice(0, kept + 1);
+      // Dark scheme: nothing that may have painted is taken away for a new page, up to four pages; past that
+      // the oldest above the bottom one goes. Light scheme: only the page on screen is kept.
+      const under = !isDark() ? old.slice(0, 1) : old.length < 4 ? old : [old[0] as Page, ...old.slice(2)];
+      return [...under, page];
+    });
+  }, [settled && id]);
+  // On a phone the pane is hidden until a file is opened: a page that loaded out of sight is not kept for another file.
+  useEffect(() => {
+    if (open && phone) setPages((old) => (old.every((page) => page.entry.path === entry.path) ? old : old.filter((page) => page.entry.path === entry.path)));
+  }, [open]);
+  // Oldest first, and a page keeps its place in that order: a frame moved in the pane would load again.
   return (
     <>
-      {(stamp === shown ? [shown] : [shown, stamp]).map((version) => (
-        <iframe
-          key={version}
-          class={version === shown ? "pv-frame" : "pv-frame pv-next"}
-          // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
-          // The server sends the same restriction as a header, so it holds when the page is opened directly too.
-          sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
-          src={html ? urls.raw(entry.path) : `${urls.raw(entry.path)}#navpanes=0&view=FitH`}
-          title={entry.name}
-          onLoad={version === shown ? undefined : () => setShown(version)}
-        />
-      ))}
+      {pages.map((page, layer) => {
+        const html = page.entry.kind === "html";
+        return (
+          <iframe
+            // A new frame for each page: changing the address of one frame would add to the back button's history.
+            key={page.id}
+            class={layer ? "pv-frame pv-next" : "pv-frame"}
+            // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
+            // The server sends the same restriction as a header, so it holds when the page is opened directly too.
+            sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
+            src={html ? urls.raw(page.entry.path) : `${urls.raw(page.entry.path)}#navpanes=0&view=FitH`}
+            title={page.entry.name}
+            onLoad={() => ready(page, true)}
+          />
+        );
+      })}
     </>
   );
 }
@@ -423,8 +489,11 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
   }
 }
 
-/** `stamp` changes when the file is rewritten: what is loaded by address is then loaded again. */
-export function Preview({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
+/**
+ * `stamp` changes when the file is rewritten: what is loaded by address is then loaded again. `open` and
+ * `phone` tell a frame whether the pane was in sight while its page loaded.
+ */
+export function Preview({ entry, stamp, report, open, phone }: { entry: Entry; stamp: string; report: Report; open: boolean; phone: boolean }) {
   switch (entry.kind) {
     case "folder":
       return <Folder entry={entry} report={report} />;
@@ -435,8 +504,8 @@ export function Preview({ entry, stamp, report }: { entry: Entry; stamp: string;
       return <Media key={entry.path} entry={entry} stamp={stamp} report={report} />;
     case "pdf":
     case "html":
-      // A new frame for each file: changing the address of one frame would add to the back button's history.
-      return <Frame key={entry.path} entry={entry} stamp={stamp} />;
+      // One `Frame` for every file, so it can keep the page on screen while the next one loads.
+      return <Frame entry={entry} stamp={stamp} open={open} phone={phone} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;
