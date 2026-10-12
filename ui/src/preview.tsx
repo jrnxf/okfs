@@ -233,6 +233,8 @@ function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
   // A rewritten file loads in a frame of its own, behind the one on screen, and takes its place once it
   // is ready: a save never shows an empty pane.
   const [shown, setShown] = useState(stamp);
+  // Until the first frame has loaded, the pane shows through it: the wait for a page is never white.
+  const [loaded, setLoaded] = useState(false);
   if (!settled) return null;
   const html = entry.kind === "html";
   return (
@@ -240,13 +242,13 @@ function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
       {(stamp === shown ? [shown] : [shown, stamp]).map((version) => (
         <iframe
           key={version}
-          class={version === shown ? "pv-frame" : "pv-frame pv-next"}
+          class={version !== shown ? "pv-frame pv-next" : loaded ? "pv-frame pv-loaded" : "pv-frame"}
           // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
           // The server sends the same restriction as a header, so it holds when the page is opened directly too.
           sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
           src={html ? urls.raw(entry.path) : `${urls.raw(entry.path)}#navpanes=0&view=FitH`}
           title={entry.name}
-          onLoad={version === shown ? undefined : () => setShown(version)}
+          onLoad={version === shown ? () => setLoaded(true) : () => setShown(version)}
         />
       ))}
     </>
