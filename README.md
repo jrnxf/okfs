@@ -19,15 +19,16 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/palette-dark.webp"><img src="docs/screenshots/palette-light.webp" alt="The palette finding files across the tree" width="49%"></picture>
 </p>
 
-## Install from source
+## Install
 
-With nix and nothing else installed, one command builds this checkout and puts `okfs` on your `PATH`:
+With nix, run it without installing anything, or put it on your `PATH`:
 
 ```sh
-nix develop -c cargo install --path . --locked    # installs to ~/.cargo/bin
+nix run github:jrnxf/okfs -- ~/photos   # run it once
+nix profile install github:jrnxf/okfs   # or install it
 ```
 
-Run it again after a pull or an edit to get the latest.
+`nix profile upgrade okfs` brings an installed copy up to date.
 
 Without nix you need a Rust toolchain and [bun](https://bun.sh). Bun builds the page while cargo builds the binary.
 
