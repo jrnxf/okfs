@@ -13,6 +13,12 @@ import type { Entry } from "./store";
  * they wait until the key is up or the cursor has stopped for this long.
  */
 const SETTLE_HEAVY = 90;
+/**
+ * An HTML page smaller than this starts its frame as the cursor reaches it, even under a held key, so small
+ * pages show as they pass. A larger page would start a download of megabytes for each page passed, so it waits
+ * like a PDF does.
+ */
+const EAGER_FRAME_BYTES = 256 * 1024;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
 /** Children of one JSON object or array shown before "show more". */
@@ -277,10 +283,11 @@ document.addEventListener(
 
 /**
  * True once a frame or a player may start. That is with the move itself, by a click or one press of a key.
- * Under a held key it waits: see `SETTLE_HEAVY`. For a component that is made anew for each file.
+ * Under a held key it waits: see `SETTLE_HEAVY`, unless `light` says it is cheap enough to start at once.
+ * For a component that is made anew for each file.
  */
-function useUnhurried(): boolean {
-  const [go, setGo] = useState(!held);
+function useUnhurried(light = false): boolean {
+  const [go, setGo] = useState(light || !held);
   useEffect(() => {
     if (go) return;
     const start = () => setGo(true);
@@ -419,7 +426,7 @@ function Media({ entry, stamp, report }: { entry: Entry; stamp: string; report: 
 }
 
 function Frame({ entry, stamp }: { entry: Entry; stamp: string }) {
-  const settled = useUnhurried();
+  const settled = useUnhurried(entry.kind === "html" && entry.size < EAGER_FRAME_BYTES);
   // A rewritten file loads in a frame of its own, behind the one on screen, and takes its place once it
   // is ready: a save never shows an empty pane.
   const [shown, setShown] = useState(stamp);
