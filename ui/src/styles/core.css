@@ -111,13 +111,15 @@ kbd {
 .ask-do .btn { height: calc(30px * var(--density)); padding: 0 calc(12px * var(--density)); }
 
 /* preview content */
-.pv { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+.pv { height: 100%; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .pv-scroll { flex: 1; min-height: 0; overflow: auto; }
 .pv-center { flex: 1; min-height: 0; display: grid; place-items: center; padding: calc(var(--pad) * 1.5); overflow: hidden; background: var(--sunken); }
 .pv-center img, .pv-center video { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; border-radius: min(var(--radius), 4px); display: block; }
 .pv-center img { box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
 .pv-ph { width: min(100%, 520px); aspect-ratio: 3/2; border-radius: var(--radius); }
 .pv-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; display: block; }
+/* The next page loading behind the frame on screen, at the size it will be shown at. */
+.pv-next { position: absolute; inset: 0; height: 100%; visibility: hidden; }
 .pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
 .pv-audio { display: grid; gap: 22px; justify-items: center; width: min(100%, 420px); }
 .pv-audio .ic { width: 44px; height: 44px; }

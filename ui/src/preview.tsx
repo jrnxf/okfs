@@ -14,6 +14,11 @@ const SETTLE = 25;
 const SETTLE_HEAVY = 90;
 /** After this long without an answer, the previous file's preview is cleared instead of kept. */
 const STALE = 250;
+/**
+ * A frame that has not loaded after this long is shown as it is, in place of the page before it. Long
+ * enough for a heavy local page to load, short enough that the old page is not taken for the new file.
+ */
+const FRAME_WAIT = 500;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -208,13 +213,36 @@ function Media({ entry, report }: { entry: Entry; report: Report }) {
 
 function Frame({ entry }: { entry: Entry }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  if (!settled) return null;
-  // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
-  // The server sends the same restriction as a header, so it holds when the page is opened directly too.
-  if (entry.kind === "html") {
-    return <iframe class="pv-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" src={urls.raw(entry.path)} title={entry.name} />;
-  }
-  return <iframe class="pv-frame" src={`${urls.raw(entry.path)}#navpanes=0&view=FitH`} title={entry.name} />;
+  // The frame on screen stays until the next one has loaded behind it, then the next takes its place in
+  // one step: the pane is never empty, and never the white of a frame that has not painted yet.
+  const [shown, setShown] = useState<Entry | null>(null);
+  const next = settled && shown?.path !== entry.path ? entry : null;
+  useEffect(() => {
+    if (!next) return;
+    const timer = setTimeout(() => setShown(next), FRAME_WAIT);
+    return () => clearTimeout(timer);
+  }, [next?.path]);
+  return (
+    <>
+      {[shown, next].map((page) => {
+        if (!page) return null;
+        const html = page.kind === "html";
+        return (
+          <iframe
+            // A new frame for each file: changing the address of one frame would add to the back button's history.
+            key={page.path}
+            class={page === next && shown ? "pv-frame pv-next" : "pv-frame"}
+            // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
+            // The server sends the same restriction as a header, so it holds when the page is opened directly too.
+            sandbox={html ? "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" : undefined}
+            src={html ? urls.raw(page.path) : `${urls.raw(page.path)}#navpanes=0&view=FitH`}
+            title={page.name}
+            onLoad={page === next ? () => setShown(page) : undefined}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 function Zip({ entry, report }: { entry: Entry; report: Report }) {
@@ -398,8 +426,8 @@ export function Preview({ entry, report }: { entry: Entry; report: Report }) {
       return <Media key={entry.path} entry={entry} report={report} />;
     case "pdf":
     case "html":
-      // A new frame for each file: changing the address of one frame would add to the back button's history.
-      return <Frame key={entry.path} entry={entry} />;
+      // One `Frame` for every file, so it can keep the page on screen while the next one loads.
+      return <Frame entry={entry} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;
