@@ -231,7 +231,7 @@ export class Store {
     // An index page keeps its folder's address, so a link to the folder means the page.
     const paged = s.open !== null && index !== undefined;
     // A file opened from elsewhere gets its folder as the entry before it, so closing lands there.
-    if (!s.open || paged || (mode === "push" && changed)) this.setUrl(mode, listing.path, true, { listing: !paged });
+    if (!s.open || paged || (mode === "push" && changed)) this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex() });
     if (s.open && !paged) this.setUrl(mode, s.open.path, false, { opened: true });
     this.emit();
   }
@@ -313,7 +313,7 @@ export class Store {
       return;
     }
     s.open = null;
-    history.replaceState({ listing: true }, "", urls.view(s.path, true) + location.search);
+    history.replaceState({ listing: this.hasIndex() }, "", urls.view(s.path, true) + location.search);
     this.emit();
   }
 
