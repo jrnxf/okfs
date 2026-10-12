@@ -906,7 +906,7 @@ async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn a_folder_stays_watched_when_a_link_to_it_is_removed() {
+async fn a_change_behind_a_link_to_a_folder_is_seen_once_under_the_real_folder() {
     let site = Site::new();
     std::os::unix::fs::symlink(site.served.join("sub"), site.served.join("current")).unwrap();
     let root = Root::new(&site.served, false).unwrap();
@@ -929,11 +929,21 @@ async fn a_folder_stays_watched_when_a_link_to_it_is_removed() {
     })
     .await;
 
+    // Written through the link: the file is in the folder the link leads to.
+    fs::write(site.served.join("current/new.html"), "new").unwrap();
+    wait_for("/api/recent", |recent| recent_paths(recent).contains(&"sub/new.html")).await;
+    let recent = json(&app, "/api/recent").await;
+    let listed = recent_paths(&recent);
+    assert_eq!(listed.iter().filter(|path| path.ends_with("new.html")).count(), 1);
+    let found = json(&app, "/api/search?q=new.html").await;
+    assert_eq!(found["total"], 1);
+    assert_eq!(found["hits"][0]["path"], "sub/new.html");
+
+    // The link goes, and the folder it led to is watched as before.
     fs::remove_file(site.served.join("current")).unwrap();
     wait_for("/api/search?q=current", |found| found["total"] == 0).await;
-
-    fs::write(site.served.join("sub/new.html"), "new").unwrap();
-    wait_for("/api/recent", |recent| recent_paths(recent).contains(&"sub/new.html")).await;
+    fs::write(site.served.join("sub/newer.html"), "newer").unwrap();
+    wait_for("/api/recent", |recent| recent_paths(recent).contains(&"sub/newer.html")).await;
 }
 
 #[tokio::test]

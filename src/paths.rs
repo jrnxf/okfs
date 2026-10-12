@@ -159,16 +159,6 @@ impl Root {
         })
     }
 
-    /// The real folder a path leads to: where it is, and the same relative to the served
-    /// folder. Links on the way are followed, whatever they are called: only the real
-    /// place has to be inside the served folder and shown.
-    pub fn folder(&self, path: &Path) -> Option<(PathBuf, String)> {
-        let real = path.canonicalize().ok().filter(|real| self.contains(real))?;
-        let inner = real.strip_prefix(&self.dir).ok()?.to_str()?;
-        let inner = inner.replace(std::path::MAIN_SEPARATOR, "/");
-        Some((real, inner))
-    }
-
     /// Finds the entry a request path names, for removing it. Unlike `resolve`, the
     /// last name is not followed when it is a link: the link is what gets removed, and
     /// not what it points at. Only a link that is shown is found. The folder holding
@@ -182,7 +172,17 @@ impl Root {
         };
         let mut joined = self.dir.clone();
         joined.extend(above);
-        let (parent, folder) = self.folder(&joined).ok_or(NoEntry::Missing)?;
+        let parent = joined
+            .canonicalize()
+            .ok()
+            .filter(|parent| self.contains(parent))
+            .ok_or(NoEntry::Missing)?;
+        let folder = parent
+            .strip_prefix(&self.dir)
+            .ok()
+            .and_then(Path::to_str)
+            .ok_or(NoEntry::Missing)?
+            .replace(std::path::MAIN_SEPARATOR, "/");
         let held = fs::read_dir(&parent)
             .ok()
             .and_then(|mut names| names.find_map(|held| held.ok().filter(|held| held.file_name() == *name)))
