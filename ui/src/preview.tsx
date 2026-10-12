@@ -261,9 +261,11 @@ interface Page {
 
 function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; open: boolean; phone: boolean }) {
   const settled = useSettled(entry.path, SETTLE_HEAVY);
-  // The pages in the pane, in the order they were asked for: each is laid on the one before it, and the pane
-  // shows the newest that has painted. So it is never empty, and never the white of a frame that has not
-  // painted yet. A page is another file, or the same file rewritten.
+  // The pages in the pane, in the order they were asked for. A page is another file, or the same file
+  // rewritten. Dark scheme: each is laid on top of the one before it, and the pane shows the newest that has
+  // painted. Light scheme: the next page is laid under the one on screen, which stays until the next takes
+  // over, and a page still beneath when the cursor moves on is taken away. So the pane is never empty, and
+  // never the white of a frame that has not painted yet.
   const [pages, setPages] = useState<Page[]>([]);
   // A page that is ready has the pages before it taken away, after a wait: see `DROP_WAIT` and `PAINT_WAIT`.
   // It is ready when it has loaded, or `FRAME_WAIT` after it was put in the pane.
@@ -273,7 +275,10 @@ function Frame({ entry, stamp, open, phone }: { entry: Entry; stamp: string; ope
   };
   const id = `${entry.path}\n${stamp}`;
   useLayoutEffect(() => {
-    if (!settled) return;
+    if (!settled) {
+      if (!isDark()) setPages((old) => (old.length > 1 ? old.slice(0, 1) : old));
+      return;
+    }
     const page: Page = { id, entry, at: performance.now() };
     setTimeout(() => ready(page, false), FRAME_WAIT);
     setPages((old) => {
