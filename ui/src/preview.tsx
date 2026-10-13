@@ -1,8 +1,8 @@
-// What the pane shows for a file.
+// What the pane shows for a file: the one under the cursor, or the one the path of the folder under it ends on.
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type TextPreview, getJson, pathOf, urls } from "./api";
+import { type Archive, type Listing, type TextPreview, getJson, joinPath, pathOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
@@ -97,6 +97,11 @@ const AHEAD_PICTURES = 10;
  */
 const AHEAD_UNPACKED = 3;
 const UNPACK_PIXELS = 8_000_000;
+/**
+ * A picture at the end of a folder's path larger than this waits under a held key, as a large page does: the
+ * key passes a folder faster than the picture can come, and each one started takes the line from the columns.
+ */
+const END_PICTURE_BYTES = 1024 * 1024;
 /** Requests of the pane on their way at once. Past this the oldest gives way. */
 const FLIGHTS = 12;
 
@@ -111,6 +116,17 @@ function remember(url: string, data: unknown): void {
   answers.set(url, data);
   // Oldest first out: a Map keeps insertion order.
   if (answers.size > 200) answers.delete(answers.keys().next().value as string);
+}
+
+/**
+ * The answer for a folder's columns holds the start of the text file its path ends on. It is kept as the
+ * answer that file would give when asked, so the file is drawn with its columns and never asked for.
+ */
+function keepStart(data: unknown): void {
+  for (let at = data as Listing | undefined; at && Array.isArray(at.entries); at = at.under) {
+    const first = at.entries[0];
+    if (at.start && first) remember(startUrl(joinPath(at.path, first.n)), at.start);
+  }
 }
 
 /**
@@ -154,7 +170,10 @@ function ask<T>(url: string): Promise<T> {
   flight.done = getJson<T>(url, flight.abort.signal)
     .then((data) => {
       // An answer to a request that was dropped describes a file that has changed since.
-      if (flights.get(url)?.abort === flight.abort) remember(url, data);
+      if (flights.get(url)?.abort === flight.abort) {
+        remember(url, data);
+        keepStart(data);
+      }
       return data;
     })
     .finally(() => land(url, flight));
@@ -477,6 +496,28 @@ function useUnhurried(): boolean {
   return go;
 }
 
+/**
+ * The same for a component that goes from file to file: true once what is heavy for the file at `path` may
+ * start. `eager` starts it with the move even under a held key. What has started stays started.
+ */
+function useStarted(path: string, eager: boolean): boolean {
+  const started = useRef("");
+  const [released, setReleased] = useState("");
+  if (!held || eager) started.current = path;
+  const go = started.current === path || released === path;
+  useEffect(() => {
+    if (go) return;
+    const start = () => setReleased(path);
+    const timer = setTimeout(start, SETTLE_HEAVY);
+    document.addEventListener("keyup", start);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("keyup", start);
+    };
+  }, [go, path]);
+  return go;
+}
+
 function Card({ entry, line }: { entry: Entry; line: string }) {
   return (
     <div class="pv-center">
@@ -505,23 +546,29 @@ function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
   );
 }
 
-function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report: Report }) {
+function Picture({ entry, stamp, report, end }: Shown) {
   // The stamp makes a rewritten picture a new address: a page keeps the pictures it has loaded by address.
   const src = `${urls.raw(entry.path)}?v=${stamp}`;
   const [broken, setBroken] = useState("");
+  // The picture under the cursor is asked for with the move. One at the end of a folder's path gives way to
+  // what the cursor is on, and a large one waits under a held key: see `END_PICTURE_BYTES`.
+  const go = useStarted(entry.path, !end || entry.size <= END_PICTURE_BYTES);
   if (broken === src) return <Card entry={entry} line="This image could not be shown" />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
   return (
     <div class="pv-center">
-      <img
-        src={src}
-        alt={entry.name}
-        onLoad={(event) => {
-          const { naturalWidth, naturalHeight } = event.currentTarget;
-          if (naturalWidth) report(entry.path, [`${naturalWidth} × ${naturalHeight}`]);
-        }}
-        onError={() => setBroken(src)}
-      />
+      {go && (
+        <img
+          src={src}
+          alt={entry.name}
+          fetchpriority={end ? "low" : undefined}
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth) report(entry.path, [`${naturalWidth} × ${naturalHeight}`]);
+          }}
+          onError={() => setBroken(src)}
+        />
+      )}
     </div>
   );
 }
@@ -638,26 +685,13 @@ const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind 
  * the picture of this one lies over the frames from the move itself until the viewer has drawn its own: it
  * is see-through until it has arrived, so nothing is shown later than it would be without it.
  */
-function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
+function Page({ entry, stamp, end }: { entry: Entry; stamp: string; end?: boolean }) {
   const pdf = entry.kind === "pdf";
   const address = frameUrl(entry);
   // A rewritten file is the same address with a new stamp: it is loaded again.
   const want = `${address}\n${stamp}`;
-  // Under a held key a large page waits, as a PDF does: see `EAGER_FRAME_BYTES`. A page that has started stays started.
-  const started = useRef("");
-  const [released, setReleased] = useState("");
-  if (!held || (!pdf && entry.size < EAGER_FRAME_BYTES)) started.current = entry.path;
-  const go = started.current === entry.path || released === entry.path;
-  useEffect(() => {
-    if (go) return;
-    const start = () => setReleased(entry.path);
-    const timer = setTimeout(start, SETTLE_HEAVY);
-    document.addEventListener("keyup", start);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("keyup", start);
-    };
-  }, [go, entry.path]);
+  // Under a held key a large page waits, as a PDF does: see `EAGER_FRAME_BYTES`.
+  const go = useStarted(entry.path, !pdf && entry.size < EAGER_FRAME_BYTES);
 
   const [drawn, draw] = useState(0);
   const again = () => draw((count) => count + 1);
@@ -852,6 +886,7 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
             key={sheet}
             src={sheet}
             alt=""
+            fetchpriority={end ? "low" : undefined}
             onLoad={() => {
               sheets.add(sheet);
               arrived(sheet);
@@ -1080,21 +1115,23 @@ interface Shown {
   entry: Entry;
   stamp: string;
   report: Report;
+  /** The file is not under the cursor: it is the one the path of the folder under the cursor ends on. */
+  end?: boolean;
 }
 
-function Kind({ entry, stamp, report, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
+function Kind({ entry, stamp, report, end, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
   switch (entry.kind) {
     case "folder":
       // A folder has columns beside the list, not a preview: see `Side`.
       return null;
     case "image":
-      return <Picture entry={entry} stamp={stamp} report={report} />;
+      return <Picture entry={entry} stamp={stamp} report={report} end={end} />;
     case "video":
     case "audio":
       return <Media entry={entry} stamp={stamp} report={report} waiting={waiting} left={left} onReady={onReady} />;
     case "pdf":
     case "html":
-      return <Page entry={entry} stamp={stamp} />;
+      return <Page entry={entry} stamp={stamp} end={end} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;

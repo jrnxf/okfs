@@ -304,8 +304,9 @@ struct ListQuery {
     path: String,
     /// Send only the first entries by name, folders first. For a folder under the cursor.
     limit: Option<usize>,
-    /// With `limit`: also send what the first entry leads to, this many levels down.
-    /// The page draws a column for each level, and they all come in this one answer.
+    /// With `limit`: also send what the first entry leads to, this many levels down:
+    /// the listing of a folder, the start of a small text file. The page draws a column
+    /// for each level and the file after them, and they all come in this one answer.
     #[serde(default)]
     depth: usize,
 }
@@ -314,6 +315,13 @@ struct ListQuery {
 const MAX_DEPTH: usize = 3;
 /// Entries sent for each level when levels under it are asked for, at most.
 const MAX_COLUMN: usize = 200;
+/// The start of a text file larger than this is not put in a listing's answer: the
+/// whole file is read to make it, and the listing waits for it.
+const MAX_START: u64 = 64 * 1024;
+/// Lines of source code in that start: what the page asks for first of any file.
+const START_LINES: usize = 80;
+/// Text that the page shows as itself, not as source: its start is not sent.
+const SHOWN_AS_ITSELF: [&str; 3] = ["html", "htm", "svg"];
 
 #[derive(Serialize)]
 struct Item {
@@ -356,6 +364,10 @@ struct Listing {
     /// The listing of the first entry, when it is a folder and levels were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     under: Option<Box<Listing>>,
+    /// The start of the first entry, when levels were asked for and it is a small text
+    /// file: what `/api/preview` answers for it, cut to its first lines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start: Option<preview::Preview>,
 }
 
 /// Lists the folder at `path`. With `limit`, only its first entries, and then what the
@@ -408,11 +420,22 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
 
     // Each level is found by its own path, as a request for it would be: what a
     // request may not read, a level may not either.
-    let under = entries
-        .first()
-        .filter(|first| first.d && limit.is_some() && depth > 0)
+    let first = entries.first().filter(|_| limit.is_some() && depth > 0);
+    let under = first
+        .filter(|first| first.d)
         .and_then(|first| list_folder(app, &paths::join(&found.rel, &first.n), limit, depth - 1))
         .map(Box::new);
+    let start = first
+        .filter(|first| !first.d && first.s <= MAX_START)
+        .filter(|first| !SHOWN_AS_ITSELF.contains(&paths::extension(&first.n).as_str()))
+        .and_then(|first| app.root.resolve(&paths::join(&found.rel, &first.n)))
+        .filter(|file| file.meta.is_file())
+        .and_then(|file| {
+            let reader_left = AtomicBool::new(false);
+            preview::of(&file.abs, &file.rel, file.meta.len(), Some(START_LINES), &reader_left).ok()
+        })
+        .filter(|start| !matches!(start, preview::Preview::None { .. }));
+
     let real = app
         .root
         .place(&found)
@@ -425,6 +448,7 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
         total,
         readme,
         under,
+        start,
     })
 }
 

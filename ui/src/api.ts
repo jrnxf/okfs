@@ -26,6 +26,8 @@ export interface Listing {
   readme: Readme | null;
   /** The listing of the first entry, when levels were asked for and it is a folder. */
   under?: Listing;
+  /** The start of the first entry, when levels were asked for and it is a small text file. */
+  start?: TextPreview;
 }
 
 export type TextPreview =

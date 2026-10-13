@@ -1,8 +1,8 @@
 // What is beside the main list: the file under the cursor, or a column for the folder under it and for each
-// folder its first entry leads to.
+// folder its first entry leads to, and then the file that path ends on.
 
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import { type Item, type Listing, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
@@ -27,7 +27,7 @@ function visit(listing: Listing, item: Item, open: boolean): void {
 
 /**
  * One folder as a column: its own header, then its first entries as the main list draws them, in name order.
- * `followed` marks the first entry: the next slot shows what is in it.
+ * `followed` marks the first entry: the next slot shows it, the inside of a folder or the preview of a file.
  */
 function Column({ folder, listing, followed, edge }: { folder: Entry; listing: Listing | undefined; followed: boolean; edge: boolean }) {
   // The listing on screen is the last one's until this folder's has come.
@@ -94,7 +94,6 @@ export function Side({ slots }: { slots: number }) {
   const { s } = store;
   // Without the pane, nothing is shown, and so nothing is loaded, until a file is opened.
   const cur = s.pane ? store.cur() : null;
-  const file = s.open ?? (cur && !cur.dir ? cur : null);
   const folder = !s.open && cur?.dir ? cur : null;
 
   const [facts, setFacts] = useState<{ path: string; list: string[] }>({ path: "", list: [] });
@@ -104,7 +103,10 @@ export function Side({ slots }: { slots: number }) {
 
   const url = folder ? columnsUrl(folder.path) : null;
   const { data, url: from } = useLoaded<Listing>(url);
-  const levels = folder ? chainOf(data, slots) : [];
+  const { levels, file: last } = folder ? chainOf(data, slots) : { levels: [], file: null };
+  // The file the folder's path ends on. It is the same entry from draw to draw, as an entry of the list is.
+  const end = useMemo(() => (last ? toEntry(last.item, last.dir, 0) : null), [last?.item, last?.dir]);
+  const file = s.open ?? (cur && !cur.dir ? cur : end);
 
   // The first move into a folder is the one move nothing was loaded ahead for. A folder the cursor rests on
   // is likely to be entered, so its first previews are asked for now, as they would be on the way in.
@@ -140,7 +142,8 @@ export function Side({ slots }: { slots: number }) {
           <Icon name="download" />
         </a>
         {config.delete && (
-          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
+          // The key deletes what is under the cursor, which the file at the end of a path is not.
+          <button class="btn" aria-label="Delete" title={file === end ? "Delete" : `Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
             <Icon name="trash" />
           </button>
         )}
@@ -148,7 +151,7 @@ export function Side({ slots }: { slots: number }) {
           <button
             class="btn widen"
             aria-label={s.open ? "Back to two panes" : "Full width"}
-            onClick={() => (s.open ? store.close() : store.activate())}
+            onClick={() => (s.open ? store.close() : file === end ? void store.go(file.path, false) : store.activate())}
           >
             <Icon name={s.open ? "pane" : "expand"} />
           </button>
@@ -161,10 +164,10 @@ export function Side({ slots }: { slots: number }) {
     <section class="right">
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
-      {!folder && (
+      {(file || !cur) && (
         <div class="pane" key="pane">
           <div class="ph">{header}</div>
-          <div class="pv">{file && <Preview entry={file} stamp={store.stamp(file)} report={report} />}</div>
+          <div class="pv">{file && <Preview entry={file} stamp={store.stamp(file)} report={report} end={file === end} />}</div>
         </div>
       )}
       {levels.map((listing, level) => {
@@ -172,7 +175,7 @@ export function Side({ slots }: { slots: number }) {
         const first = above?.entries[0];
         // The folder under the cursor heads the first column. Each one after is the first entry of the one before.
         const head = level === 0 ? folder : above && first ? toEntry(first, above.path, 0) : null;
-        return head && <Column key={level} folder={head} listing={listing} followed={level + 1 < levels.length} edge={level === slots - 2} />;
+        return head && <Column key={level} folder={head} listing={listing} followed={level + 1 < levels.length || end !== null} edge={level === slots - 2} />;
       })}
     </section>
   );

@@ -2035,13 +2035,30 @@ async fn a_listing_sends_the_levels_under_its_first_entry_only_as_deep_as_allowe
 }
 
 #[tokio::test]
-async fn a_listing_with_levels_is_bounded_in_entries() {
+async fn a_listing_with_levels_is_bounded_in_entries_and_in_the_text_it_carries() {
     let site = Site::new();
     let wide = site.served.join("wide");
     fs::create_dir_all(wide.join("0-first")).unwrap();
     for at in 0..250 {
         fs::write(wide.join(format!("file{at}.txt")), "x").unwrap();
     }
+    for (folder, name, text) in [
+        ("small", "notes.txt", "a line\n".repeat(200)),
+        ("large", "notes.txt", "a line\n".repeat(10_000)),
+        ("page", "index.html", "<p>a page</p>".to_owned()),
+        (
+            "drawing",
+            "shape.svg",
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_owned(),
+        ),
+    ] {
+        fs::create_dir_all(site.served.join(folder)).unwrap();
+        fs::write(site.served.join(folder).join(name), text).unwrap();
+    }
+    fs::create_dir_all(site.served.join("binary")).unwrap();
+    fs::write(site.served.join("binary/blob.bin"), [0_u8; 64]).unwrap();
+    fs::create_dir_all(site.served.join("outer/inner")).unwrap();
+    fs::write(site.served.join("outer/inner/notes.txt"), "two levels down").unwrap();
     let app = site.router();
 
     let column = json(&app, "/api/list?path=wide&limit=1000&depth=1").await;
@@ -2050,6 +2067,30 @@ async fn a_listing_with_levels_is_bounded_in_entries() {
     // A limit alone is as it was: the page asks that way for other things.
     let plain = json(&app, "/api/list?path=wide&limit=1000").await;
     assert_eq!(plain["entries"].as_array().unwrap().len(), 251);
+
+    // A small text file comes with its folder, cut as the page would ask for it.
+    let small = json(&app, "/api/list?path=small&limit=5&depth=1").await;
+    assert_eq!(small["start"]["kind"], "code");
+    assert_eq!(small["start"]["more"], true);
+    assert_eq!(
+        small["start"],
+        json(&app, "/api/preview?path=small/notes.txt&lines=80").await
+    );
+    // A file counts as a level: it comes while levels are left, and not after.
+    let outer = json(&app, "/api/list?path=outer&limit=5&depth=2").await;
+    assert_eq!(outer["under"]["start"]["kind"], "code");
+    let short = json(&app, "/api/list?path=outer&limit=5&depth=1").await;
+    assert!(short["under"].get("start").is_none());
+    // Not when no level was asked for, not a large file, and not what the page shows as itself.
+    for uri in [
+        "/api/list?path=small&limit=5",
+        "/api/list?path=large&limit=5&depth=1",
+        "/api/list?path=page&limit=5&depth=1",
+        "/api/list?path=drawing&limit=5&depth=1",
+        "/api/list?path=binary&limit=5&depth=1",
+    ] {
+        assert!(json(&app, uri).await.get("start").is_none(), "{uri}");
+    }
 }
 
 #[cfg(unix)]
@@ -2085,5 +2126,5 @@ async fn a_listing_with_levels_reads_nothing_outside_the_served_folder() {
     }
     let lead = json(&app, "/api/list?path=lead&limit=50&depth=3").await;
     assert!(names(&lead).is_empty());
-    assert!(lead.get("under").is_none());
+    assert!(lead.get("under").is_none() && lead.get("start").is_none());
 }

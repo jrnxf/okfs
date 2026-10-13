@@ -15,7 +15,8 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .tools .touch { display: none; }
 
 /* The window is cut into equal slots, as many as the page counts for its width. The list is one. Beside it a
-   folder takes one for each of its columns, and a file takes all of them. */
+   folder takes one for each of its columns and the file its path ends on takes the rest, and a file under the
+   cursor takes all of them. */
 .main { display: grid; grid-template-columns: repeat(var(--slots, 4), minmax(0, 1fr)); min-height: 0; }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
@@ -51,7 +52,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .col.edge { border-right: 0; }
 .col-rows { flex: 1; min-height: 0; overflow: auto; }
 .col .row { position: static; height: var(--row-h); }
-/* The entry the next slot shows the inside of. */
+/* The entry the next slot shows. */
 .col .row.at { background: var(--hover); box-shadow: inset 3px 0 0 var(--line-strong); }
 .col-note { display: flex; align-items: center; height: var(--row-h); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 .ph { display: flex; align-items: center; gap: 10px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 var(--pad); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; }

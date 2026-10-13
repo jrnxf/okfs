@@ -17,20 +17,36 @@ test("a window has four slots from 1,200 px, three from 900 px and two under tha
   expect([899, 800, 761, 320].map(slotsFor)).toEqual([2, 2, 2, 2]);
 });
 
+const file = { n: "a.txt", s: 1, m: 0 };
+/** How many columns, and whether a file is previewed after them. */
+const shape = (listing: Listing | undefined, slots: number): [number, boolean] => {
+  const { levels, file } = chainOf(listing, slots);
+  return [levels.length, file !== null];
+};
+
 test("each folder down the first entries takes a slot, while there are slots", () => {
   const deep = nest(6);
-  expect(chainOf(deep, 4).length).toBe(3);
-  expect(chainOf(deep, 3).length).toBe(2);
-  expect(chainOf(deep, 2).length).toBe(1);
-  expect(chainOf(nest(2), 4).length).toBe(2);
+  expect(shape(deep, 4)).toEqual([3, false]);
+  expect(shape(deep, 3)).toEqual([2, false]);
+  expect(shape(deep, 2)).toEqual([1, false]);
+  expect(shape(nest(2), 4)).toEqual([2, false]);
 });
 
-test("the columns stop at an empty folder, at a file, and at a level that did not come", () => {
-  expect(chainOf(nest(1), 4).length).toBe(1);
-  expect(chainOf(nest(2, [{ n: "a.txt", s: 1, m: 0 }]), 4).length).toBe(2);
+test("the file the path ends on is previewed only when a slot is left for it", () => {
+  expect(shape(nest(1, [file]), 4)).toEqual([1, true]);
+  expect(shape(nest(2, [file]), 4)).toEqual([2, true]);
+  expect(shape(nest(3, [file]), 4)).toEqual([3, false]);
+  expect(shape(nest(1, [file]), 3)).toEqual([1, true]);
+  expect(shape(nest(2, [file]), 3)).toEqual([2, false]);
+  expect(shape(nest(1, [file]), 2)).toEqual([1, false]);
+  expect(chainOf({ ...nest(1, [file]), path: "top" }, 4).file).toEqual({ dir: "top", item: file });
+});
+
+test("the columns stop at an empty folder and at a level that did not come", () => {
+  expect(shape(nest(1), 4)).toEqual([1, false]);
   const cut = nest(3);
   delete cut.under?.under;
-  expect(chainOf(cut, 4).length).toBe(2);
+  expect(shape(cut, 4)).toEqual([2, false]);
   // A folder whose answer is on its way has its column already.
-  expect(chainOf(undefined, 4)).toEqual([undefined]);
+  expect(chainOf(undefined, 4)).toEqual({ levels: [undefined], file: null });
 });
