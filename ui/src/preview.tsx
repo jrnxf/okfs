@@ -53,6 +53,19 @@ const AHEAD_PDF_REST = 300;
  * viewer has not drawn its first page by then.
  */
 const SHEET_KEEP = 200;
+/**
+ * Videos past the cursor whose picture is taken before it gets there, how many are loading at once, and how
+ * many pictures are kept. Each costs a request or two for a part of the file.
+ */
+const AHEAD_STILLS = 6;
+const STILLS_AT_ONCE = 2;
+const STILLS_KEPT = 24;
+/** Where in a video its picture is taken, in seconds: where the grid takes a tile's. */
+const STILL_AT = 2;
+/** A video that has given no picture after this long is given up. */
+const STILL_WAIT = 5000;
+/** A picture is no wider than this: a frame of a 4K video takes a tenth of a second to pack. */
+const STILL_WIDTH = 1920;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -190,6 +203,67 @@ function addressOf(entry: Entry): string | null {
   }
 }
 
+/** One frame of each video the cursor is about to reach, by the address its player loads: see `Media`. */
+const stills = new Map<string, string>();
+/** Videos a picture is being taken of, each with what stops it. */
+const filming = new Map<string, () => void>();
+
+/** Stops every picture being taken, so a player that starts has the line and the decoder to itself. */
+function hush(): void {
+  for (const end of [...filming.values()]) end();
+}
+
+/**
+ * Takes the picture of the video at `src` that stands in for its player under a held key. The video is loaded
+ * as far as one frame in an element that is never shown, and that frame is kept as a JPEG.
+ */
+function film(src: string): void {
+  if (stills.has(src) || filming.has(src) || filming.size >= STILLS_AT_ONCE) return;
+  const video = document.createElement("video");
+  const end = () => {
+    clearTimeout(timer);
+    filming.delete(src);
+    video.onloadeddata = video.onerror = null;
+    // Lets go of the file: what is still on its way is dropped.
+    video.removeAttribute("src");
+    video.load();
+  };
+  const timer = setTimeout(end, STILL_WAIT);
+  filming.set(src, end);
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+  video.onerror = end;
+  video.onloadeddata = () => {
+    const scale = Math.min(1, STILL_WIDTH / (video.videoWidth || 1));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const pen = canvas.getContext("2d");
+    if (!pen || !canvas.width || !canvas.height) return end();
+    try {
+      pen.drawImage(video, 0, 0, canvas.width, canvas.height);
+    } catch {
+      return end();
+    }
+    end();
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        stills.set(src, URL.createObjectURL(blob));
+        if (stills.size > STILLS_KEPT) {
+          const [oldest, url] = stills.entries().next().value as [string, string];
+          stills.delete(oldest);
+          URL.revokeObjectURL(url);
+        }
+      },
+      "image/jpeg",
+      0.85,
+    );
+  };
+  video.src = `${src}#t=${STILL_AT}`;
+}
+
 /** The pictures of first pages that have arrived, by address: one of these is drawn in the frame it is asked for. */
 const sheets = new Set<string>();
 
@@ -221,6 +295,8 @@ export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp:
       unknown.push({ url, path: entry.path });
     } else if (url) {
       if (flights.size < FLIGHTS) ask(url).catch(() => undefined);
+    } else if (entry.kind === "video") {
+      if (i <= AHEAD_STILLS) film(`${urls.raw(entry.path)}?v=${stamp(entry)}`);
     } else if ((entry.kind === "image" || sheetOf(entry)) && i <= AHEAD_PICTURES) {
       // A PDF's first page is a picture like any other: see `Page`.
       const sheet = sheetOf(entry);
@@ -485,17 +561,34 @@ function Picture({ entry, stamp, report }: { entry: Entry; stamp: string; report
   );
 }
 
-/** `waiting` keeps a video off screen until it has its first picture; it says so through `onReady`. */
-function Media({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boolean; onReady: () => void }) {
+/**
+ * `waiting` keeps a video off screen until it has its first picture; it says so through `onReady`. `left` is
+ * set on a player the cursor has left, kept up while the next preview gets ready.
+ */
+function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
   const [broken, setBroken] = useState("");
-  const settled = useUnhurried();
+  // A player the cursor left before it started stays as it is, a picture and no more: its file is not
+  // asked for, which would take the line from the player the cursor is on.
+  const unhurried = useUnhurried();
+  const begun = useRef(false);
+  if (unhurried && !left) begun.current = true;
+  const settled = begun.current;
   // A rewritten file is loaded again only once nothing is playing: a player is never cut off.
   const [playing, setPlaying] = useState(false);
   const [loaded, setLoaded] = useState(stamp);
   useEffect(() => {
     if (!playing) setLoaded(stamp);
   }, [stamp, playing]);
-  const src = settled ? `${urls.raw(entry.path)}?v=${loaded}` : undefined;
+  const address = `${urls.raw(entry.path)}?v=${loaded}`;
+  const src = settled ? address : undefined;
+  // A frame taken ahead of the cursor stands in the player until the player has a picture of its own: under
+  // a held key, where the file is not loaded at all, and for the moment it takes to load after that.
+  const [own, setOwn] = useState("");
+  const still = own === address ? undefined : stills.get(address);
+  // With the draw that starts the player, before its file is asked for.
+  useLayoutEffect(() => {
+    if (settled) hush();
+  }, [settled]);
   if (broken === src) return <Card entry={entry} line="This browser cannot play this file" />;
   const center = waiting ? "pv-center pv-wait" : "pv-center";
   const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
@@ -521,7 +614,20 @@ function Media({ entry, stamp, report, waiting, onReady }: Shown & { waiting: bo
   }
   return (
     <div class={center}>
-      <video src={src} controls playsInline preload="metadata" onLoadedMetadata={onMeta} onLoadedData={onReady} onError={onError} {...state} />
+      <video
+        src={src}
+        poster={still}
+        controls
+        playsInline
+        preload="metadata"
+        onLoadedMetadata={onMeta}
+        onLoadedData={() => {
+          setOwn(address);
+          onReady();
+        }}
+        onError={onError}
+        {...state}
+      />
     </div>
   );
 }
@@ -1011,7 +1117,7 @@ interface Shown {
   report: Report;
 }
 
-function Kind({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boolean; onReady: () => void }) {
+function Kind({ entry, stamp, report, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
   switch (entry.kind) {
     case "folder":
       return <Folder entry={entry} report={report} />;
@@ -1019,7 +1125,7 @@ function Kind({ entry, stamp, report, waiting, onReady }: Shown & { waiting: boo
       return <Picture entry={entry} stamp={stamp} report={report} />;
     case "video":
     case "audio":
-      return <Media entry={entry} stamp={stamp} report={report} waiting={waiting} onReady={onReady} />;
+      return <Media entry={entry} stamp={stamp} report={report} waiting={waiting} left={left} onReady={onReady} />;
     case "pdf":
     case "html":
       return <Page entry={entry} stamp={stamp} />;
@@ -1045,7 +1151,9 @@ export function Preview(props: Shown) {
   // than it would be. A sound player looks the same before and after its file answers, so it is shown at once.
   const last = useRef(props);
   const [ready, setReady] = useState("");
-  const waiting = entry.kind === "video" && ready !== entry.path && last.current.entry.path !== entry.path;
+  // A video whose picture was taken ahead of the cursor has that to show, and waits for nothing.
+  const still = entry.kind === "video" && stills.has(`${urls.raw(entry.path)}?v=${props.stamp}`);
+  const waiting = entry.kind === "video" && !still && ready !== entry.path && last.current.entry.path !== entry.path;
   if (!waiting) last.current = props;
   useEffect(() => {
     if (!waiting) return;
@@ -1054,7 +1162,7 @@ export function Preview(props: Shown) {
   }, [waiting, entry.path]);
   return (
     <>
-      {waiting && <Kind key={slot(last.current.entry)} {...last.current} waiting={false} onReady={() => undefined} />}
+      {waiting && <Kind key={slot(last.current.entry)} {...last.current} waiting={false} left onReady={() => undefined} />}
       <Kind key={slot(entry)} {...props} waiting={waiting} onReady={() => setReady(entry.path)} />
     </>
   );
