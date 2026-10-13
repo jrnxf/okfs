@@ -14,7 +14,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .tools .btn { padding: 0 calc(7px * var(--density)); }
 .tools .touch { display: none; }
 
-.main { display: grid; grid-template-columns: minmax(340px, min(36%, 560px)) minmax(0, 1fr); min-height: 0; }
+.main { display: grid; grid-template-columns: minmax(340px, min(30%, 420px)) minmax(0, 1fr); min-height: 0; }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 68px 66px; }
