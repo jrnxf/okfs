@@ -37,7 +37,7 @@ const BEHIND_PAGES = 1;
 const AHEAD_PDFS = 2;
 /** A page larger than this is not loaded ahead, and all that are loaded ahead stay under the second number. */
 const AHEAD_PAGE_BYTES = 4 * 1024 * 1024;
-const AHEAD_PAGES_BYTES = 12 * 1024 * 1024;
+const AHEAD_PAGES_BYTES = 32 * 1024 * 1024;
 /** A key repeating faster than this many ms a move passes pages faster than any can load: none are started. */
 const AHEAD_PAGES_PACE = 50;
 /**
