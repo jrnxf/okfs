@@ -71,6 +71,7 @@ const KEYS: [string[], string][] = [
   [["/"], "Filter this folder"],
   [[`${MOD} K`], "Find anything in the tree"],
   [["g"], "List or grid"],
+  [["p"], "Two panes or one folder"],
   [["s"], "Change the sort"],
   [["t"], "Light or dark"],
   [["esc"], "Close the preview"],

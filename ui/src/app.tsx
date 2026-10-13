@@ -6,6 +6,7 @@ import { type Archive, type Listing, type TextPreview, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
+import { listKeys } from "./keys";
 import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { DELETE_KEY, MOD, Palette } from "./palette";
@@ -275,22 +276,28 @@ export function App() {
     requestAnimationFrame(() => filterInput.current?.focus());
   }, []);
 
-  const shown = s.open ?? store.cur();
+  // Without the pane, nothing is shown, and so nothing is loaded, until a file is opened.
+  const shown = s.open ?? (s.pane ? store.cur() : null);
   const here = store.here();
 
   // What lies past the cursor, the way it is moving, is asked for before the cursor gets there.
+  const previewing = s.pane || s.open !== null;
   const cursorWas = useRef(s.cursor);
   useLayoutEffect(() => {
     const step = s.cursor >= cursorWas.current ? 1 : -1;
     cursorWas.current = s.cursor;
-    if (s.status !== "ready") return;
+    if (s.status !== "ready" || !previewing) return;
     lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
     pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
-  }, [s.cursor, s.entries, s.status]);
+  }, [s.cursor, s.entries, s.status, previewing]);
 
   useEffect(() => {
     document.body.classList.toggle("open", s.open !== null);
   }, [s.open]);
+
+  useEffect(() => {
+    document.body.classList.toggle("no-pane", !s.pane);
+  }, [s.pane]);
 
   useEffect(() => {
     const name = s.open?.name ?? (s.path ? s.path.slice(s.path.lastIndexOf("/") + 1) : "");
@@ -318,38 +325,12 @@ export function App() {
       const typing = (event.target as Element).closest("input, textarea, select");
       if (s.palette || typing || event.ctrlKey || event.metaKey || event.altKey) return;
 
-      // With a file open, the keys that move the cursor step from file to file instead.
-      const modal = s.open !== null;
-      const across = s.view === "grid" ? cols.current : 1;
-      const down = () => (modal ? store.step(1) : store.move(across));
-      const up = () => (modal ? store.step(-1) : store.move(-across));
-      const left = () => (modal ? store.step(-1) : across > 1 ? store.move(-1) : store.up());
-      const right = () => (modal ? store.step(1) : across > 1 ? store.move(1) : store.activate());
-      const actions: Record<string, () => void> = {
-        j: down,
-        ArrowDown: down,
-        k: up,
-        ArrowUp: up,
-        h: left,
-        ArrowLeft: left,
-        l: right,
-        ArrowRight: right,
-        Enter: () => store.activate(),
-        Backspace: () => store.up(),
-        "-": () => store.up(),
-        Escape: () => {
-          if (s.open) store.close();
-          else if (s.filter) store.setFilter("");
-          setMenu(null);
-        },
-        Home: () => store.moveTo(0),
-        End: () => store.moveTo(s.entries.length - 1),
-        "/": focusFilter,
-        g: () => store.setView(),
-        s: () => store.setSort(),
-        t: () => setScheme(isDark() ? "light" : "dark"),
-        "?": () => store.setHelp(true),
-      };
+      const actions = listKeys(store, {
+        across: cols.current,
+        filter: focusFilter,
+        closeMenu: () => setMenu(null),
+        flipScheme: () => setScheme(isDark() ? "light" : "dark"),
+      });
       if (event.shiftKey) actions.D = () => store.askDelete();
       const action = actions[key];
       if (action) {
@@ -369,8 +350,8 @@ export function App() {
     const index = indexOf(event);
     const entry = index === null ? undefined : s.entries[index];
     if (index === null || !entry) return;
-    // One click moves the cursor, which is already the preview. A second opens.
-    if (entry.dir || phone() || index === s.cursor) store.activate(index);
+    // One click moves the cursor, which is already the preview. A second opens, and so does the first with no pane.
+    if (entry.dir || phone() || !s.pane || index === s.cursor) store.activate(index);
     else store.moveTo(index);
   };
   const onListDoubleClick = (event: MouseEvent) => {
@@ -454,7 +435,7 @@ export function App() {
             <Icon name="trash" />
           </button>
         )}
-        {!shown.dir && (
+        {!shown.dir && s.pane && (
           <button
             class="btn widen"
             aria-label={s.open ? "Back to two panes" : "Full width"}
@@ -563,11 +544,19 @@ export function App() {
           <span>
             <kbd>↵</kbd> open
           </span>
+          {!s.pane && (
+            <span>
+              <kbd>-</kbd> up
+            </span>
+          )}
           <span>
             <kbd>/</kbd> filter
           </span>
           <span>
             <kbd>g</kbd> grid
+          </span>
+          <span>
+            <kbd>p</kbd> {s.pane ? "one folder" : "two panes"}
           </span>
           <span>
             <kbd>s</kbd> sort

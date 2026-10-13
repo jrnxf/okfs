@@ -65,6 +65,7 @@ function commands(): Entry[] {
   if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
   return [
     { title: s.view === "list" ? "Switch to grid view" : "Switch to list view", key: "g", run: () => store.setView() },
+    { title: s.pane ? "Switch to one-folder view" : "Switch to two-pane view", key: "p", run: () => store.setPane() },
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
     {
       title: isDark() ? "Use light scheme" : "Use dark scheme",

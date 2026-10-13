@@ -66,6 +66,8 @@ export function VGrid({ scroller, count, grid, cursor, caught, listKey, render, 
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(outer);
+    // The rows can be narrower than the scroller, and change width while it does not.
+    observer.observe(content);
     observer.observe(sample);
     const onScroll = () => setScrollTop(outer.scrollTop);
     outer.addEventListener("scroll", onScroll, { passive: true });
@@ -129,7 +131,7 @@ export function VGrid({ scroller, count, grid, cursor, caught, listKey, render, 
     <div class="list" ref={scroller} tabIndex={-1} role="listbox" aria-label="Files">
       <div class="probe" ref={probe} />
       {empty}
-      <div class="rows" ref={inner} style={{ height: `${height}px` }}>
+      <div class={grid ? "rows tiles" : "rows"} ref={inner} style={{ height: `${height}px` }}>
         {cells}
       </div>
       {children}

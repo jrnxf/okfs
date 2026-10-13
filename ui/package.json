@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run build.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit && bun test"
   },
   "devDependencies": {
     "@fontsource-variable/geist": "^5.3.0",

@@ -9,6 +9,7 @@
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
 - A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too.
+- Or one folder at a time: `p` takes the pane away. The list is the page, in one column down the middle, nothing is loaded until a file is opened, and the file opens over the whole window. The choice is kept.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
@@ -90,6 +91,7 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `/` | Filter this folder |
 | `Ctrl K`, `Cmd K` | Find anything in the tree. Start with `>` for commands. |
 | `g` | List or grid |
+| `p` | Two panes, or one folder at a time: the list alone, and a file opens over it |
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `Esc` | Close the preview |
@@ -234,7 +236,7 @@ nix develop
 cargo test                                  # server behavior and the theme checker
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
-cd ui && bun run check                      # type check the page
+cd ui && bun run check                      # type check the page and test it
 ```
 
 The server is Rust (axum, tokio). The page is TypeScript and Preact in `ui/`, built by `build.rs` into the binary. To work on the page without rebuilding the binary each time, run a debug build with `OKFS_UI_DIR=ui/dist` and rebuild the page with `cd ui && bun run build`.

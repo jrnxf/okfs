@@ -51,6 +51,8 @@ export interface State {
   entries: Entry[];
   cursor: number;
   view: View;
+  /** False for the one-folder view: the list is the page, with no file beside it. */
+  pane: boolean;
   sort: Sort;
   filter: string;
   /** The file given the full width, if any. */
@@ -114,6 +116,7 @@ export class Store {
     entries: [],
     cursor: 0,
     view: prefs.get("view") === "grid" ? "grid" : "list",
+    pane: prefs.get("pane") !== "off",
     sort: savedSort(),
     filter: "",
     open: null,
@@ -533,6 +536,13 @@ export class Store {
     const { s } = this;
     s.view = view ?? (s.view === "list" ? "grid" : "list");
     prefs.set("view", s.view);
+    this.emit();
+  }
+
+  /** Switches between the two panes and the one-folder view. */
+  setPane(pane = !this.s.pane): void {
+    this.s.pane = pane;
+    prefs.set("pane", pane ? "on" : "off");
     this.emit();
   }
 
