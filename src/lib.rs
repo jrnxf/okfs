@@ -8,6 +8,7 @@ pub mod index;
 pub mod lan;
 pub mod live;
 pub mod paths;
+pub mod pdf;
 pub mod preview;
 pub mod raw;
 pub mod render;

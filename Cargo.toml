@@ -17,6 +17,11 @@ strip = true
 [profile.dev.package."*"]
 opt-level = 2
 
+[features]
+default = ["pdf"]
+# The first page of a PDF as a picture. Turn it off for a binary about 6 MB smaller: --no-default-features.
+pdf = ["dep:hayro", "dep:rustix"]
+
 [dependencies]
 ammonia = "4.2.3"
 axum = "0.8.9"
@@ -25,6 +30,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 csv = "1.4.0"
 dirs = "7.0.0"
 futures-util = "0.3.34"
+hayro = { version = "0.8.0", optional = true }
 httpdate = "1.0.3"
 if-addrs = { version = "0.15.0", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico"] }
@@ -37,11 +43,14 @@ qrcode = { version = "0.14.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 syntect = { version = "5.3.0", default-features = false, features = ["default-onig"] }
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "sync", "signal", "time"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "process", "sync", "signal", "time"] }
 tokio-util = { version = "0.7.20", features = ["io"] }
 tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
 zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"], optional = true }
 
 [dev-dependencies]
 http-body-util = "0.1.5"

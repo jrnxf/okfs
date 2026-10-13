@@ -1,5 +1,5 @@
 //! Small versions of images for the grid view. Inputs are bounded, and the cache
-//! lives outside the served folder.
+//! lives outside the served folder. The first pages of PDFs are kept in it too: see `pdf`.
 
 use std::fs;
 use std::io::{BufReader, Cursor};
@@ -80,22 +80,32 @@ impl Thumbs {
 
     /// The thumbnail of the image at `abs`, from the cache when it is there.
     pub fn get(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Result<Made, Refused> {
-        let slot = self.slot(abs, w, meta);
-        if let Some(bytes) = slot.as_ref().and_then(|slot| fs::read(slot).ok()) {
-            return Ok(Made {
-                mime: mime_of(&bytes),
-                bytes,
-            });
+        if let Some(made) = self.cached(abs, w, meta) {
+            return Ok(made);
         }
         let made = make(abs, w, meta.len())?;
-        if let Some(slot) = slot {
+        self.keep(abs, w, meta, &made);
+        Ok(made)
+    }
+
+    /// The picture kept for `abs` as it is now, at this width.
+    pub fn cached(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Option<Made> {
+        let bytes = fs::read(self.slot(abs, w, meta)?).ok()?;
+        Some(Made {
+            mime: mime_of(&bytes),
+            bytes,
+        })
+    }
+
+    /// Keeps a picture made of `abs` as it is now, for the next time it is asked for.
+    pub fn keep(&self, abs: &Path, w: u32, meta: &fs::Metadata, made: &Made) {
+        if let Some(slot) = self.slot(abs, w, meta) {
             // Written beside its final name and moved, so a reader never sees half a file.
             let part = slot.with_extension(format!("{}.part", std::process::id()));
             if fs::write(&part, &made.bytes).is_ok() && fs::rename(&part, &slot).is_err() {
                 let _ = fs::remove_file(&part);
             }
         }
-        Ok(made)
     }
 }
 

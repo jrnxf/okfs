@@ -514,6 +514,173 @@ async fn thumbnails_are_cached_outside_the_served_folder() {
     assert_eq!(first, second);
 }
 
+/// A one-page PDF, 200 by 300 points, with a black square on it.
+fn pdf() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 4 0 R >>".to_owned(),
+        "<< /Length 22 >>\nstream\n50 50 100 100 re\nf\nendstream".to_owned(),
+    ];
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut starts = Vec::new();
+    for (at, object) in objects.iter().enumerate() {
+        starts.push(out.len());
+        out.extend(format!("{} 0 obj\n{object}\nendobj\n", at + 1).bytes());
+    }
+    let table = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", starts.len() + 1).bytes());
+    for start in starts {
+        out.extend(format!("{start:010} 00000 n \n").bytes());
+    }
+    out.extend(format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{table}\n%%EOF\n").bytes());
+    out
+}
+
+/// PDFs are drawn by okfs started again as a process of its own.
+fn drawing(cache: &Path) -> Options {
+    Options {
+        cache: Some(cache.to_owned()),
+        drawer: Some(PathBuf::from(env!("CARGO_BIN_EXE_okfs"))),
+        ..Options::default()
+    }
+}
+
+#[cfg(feature = "pdf")]
+#[tokio::test]
+async fn the_first_page_of_a_pdf_is_drawn_once_and_kept_outside_the_served_folder() {
+    let site = Site::new();
+    fs::write(site.served.join("doc.pdf"), pdf()).unwrap();
+    let cache = site.outside.join("cache");
+    let app = site.app(drawing(&cache));
+    let before = snapshot(&site.served).len();
+
+    let (response, first) = get(&app, "/api/thumb?path=doc.pdf&w=600").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
+    let page = image::load_from_memory(&first).unwrap().into_rgb8();
+    assert_eq!((page.width(), page.height()), (640, 960));
+    // The square is drawn, on white: the page is not a blank sheet.
+    assert!(page.get_pixel(320, 480).0.iter().all(|part| *part < 40));
+    assert!(page.get_pixel(40, 40).0.iter().all(|part| *part > 215));
+
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 1);
+    assert_eq!(snapshot(&site.served).len(), before);
+    // The second answer is the kept one: the same bytes, with no program left to draw them.
+    let kept = site.app(Options {
+        drawer: Some(site.outside.join("no-such-program")),
+        ..drawing(&cache)
+    });
+    assert_eq!(get(&kept, "/api/thumb?path=doc.pdf&w=600").await.1, first);
+}
+
+#[cfg(feature = "pdf")]
+#[tokio::test]
+async fn a_pdf_that_cannot_be_drawn_is_refused_and_the_server_goes_on() {
+    let site = Site::new();
+    fs::write(site.served.join("doc.pdf"), pdf()).unwrap();
+    fs::write(site.served.join("junk.pdf"), b"%PDF-1.7\n\xff\xfe not a pdf at all").unwrap();
+    let mut cut = pdf();
+    cut.truncate(120);
+    fs::write(site.served.join("cut.pdf"), cut).unwrap();
+    fs::write(site.served.join("empty.pdf"), b"").unwrap();
+    // A sparse file: huge on paper, nothing on disk.
+    fs::File::create(site.served.join("huge.pdf"))
+        .unwrap()
+        .set_len(okfs::pdf::MAX_FILE + 1)
+        .unwrap();
+    let cache = site.outside.join("cache");
+    let app = site.app(drawing(&cache));
+
+    // No picture is an answer, not a fault: the page then shows the PDF as it did before.
+    for name in ["junk.pdf", "cut.pdf", "empty.pdf", "huge.pdf"] {
+        let (response, body) = get(&app, &format!("/api/thumb?path={name}")).await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT, "{name}");
+        assert!(body.is_empty(), "{name}");
+    }
+    // Nothing is kept for a file that was refused, and a good file is still drawn.
+    assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
+    assert_eq!(get(&app, "/api/thumb?path=doc.pdf").await.0.status(), StatusCode::OK);
+    assert_eq!(get(&app, "/raw/junk.pdf").await.0.status(), StatusCode::OK);
+}
+
+#[cfg(all(unix, feature = "pdf"))]
+#[tokio::test]
+async fn drawing_a_pdf_is_given_up_when_it_takes_too_long() {
+    use std::os::unix::fs::PermissionsExt;
+    let site = Site::new();
+    fs::write(site.served.join("doc.pdf"), pdf()).unwrap();
+    // A program that never answers stands in for a PDF that never finishes drawing.
+    let stuck = site.outside.join("stuck");
+    let mark = site.outside.join("started");
+    fs::write(
+        &stuck,
+        format!("#!/bin/sh\necho $$ > '{}'\nexec sleep 600\n", mark.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
+    let app = site.app(Options {
+        cache: Some(site.outside.join("cache")),
+        drawer: Some(stuck),
+        pdf_limit: std::time::Duration::from_millis(300),
+        ..Options::default()
+    });
+
+    let asked = std::time::Instant::now();
+    let (response, _) = get(&app, "/api/thumb?path=doc.pdf").await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(asked.elapsed() < std::time::Duration::from_secs(10));
+    // The process was ended, not left running.
+    let process = fs::read_to_string(&mark).unwrap();
+    let gone = (0..100).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let state = fs::read_to_string(format!("/proc/{}/stat", process.trim())).unwrap_or_default();
+        // Gone, or ended and waiting to be collected.
+        !Path::new("/proc/self").exists() || state.is_empty() || state.contains(") Z ")
+    });
+    assert!(gone, "the drawing process outlived its time limit");
+    // It is not started a second time for the same file.
+    fs::remove_file(&mark).unwrap();
+    assert_eq!(
+        get(&app, "/api/thumb?path=doc.pdf").await.0.status(),
+        StatusCode::NO_CONTENT
+    );
+    assert!(!mark.exists());
+}
+
+#[tokio::test]
+async fn a_pdf_outside_the_served_folder_is_never_drawn() {
+    let site = Site::new();
+    fs::write(site.outside.join("secret.pdf"), pdf()).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(site.outside.join("secret.pdf"), site.served.join("link-out.pdf")).unwrap();
+    let cache = site.outside.join("cache");
+    let app = site.app(drawing(&cache));
+    for path in [
+        "../outside/secret.pdf",
+        "%2e%2e/outside/secret.pdf",
+        "link-out.pdf",
+        "link-out-dir/secret.pdf",
+        "sub/../../outside/secret.pdf",
+    ] {
+        let (response, body) = get(&app, &format!("/api/thumb?path={path}")).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(image::load_from_memory(&body).is_err(), "{path}");
+    }
+    assert_eq!(fs::read_dir(&cache).map_or(0, Iterator::count), 0);
+}
+
+#[tokio::test]
+async fn pdfs_get_no_picture_without_a_program_to_draw_them() {
+    let site = Site::new();
+    fs::write(site.served.join("doc.pdf"), pdf()).unwrap();
+    let app = site.app(Options::default());
+    assert_eq!(
+        get(&app, "/api/thumb?path=doc.pdf").await.0.status(),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+}
+
 #[tokio::test]
 async fn text_previews_are_bounded() {
     let site = Site::new();

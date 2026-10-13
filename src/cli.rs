@@ -99,6 +99,9 @@ enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Draw the first page of the PDF on standard input. okfs runs this itself: see `pdf`
+    #[command(hide = true)]
+    PdfPage { width: u32 },
 }
 
 #[derive(Subcommand)]
@@ -121,6 +124,13 @@ pub fn run() -> ExitCode {
             theme_list();
             Ok(())
         }
+        Some(Command::PdfPage { width }) => {
+            // Its failures are for the server that started it, which reads the exit code alone.
+            return match crate::pdf::page(width) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::FAILURE,
+            };
+        }
         None => serve(cli.serve),
     };
     match result {
@@ -130,6 +140,16 @@ pub fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// okfs itself, to start again for the work it does in a process of its own.
+fn this_program() -> Option<PathBuf> {
+    // On Linux this name still leads to the running program after its file has been replaced.
+    let running = PathBuf::from("/proc/self/exe");
+    if running.exists() {
+        return Some(running);
+    }
+    std::env::current_exe().ok()
 }
 
 fn theme_check(file: &std::path::Path) -> Result<(), String> {
@@ -190,6 +210,8 @@ fn serve(args: Serve) -> Result<(), String> {
         check_host: args.bind.is_loopback(),
         allow_delete: args.allow_delete,
         cache: dirs::cache_dir().map(|dir| dir.join("okfs").join("thumbs")),
+        drawer: this_program(),
+        pdf_limit: crate::pdf::LIMIT,
     };
     let theme_name = match &options.theme {
         ThemeChoice::BuiltIn(name) => name.clone(),

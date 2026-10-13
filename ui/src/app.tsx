@@ -141,6 +141,15 @@ function Thumb({ entry, width }: { entry: Entry; width: number }) {
       </div>
     );
   }
+  if (entry.kind === "pdf" && config.pdf && stage === 0) {
+    // The first page, drawn by the server. A PDF it cannot draw gets the sheet below, as every PDF did.
+    const wanted = Math.ceil(width * (window.devicePixelRatio || 1));
+    return (
+      <div class="th th-page">
+        <img src={urls.thumb(entry.path, wanted, entry.mtime, entry.size)} loading="lazy" alt="" onError={() => setStage(2)} />
+      </div>
+    );
+  }
   if (entry.kind === "pdf") {
     return (
       <div class="th th-sheet">

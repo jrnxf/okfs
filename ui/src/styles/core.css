@@ -129,6 +129,11 @@ kbd {
 /* A page loaded ahead of the cursor, or a rewritten PDF loading behind the one on screen: in the pane at the
    size it will be shown at, and not visible. */
 .pv-ahead { position: absolute; inset: 0; height: 100%; visibility: hidden; }
+/* The first page of a PDF as a picture, over the frames until the viewer has drawn its own. As wide as the
+   pane, as the viewer shows it. See-through until the picture has arrived, and never in the way of the pointer. */
+.pv-sheet { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; padding: 8px; }
+.pv-sheet-on { background: var(--sunken); }
+.pv-sheet img { display: block; width: 100%; box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
 .pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
 .pv-audio { display: grid; gap: 22px; justify-items: center; width: min(100%, 420px); }
 .pv-audio .ic { width: 44px; height: 44px; }
@@ -198,6 +203,7 @@ kbd {
 .th-folder { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; background: var(--line); }
 .th-folder > * { position: relative; background: var(--sunken); overflow: hidden; display: grid; place-items: center; color: var(--faint); }
 .th-folder img { position: absolute; inset: 0; }
+.th-page img { object-position: top; }
 .th-sheet { background: var(--sunken); display: grid; place-items: center; }
 .th-sheet > div { height: 78%; aspect-ratio: 1/1.414; background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / 0.25); padding: 10% 9%; display: grid; align-content: start; gap: 7%; }
 .th-sheet i { display: block; height: 3px; background: #d5d2cb; } .th-sheet i:first-child { height: 7px; width: 70%; background: #2a2622; margin-bottom: 8%; } .th-sheet i:nth-child(2) { width: 30%; background: #e2572b; }

@@ -3,6 +3,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Archive, type Listing, type TextPreview, getJson, pathOf, urls } from "./api";
+import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, kindOf } from "./kinds";
@@ -47,6 +48,11 @@ const AHEAD_PAGES_PACE = 50;
 const AHEAD_PAGES_REST = 50;
 /** A PDF says it has loaded when its viewer has, 150 ms and more before its first page is drawn: it is given longer. */
 const AHEAD_PDF_REST = 300;
+/**
+ * The picture of a PDF's first page stays over its frame this long after the frame says it has loaded: the
+ * viewer has not drawn its first page by then.
+ */
+const SHEET_KEEP = 200;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
 /** Entries listed for a folder under the cursor. */
@@ -184,6 +190,19 @@ function addressOf(entry: Entry): string | null {
   }
 }
 
+/** The pictures of first pages that have arrived, by address: one of these is drawn in the frame it is asked for. */
+const sheets = new Set<string>();
+
+/**
+ * Where the first page of a PDF is had as a picture, wide enough for the pane, or nothing when the server
+ * draws none. The address moves when the file is rewritten, as a thumbnail's does.
+ */
+function sheetOf(entry: Entry): string {
+  if (!config.pdf || entry.kind !== "pdf") return "";
+  const pane = document.querySelector(".pv")?.clientWidth ?? 0;
+  return urls.thumb(entry.path, pane * (window.devicePixelRatio || 1) > 800 ? 1280 : 640, entry.mtime, entry.size);
+}
+
 /**
  * Asks for what lies past the cursor in the direction it moves, so a preview is here before the cursor is.
  * `stamp` gives the stamp a picture is loaded under.
@@ -202,11 +221,14 @@ export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp:
       unknown.push({ url, path: entry.path });
     } else if (url) {
       if (flights.size < FLIGHTS) ask(url).catch(() => undefined);
-    } else if (entry.kind === "image" && i <= AHEAD_PICTURES) {
-      const src = `${urls.raw(entry.path)}?v=${stamp(entry)}`;
+    } else if ((entry.kind === "image" || sheetOf(entry)) && i <= AHEAD_PICTURES) {
+      // A PDF's first page is a picture like any other: see `Page`.
+      const sheet = sheetOf(entry);
+      const src = sheet || `${urls.raw(entry.path)}?v=${stamp(entry)}`;
       let picture = pictures.find((kept) => kept.getAttribute("src") === src);
       if (!picture) {
         picture = new Image();
+        if (sheet) picture.onload = () => sheets.add(sheet);
         picture.src = src;
         pictures.push(picture);
         if (pictures.length > AHEAD_PICTURES * 2) pictures.shift();
@@ -514,6 +536,8 @@ interface Slot {
   /** The address and stamp the frame was last sent to, or nothing while it is still empty. */
   sent: string;
   loaded: boolean;
+  /** When its page loaded. */
+  since: number;
   /** Since when the frame's picture may be of a page the cursor has left. */
   left: number;
   /** Since when it has been on screen with its page loaded, or 0. */
@@ -538,6 +562,10 @@ const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind 
  *
  * A PDF is loaded ahead the same way. Its frame is its own from start to end: a rewritten PDF loads in a second
  * frame behind the first and takes its place once it is ready, so a save never shows an empty pane.
+ *
+ * A PDF's viewer takes longer to start than a held key takes to pass it. Where the server draws first pages,
+ * the picture of this one lies over the frames from the move itself until the viewer has drawn its own: it
+ * is see-through until it has arrived, so nothing is shown later than it would be without it.
  */
 function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
   const pdf = entry.kind === "pdf";
@@ -586,7 +614,7 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
     const now = performance.now();
     const before = slots.current.map((slot) => slot.id).join() + shown.current;
     const add = (file: Entry): Slot => {
-      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, left: 0, rested: 0 };
+      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, since: 0, left: 0, rested: 0 };
       slots.current.push(slot);
       return slot;
     };
@@ -739,8 +767,28 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
     };
   }, [want, go, drawn, entry.path, entry.size]);
 
+  const sheet = sheetOf(entry);
+  const [torn, setTorn] = useState("");
+  const [, arrived] = useState("");
+  const on = slots.current.find((slot) => slot.id === shown.current);
+  // A rewritten PDF keeps its old self up while the new one loads behind it: no picture goes over that.
+  const viewed = on?.path === entry.path && on.loaded && performance.now() - on.since >= SHEET_KEEP;
   return (
     <>
+      {sheet && sheet !== torn && !viewed && (
+        <div class={sheets.has(sheet) ? "pv-sheet pv-sheet-on" : "pv-sheet"}>
+          <img
+            key={sheet}
+            src={sheet}
+            alt=""
+            onLoad={() => {
+              sheets.add(sheet);
+              arrived(sheet);
+            }}
+            onError={() => setTorn(sheet)}
+          />
+        </div>
+      )}
       {slots.current.map((slot) => (
         <iframe
           key={slot.id}
@@ -757,6 +805,9 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
             // An empty frame reports a load of its own, before it is sent anywhere.
             if (!slot.sent) return;
             slot.loaded = true;
+            slot.since = performance.now();
+            // The picture over a PDF goes once its viewer has had its time: see `SHEET_KEEP`.
+            if (slot.pdf) setTimeout(again, SHEET_KEEP + 1);
             // The page under the cursor is the one in the frame again.
             if (slot.id === shown.current && slot.sent === want) {
               slot.left = 0;

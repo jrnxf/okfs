@@ -28,6 +28,7 @@ use tower_http::compression::CompressionLayer;
 use crate::index::Index;
 use crate::live::Change;
 use crate::paths::{self, Kept, NoEntry, Resolved, Root, Unshown};
+use crate::pdf::{self, Drawer};
 use crate::render::{self, encode_path, view_url};
 use crate::theme::{self, Swatch, Theme};
 use crate::thumb::{self, Thumbs};
@@ -76,6 +77,10 @@ pub struct Options {
     /// hostile page could otherwise reach the server by pointing a name at it.
     pub check_host: bool,
     pub cache: Option<PathBuf>,
+    /// okfs itself, started again to draw the first page of a PDF. Without it PDFs get no picture.
+    pub drawer: Option<PathBuf>,
+    /// How long one PDF page may take to draw.
+    pub pdf_limit: Duration,
     /// Let visitors delete entries. Off unless asked for: okfs has no accounts, so
     /// with this on anyone who can reach the address can delete.
     pub allow_delete: bool,
@@ -93,6 +98,8 @@ impl Default for Options {
             allow_hosts: Vec::new(),
             check_host: false,
             cache: None,
+            drawer: None,
+            pdf_limit: pdf::LIMIT,
             allow_delete: false,
         }
     }
@@ -102,6 +109,8 @@ pub struct App {
     pub root: Root,
     pub index: Arc<Index>,
     thumbs: Thumbs,
+    /// Draws the first pages of PDFs, when this build and this run can.
+    drawer: Option<Drawer>,
     options: Options,
     /// The theme from `--theme <file>`, with the file time it was read at.
     custom: Mutex<Option<(SystemTime, Theme)>>,
@@ -122,6 +131,7 @@ impl App {
         let workers = std::thread::available_parallelism().map_or(2, usize::from);
         Ok(Arc::new(Self {
             thumbs: Thumbs::new(options.cache.clone(), root.dir()),
+            drawer: Drawer::new(options.drawer.clone(), options.pdf_limit),
             root,
             index,
             options,
@@ -524,9 +534,19 @@ async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>)
     let Some(found) = app.root.resolve(&query.path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
-    let w = thumb::width(query.w.unwrap_or(thumb::WIDTHS[1]));
-    let worker = Arc::clone(&app);
-    match heavy(&app, move || worker.thumbs.get(&found.abs, w, &found.meta)).await {
+    let made = if pdf::is_pdf(std::path::Path::new(&found.rel)) && app.drawer.is_some() {
+        match first_page(&app, found, query.w).await {
+            // A PDF that cannot be drawn has no picture, which is an answer and not a fault: the page
+            // shows it as it did before there were pictures, with nothing in the browser's console.
+            Some(Err(_)) => return StatusCode::NO_CONTENT.into_response(),
+            made => made,
+        }
+    } else {
+        let w = thumb::width(query.w.unwrap_or(thumb::WIDTHS[1]));
+        let worker = Arc::clone(&app);
+        heavy(&app, move || worker.thumbs.get(&found.abs, w, &found.meta)).await
+    };
+    match made {
         Some(Ok(made)) => (
             [
                 (header::CONTENT_TYPE, made.mime),
@@ -536,13 +556,46 @@ async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>)
         )
             .into_response(),
         Some(Err(thumb::Refused::TooLarge)) => {
-            fail(StatusCode::PAYLOAD_TOO_LARGE, "the image is too large for a thumbnail")
+            fail(StatusCode::PAYLOAD_TOO_LARGE, "the file is too large for a thumbnail")
         }
-        Some(Err(thumb::Refused::Unreadable(_))) => {
-            fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "not an image this build can read")
-        }
+        Some(Err(thumb::Refused::Unreadable(_))) => fail(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "not an image or a PDF this build can read",
+        ),
         None => fail(StatusCode::INTERNAL_SERVER_ERROR, "the thumbnail could not be made"),
     }
+}
+
+/// The first page of a PDF as a picture, from the cache when it is there. Drawn in a
+/// process of its own, which is ended when it takes too long: see `pdf`.
+async fn first_page(
+    app: &Arc<App>,
+    found: Resolved,
+    asked: Option<u32>,
+) -> Option<Result<thumb::Made, thumb::Refused>> {
+    let Some(drawer) = &app.drawer else {
+        return Some(Err(thumb::Refused::Unreadable("PDFs are not drawn".to_owned())));
+    };
+    let w = pdf::width(asked.unwrap_or(pdf::WIDTHS[2]));
+    let (worker, abs, meta) = (Arc::clone(app), found.abs.clone(), found.meta.clone());
+    let kept = tokio::task::spawn_blocking(move || worker.thumbs.cached(&abs, w, &meta));
+    if let Some(made) = kept.await.ok()? {
+        return Some(Ok(made));
+    }
+    let modified = found.meta.modified().ok();
+    let version = format!("{}\0{modified:?}\0{}", found.abs.display(), found.meta.len());
+    let made = match drawer.first_page(&found.abs, found.meta.len(), w, &version).await {
+        Ok(made) => made,
+        Err(refused) => return Some(Err(refused)),
+    };
+    let worker = Arc::clone(app);
+    tokio::task::spawn_blocking(move || {
+        worker.thumbs.keep(&found.abs, w, &found.meta, &made);
+        made
+    })
+    .await
+    .ok()
+    .map(Ok)
 }
 
 #[derive(Deserialize)]
@@ -892,6 +945,8 @@ struct Config {
     target: Target,
     /// True when deleting is on. The page shows its delete control only then.
     delete: bool,
+    /// True when the first page of a PDF can be had as a picture from `/api/thumb`.
+    pdf: bool,
 }
 
 fn theme_infos(app: &App) -> Vec<ThemeInfo> {
@@ -968,6 +1023,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
         index: app.options.index.clone(),
         target,
         delete: app.options.allow_delete,
+        pdf: app.drawer.is_some(),
     };
     // Inside a script element, only "<" could end the block early.
     let config = serde_json::to_string(&config)

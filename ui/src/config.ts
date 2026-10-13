@@ -23,6 +23,8 @@ export interface Config {
   target: { path: string; kind: "dir" | "file" | "missing" };
   /** True when the server was started with deleting on. */
   delete: boolean;
+  /** True when the server draws the first page of a PDF as a picture. */
+  pdf?: boolean;
 }
 
 const read = (page: Document): Partial<Config> => JSON.parse(page.getElementById("okfs-config")?.textContent ?? "{}");

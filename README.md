@@ -8,7 +8,7 @@
 
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
-- A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page of 256 KB or more, a PDF and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it.
+- A dense list on the left, the file under the cursor on the right. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, so a held key flips through PDFs too.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
@@ -43,6 +43,8 @@ To build without installing, the nix dev shell has both:
 nix develop
 cargo build --release    # the binary is target/release/okfs
 ```
+
+The engine that draws the first page of a PDF is about 6 MB of the binary. `cargo build --release --no-default-features` leaves it out: PDFs then open in the browser's viewer alone. Every other preview is the same.
 
 ## Use
 
@@ -210,8 +212,9 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 ## What is safe to serve
 
 - No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
-- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-delete`. Thumbnails are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
+- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-delete`. Thumbnails and the first pages of PDFs are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
 - HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder.
+- A PDF is drawn in a process of its own, which is handed the open file and no path, and is ended after 5 seconds. A PDF that is broken, or made to break a reader, costs that one picture: its preview is then the browser's viewer alone. PDFs over 64 MB are not drawn.
 - okfs has no accounts. Anyone who can reach the address can read every file in the folder.
 
 With `--allow-delete`:
