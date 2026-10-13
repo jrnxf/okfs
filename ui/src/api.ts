@@ -24,6 +24,8 @@ export interface Listing {
   entries: Item[];
   total: number;
   readme: Readme | null;
+  /** The listing of the first entry, when levels were asked for and it is a folder. */
+  under?: Listing;
 }
 
 export type TextPreview =
@@ -71,8 +73,9 @@ const RESERVED = new Set(["api", "raw", "zip", "assets", "theme.css", "-"]);
 const encode = (path: string): string => path.split("/").map(encodeURIComponent).join("/");
 
 export const urls = {
-  list: (path: string, limit?: number) =>
-    `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}`,
+  /** With `limit`, the first entries only; with `depth`, also what the first entry leads to, that many levels down. */
+  list: (path: string, limit?: number, depth?: number) =>
+    `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}${depth ? `&depth=${depth}` : ""}`,
   preview: (path: string) => `/api/preview?path=${encodeURIComponent(path)}`,
   /** Several text files in one answer, by path, source code cut to its first `lines` lines. */
   previews: (paths: string[], lines: number) =>

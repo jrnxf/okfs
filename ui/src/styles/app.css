@@ -1,4 +1,4 @@
-/* Twin Pane: a dense list on the left, the file under the cursor on the right, a status line below.
+/* Twin Pane: a dense list on the left, the file or folder under the cursor beside it, a status line below.
    This file is layout only. Every color, size and shape comes from the tokens. */
 body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .top { display: flex; align-items: center; gap: 14px; height: calc(46px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); min-width: 0; }
@@ -14,15 +14,17 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .tools .btn { padding: 0 calc(7px * var(--density)); }
 .tools .touch { display: none; }
 
-.main { display: grid; grid-template-columns: minmax(340px, min(30%, 420px)) minmax(0, 1fr); min-height: 0; }
+/* The window is cut into equal slots, as many as the page counts for its width. The list is one. Beside it a
+   folder takes one for each of its columns, and a file takes all of them. */
+.main { display: grid; grid-template-columns: repeat(var(--slots, 4), minmax(0, 1fr)); min-height: 0; }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 68px 66px; }
 [data-icons="none"] .cols > :first-child { display: none; }
 .cols { height: calc(30px * var(--density)); border-bottom: var(--border); flex: none; }
-.cols button { text-align: left; display: inline-flex; align-items: center; gap: 3px; }
+.cols button, .cols .hd { text-align: left; display: inline-flex; align-items: center; gap: 3px; }
 .cols button:hover { color: var(--fg); }
-.cols button.r { justify-content: flex-end; }
+.cols .r { justify-content: flex-end; }
 .cols .ic { width: 11px; height: 11px; color: var(--accent); }
 .list { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .row { cursor: default; border-radius: 0; box-shadow: inset 0 calc(var(--line-w) * -1) 0 transparent; }
@@ -42,7 +44,16 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .empty b { color: var(--muted); font-weight: var(--weight-strong); }
 .empty[hidden] { display: none; }
 
-.right { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+.right { grid-column: 2 / -1; display: flex; min-width: 0; min-height: 0; }
+.pane { order: 1; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+/* A column is a slot wide, on the list's own ground, and its rows are the list's rows. */
+.col { flex: none; width: calc(100% / (var(--slots, 4) - 1)); display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
+.col.edge { border-right: 0; }
+.col-rows { flex: 1; min-height: 0; overflow: auto; }
+.col .row { position: static; height: var(--row-h); }
+/* The entry the next slot shows the inside of. */
+.col .row.at { background: var(--hover); box-shadow: inset 3px 0 0 var(--line-strong); }
+.col-note { display: flex; align-items: center; height: var(--row-h); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 .ph { display: flex; align-items: center; gap: 10px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 var(--pad); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; }
 .ph .nm { font-weight: var(--weight-strong); flex: 0 1 auto; }
 .ph .facts { color: var(--faint); font-size: var(--text-xs); flex: 1; }
@@ -51,6 +62,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .ph .only-open { display: none; }
 #pv { flex: 1; min-height: 0; }
 body.open .main { grid-template-columns: minmax(0, 1fr); }
+body.open .right { grid-column: 1; }
 body.open .left { display: none; }
 body.open .ph .only-open { display: inline-flex; }
 
@@ -69,7 +81,7 @@ body.open .ph .only-open { display: inline-flex; }
 
 @media (max-width: 760px) {
   .main { grid-template-columns: minmax(0, 1fr); }
-  .right { display: none; position: fixed; inset: 0; z-index: 20; }
+  .right { display: none; position: fixed; inset: 0; z-index: 20; grid-column: 1; }
   body.open .right { display: flex; }
   .left { border-right: 0; }
   .find { width: auto; } .find .sp, .find kbd { display: none; }

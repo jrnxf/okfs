@@ -329,7 +329,9 @@ export class Store {
     // A file on screen is loaded again once its folder has been read: see `stamp`.
     for (const name of files) this.restamp(joinPath(here, name));
     // What is kept about the folder and about the files written in it is out of date, on screen or not.
-    forgetAnswers((path) => path === here || (parentOf(path) === here && path !== here && named.has(nameOf(path))));
+    // So is what is kept about each folder above it: the answer for a folder's columns holds the folders under it.
+    const holds = (path: string): boolean => (path ? here.startsWith(`${path}/`) : here !== "");
+    forgetAnswers((path) => path === here || holds(path) || (parentOf(path) === here && named.has(nameOf(path))));
     if (s.status === "loading") return;
     // The folder on screen shows its own entries, how many each folder in it holds, and that it is there at all.
     const inside = dir !== "" && parentOf(dir) === this.real;

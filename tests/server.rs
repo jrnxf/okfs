@@ -2008,3 +2008,82 @@ async fn a_folder_answers_with_its_index_page_only_behind_the_flag() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(config(&body)["target"], missing);
 }
+
+#[tokio::test]
+async fn a_listing_sends_the_levels_under_its_first_entry_only_as_deep_as_allowed() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("top/one/two/three/four/five")).unwrap();
+    fs::write(site.served.join("top/zz.txt"), "beside the folder").unwrap();
+    let app = site.router();
+
+    let asked = json(&app, "/api/list?path=top&limit=5&depth=2").await;
+    assert_eq!(names(&asked), ["one", "zz.txt"]);
+    assert_eq!(asked["under"]["path"], "top/one");
+    assert_eq!(asked["under"]["under"]["path"], "top/one/two");
+    assert_eq!(names(&asked["under"]["under"]), ["three"]);
+    assert!(asked["under"]["under"].get("under").is_none());
+
+    // However many levels are asked for, three come.
+    let greedy = json(&app, "/api/list?path=top&limit=5&depth=99").await;
+    assert_eq!(greedy["under"]["under"]["under"]["path"], "top/one/two/three");
+    assert!(greedy["under"]["under"]["under"].get("under").is_none());
+
+    // No levels unless they are asked for, and none with a whole listing.
+    for uri in ["/api/list?path=top&limit=5", "/api/list?path=top&depth=2"] {
+        assert!(json(&app, uri).await.get("under").is_none(), "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn a_listing_with_levels_is_bounded_in_entries() {
+    let site = Site::new();
+    let wide = site.served.join("wide");
+    fs::create_dir_all(wide.join("0-first")).unwrap();
+    for at in 0..250 {
+        fs::write(wide.join(format!("file{at}.txt")), "x").unwrap();
+    }
+    let app = site.router();
+
+    let column = json(&app, "/api/list?path=wide&limit=1000&depth=1").await;
+    assert_eq!(column["entries"].as_array().unwrap().len(), 200);
+    assert_eq!(column["total"], 251);
+    // A limit alone is as it was: the page asks that way for other things.
+    let plain = json(&app, "/api/list?path=wide&limit=1000").await;
+    assert_eq!(plain["entries"].as_array().unwrap().len(), 251);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_listing_with_levels_reads_nothing_outside_the_served_folder() {
+    use std::os::unix::fs::symlink;
+    let site = Site::new();
+    let lead = site.served.join("lead");
+    fs::create_dir_all(&lead).unwrap();
+    symlink(&site.outside, lead.join("a-out")).unwrap();
+    symlink(site.outside.join("secret.txt"), lead.join("b-out.txt")).unwrap();
+    fs::create_dir_all(lead.join(".hidden-dir")).unwrap();
+    fs::write(lead.join(".hidden-dir/secret.txt"), SECRET).unwrap();
+    let app = site.router();
+
+    for path in [
+        "../outside",
+        "..",
+        "link-out-dir",
+        "lead/a-out",
+        "lead/.hidden-dir",
+        "/etc",
+    ] {
+        let uri = format!("/api/list?path={path}&limit=5&depth=3");
+        assert_eq!(get(&app, &uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+    // The links out and the hidden folder are not entries, so no level is under them.
+    for path in ["", "lead"] {
+        let (response, body) = get(&app, &format!("/api/list?path={path}&limit=50&depth=3")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = String::from_utf8(body).unwrap();
+        assert!(!body.contains(SECRET) && !body.contains("secret"), "{body}");
+    }
+    let lead = json(&app, "/api/list?path=lead&limit=50&depth=3").await;
+    assert!(names(&lead).is_empty());
+    assert!(lead.get("under").is_none());
+}

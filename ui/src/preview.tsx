@@ -1,13 +1,14 @@
-// What the right pane shows for the file or folder under the cursor.
+// What the pane shows for a file.
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type Listing, type TextPreview, getJson, pathOf, urls } from "./api";
+import { type Archive, type TextPreview, getJson, pathOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
-import { LABEL, kindOf } from "./kinds";
-import { type Entry, toEntry, versionOf } from "./store";
+import { LABEL } from "./kinds";
+import { slots } from "./slots";
+import type { Entry } from "./store";
 
 /**
  * Frames and players cost a lot to start. Under a held key, which passes a file faster than one can start,
@@ -68,12 +69,8 @@ const STILL_WAIT = 5000;
 const STILL_WIDTH = 1920;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
-/** Entries listed for a folder under the cursor. */
-const FOLDER_PEEK = 14;
-/** Once the cursor has rested on a folder this long, its first files are asked for: it may be entered next. */
-const FOLDER_REST = 150;
-/** How many of them. */
-const FOLDER_WARM = 10;
+/** Entries listed in the column of a folder: more than a tall window has rows for. */
+const COLUMN_ROWS = 40;
 /**
  * Lines of a source file asked for first: a screen or two of them. Coloring costs by the line, and so does
  * drawing, so the start of a file can be on screen in the frame the cursor reaches it.
@@ -185,11 +182,17 @@ function unpack(picture: HTMLImageElement): void {
   else picture.addEventListener("load", sized, { once: true });
 }
 
+/**
+ * Where the columns of the folder at `path` are had: its listing, and in the same answer the listing of each
+ * folder its first entry leads to, for the slots past its own. One answer, so every column is drawn together.
+ */
+export const columnsUrl = (path: string): string => urls.list(path, COLUMN_ROWS, slots() - 2);
+
 /** The JSON the pane asks for when the cursor is on `entry`, if it asks for any. */
 function addressOf(entry: Entry): string | null {
   switch (entry.kind) {
     case "folder":
-      return urls.list(entry.path, FOLDER_PEEK);
+      return columnsUrl(entry.path);
     case "image":
     case "video":
     case "audio":
@@ -345,8 +348,11 @@ interface Loaded<T> {
  * Without `wait` the request goes out in the task of the move that asked for it, and outlives the move: see
  * `ask`. With `wait` it goes out that many ms later and is cancelled when the address changes first. That is
  * for what is costly and seldom wanted twice: a tile scrolled past, the whole of a large file.
+ *
+ * Without an address nothing is asked for and nothing is kept on screen.
  */
-export function useLoaded<T>(url: string, wait?: number): Loaded<T> {
+export function useLoaded<T>(address: string | null, wait?: number): Loaded<T> {
+  const url = address ?? "";
   const [state, setState] = useState<Loaded<T>>({ url, data: answers.get(url) as T | undefined });
   // Counts the times the answers were dropped while this was on screen. Each one asks again.
   const [dropped, setDropped] = useState(0);
@@ -362,6 +368,10 @@ export function useLoaded<T>(url: string, wait?: number): Loaded<T> {
   // A layout effect runs with the draw that changed the address. A plain effect waits for the next paint,
   // which is half of the time a file has under a held key.
   useLayoutEffect(() => {
+    if (!url) {
+      setState((old) => (old.url || old.data !== undefined ? { url } : old));
+      return;
+    }
     const known = answers.get(url) as T | undefined;
     if (known !== undefined) {
       setState({ url, data: known });
@@ -405,7 +415,7 @@ export function useLoaded<T>(url: string, wait?: number): Loaded<T> {
 }
 
 /** True once `key` has stayed the same for a moment. */
-function useSettled(key: string, delay: number): boolean {
+export function useSettled(key: string, delay: number): boolean {
   const [settled, setSettled] = useState("");
   useEffect(() => {
     const timer = setTimeout(() => setSettled(key), delay);
@@ -492,51 +502,6 @@ function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
     <div class="pv-scroll" key={id}>
       {children}
     </div>
-  );
-}
-
-function Folder({ entry, report }: { entry: Entry; report: Report }) {
-  const { data, url } = useLoaded<Listing>(urls.list(entry.path, FOLDER_PEEK));
-  const total = data?.total;
-  useEffect(() => {
-    if (total !== undefined && url === urls.list(entry.path, FOLDER_PEEK)) report(entry.path, [fmt.items(total)]);
-  }, [entry.path, total, url, report]);
-  // The first move into a folder is the one move nothing was loaded ahead for. A folder the cursor rests on
-  // is likely to be entered, so its first previews are asked for now, as they would be on the way in.
-  const rested = useSettled(entry.path, FOLDER_REST);
-  useEffect(() => {
-    if (!rested || !data || url !== urls.list(entry.path, FOLDER_PEEK)) return;
-    const first = data.entries.slice(0, FOLDER_WARM).map((item, rank) => toEntry(item, data.path, rank));
-    lookAhead(first, -1, 1, versionOf);
-  }, [rested, data, url, entry.path]);
-  if (!data) return null;
-  const more = data.total - data.entries.length;
-  return (
-    <Scroll id={url}>
-      <div class="pv-dir">
-        <div class="hd">
-          <b>{data.path.slice(data.path.lastIndexOf("/") + 1)}</b>
-          <span class="label">{fmt.items(data.total)}</span>
-        </div>
-        {data.entries.map((item) => (
-          <div class="it" key={item.n}>
-            <KindIcon kind={kindOf(item.n, item.d === true)} />
-            <span class="trunc">{item.n}</span>
-            <span class="sz num">{item.d ? (item.c === undefined ? "" : fmt.count(item.c)) : fmt.size(item.s)}</span>
-          </div>
-        ))}
-        {more > 0 && (
-          <div class="it">
-            <span class="label">and {fmt.count(more)} more</span>
-          </div>
-        )}
-        {data.total === 0 && (
-          <div class="it">
-            <span class="label">This folder is empty.</span>
-          </div>
-        )}
-      </div>
-    </Scroll>
   );
 }
 
@@ -1120,7 +1085,8 @@ interface Shown {
 function Kind({ entry, stamp, report, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
   switch (entry.kind) {
     case "folder":
-      return <Folder entry={entry} report={report} />;
+      // A folder has columns beside the list, not a preview: see `Side`.
+      return null;
     case "image":
       return <Picture entry={entry} stamp={stamp} report={report} />;
     case "video":

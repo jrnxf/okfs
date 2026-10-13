@@ -302,9 +302,18 @@ struct PathQuery {
 struct ListQuery {
     #[serde(default)]
     path: String,
-    /// Send only the first entries by name, folders first. For the preview of a folder.
+    /// Send only the first entries by name, folders first. For a folder under the cursor.
     limit: Option<usize>,
+    /// With `limit`: also send what the first entry leads to, this many levels down.
+    /// The page draws a column for each level, and they all come in this one answer.
+    #[serde(default)]
+    depth: usize,
 }
+
+/// Levels sent under a listing, at most.
+const MAX_DEPTH: usize = 3;
+/// Entries sent for each level when levels under it are asked for, at most.
+const MAX_COLUMN: usize = 200;
 
 #[derive(Serialize)]
 struct Item {
@@ -344,21 +353,26 @@ struct Listing {
     entries: Vec<Item>,
     total: usize,
     readme: Option<Readme>,
+    /// The listing of the first entry, when it is a folder and levels were asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    under: Option<Box<Listing>>,
 }
 
-fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
-    let found = app.root.resolve(&query.path).filter(|found| found.meta.is_dir())?;
+/// Lists the folder at `path`. With `limit`, only its first entries, and then what the
+/// first of them leads to, `depth` levels down: see `ListQuery`.
+fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Option<Listing> {
+    let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
     let mut seen = app.root.scan(&found.abs).ok()?;
     let total = seen.len();
     seen.sort_by(|a, b| paths::natural_cmp(&a.name, &b.name));
-    if let Some(limit) = query.limit {
+    if let Some(limit) = limit {
         seen.sort_by_key(|entry| !entry.dir);
         seen.truncate(limit);
     }
 
     let readme = seen
         .iter()
-        .filter(|_| query.limit.is_none())
+        .filter(|_| limit.is_none())
         .find(|entry| !entry.dir && render::is_readme(&entry.name))
         .and_then(|entry| {
             let at = found.abs.join(&entry.name);
@@ -370,7 +384,7 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
             })
         });
 
-    let entries = seen
+    let entries: Vec<Item> = seen
         .into_iter()
         .filter_map(|entry| {
             let at = found.abs.join(&entry.name);
@@ -391,23 +405,37 @@ fn list_folder(app: &App, query: &ListQuery) -> Option<Listing> {
             })
         })
         .collect();
+
+    // Each level is found by its own path, as a request for it would be: what a
+    // request may not read, a level may not either.
+    let under = entries
+        .first()
+        .filter(|first| first.d && limit.is_some() && depth > 0)
+        .and_then(|first| list_folder(app, &paths::join(&found.rel, &first.n), limit, depth - 1))
+        .map(Box::new);
     let real = app
         .root
         .place(&found)
-        .filter(|real| query.limit.is_none() && *real != found.rel);
+        .filter(|real| limit.is_none() && *real != found.rel);
     Some(Listing {
         real,
-        link: query.limit.is_none() && app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
+        link: limit.is_none() && app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
         path: found.rel,
         entries,
         total,
         readme,
+        under,
     })
 }
 
 async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Response {
     let worker = Arc::clone(&app);
-    match tokio::task::spawn_blocking(move || list_folder(&worker, &query)).await {
+    let depth = query.depth.min(MAX_DEPTH);
+    // A listing asked for with its levels is for columns: no column is this long.
+    let limit = query
+        .limit
+        .map(|limit| if depth > 0 { limit.min(MAX_COLUMN) } else { limit });
+    match tokio::task::spawn_blocking(move || list_folder(&worker, &query.path, limit, depth)).await {
         Ok(Some(listing)) => Json(listing).into_response(),
         _ => not_found(),
     }

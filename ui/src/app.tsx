@@ -1,4 +1,4 @@
-// Twin Pane: a dense list on the left, the file under the cursor on the right, a status line below.
+// Twin Pane: a dense list on the left, the file or folder under the cursor beside it, a status line below.
 
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -9,8 +9,10 @@ import { Icon, KindIcon, Sprite } from "./icons";
 import { listKeys } from "./keys";
 import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
-import { DELETE_KEY, MOD, Palette } from "./palette";
-import { Preview, Prose, lookAhead, pagesAhead, useLoaded } from "./preview";
+import { MOD, Palette } from "./palette";
+import { Prose, lookAhead, pagesAhead, useLoaded } from "./preview";
+import { Side } from "./side";
+import { slots } from "./slots";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { type Cell, VGrid } from "./vgrid";
@@ -32,6 +34,11 @@ function useTick(subscribe: (listener: () => void) => () => void): void {
 }
 
 const subscribeStore = (listener: () => void) => store.subscribe(listener);
+/** The slots are cut from the window's width: see `slotsFor`. */
+const subscribeResize = (listener: () => void) => {
+  addEventListener("resize", listener);
+  return () => removeEventListener("resize", listener);
+};
 
 /** A plain click navigates in place; a click meant for a new tab or window is left to the browser. */
 function inPlace(run: () => void) {
@@ -255,18 +262,16 @@ function Empty() {
 export function App() {
   useTick(subscribeStore);
   useTick(onThemeChange);
+  useTick(subscribeResize);
   const { s } = store;
+  const cut = slots();
 
   const scroller = useRef<HTMLDivElement>(null);
   const filterInput = useRef<HTMLInputElement>(null);
   const cols = useRef(1);
   const [filtering, setFiltering] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
-  const [facts, setFacts] = useState<{ path: string; list: string[] }>({ path: "", list: [] });
 
-  const report = useCallback((path: string, list: string[]) => {
-    setFacts((old) => (old.path === path && old.list.join() === list.join() ? old : { path, list }));
-  }, []);
   const onCols = useCallback((count: number) => {
     cols.current = count;
   }, []);
@@ -276,8 +281,6 @@ export function App() {
     requestAnimationFrame(() => filterInput.current?.focus());
   }, []);
 
-  // Without the pane, nothing is shown, and so nothing is loaded, until a file is opened.
-  const shown = s.open ?? (s.pane ? store.cur() : null);
   const here = store.here();
 
   // What lies past the cursor, the way it is moving, is asked for before the cursor gets there.
@@ -289,7 +292,7 @@ export function App() {
     if (s.status !== "ready" || !previewing) return;
     lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
     pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
-  }, [s.cursor, s.entries, s.status, previewing]);
+  }, [s.cursor, s.entries, s.status, previewing, cut]);
 
   useEffect(() => {
     document.body.classList.toggle("open", s.open !== null);
@@ -395,59 +398,6 @@ export function App() {
     // The size is of the files right here; a folder of folders has none to add up.
     `${s.all.some((entry) => !entry.dir) ? ` · ${fmt.size(s.bytes)}` : ""} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
 
-  let header: ComponentChildren = null;
-  if (shown) {
-    const learned = facts.path === shown.path ? facts.list : [];
-    const known = shown.dir ? (learned.length || shown.count === undefined ? learned : [fmt.items(shown.count)]) : [...learned, fmt.size(shown.size)];
-    const files = s.open ? store.files() : [];
-    header = (
-      <>
-        <button class="btn only-open" aria-label="Back to the list" onClick={() => store.close()}>
-          <Icon name="left" />
-        </button>
-        <KindIcon kind={shown.kind} />
-        <span class="nm trunc">{shown.name}</span>
-        <span class="facts trunc num">{[...known, fmt.abs(shown.mtime)].join(" · ")}</span>
-        {!shown.dir && (
-          <>
-            <span class="pos num only-open">
-              {files.indexOf(shown) + 1} / {files.length}
-            </span>
-            <button class="btn only-open" aria-label="Previous file" onClick={() => store.step(-1)}>
-              <Icon name="up" />
-            </button>
-            <button class="btn only-open" aria-label="Next file" onClick={() => store.step(1)}>
-              <Icon name="down" />
-            </button>
-          </>
-        )}
-        <a
-          class="btn"
-          href={shown.dir ? urls.zip(shown.path) : urls.raw(shown.path)}
-          download
-          aria-label={shown.dir ? "Download as a zip" : "Download"}
-          title={shown.dir ? "Download as a zip" : "Download"}
-        >
-          <Icon name="download" />
-        </a>
-        {config.delete && (
-          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(shown)}>
-            <Icon name="trash" />
-          </button>
-        )}
-        {!shown.dir && s.pane && (
-          <button
-            class="btn widen"
-            aria-label={s.open ? "Back to two panes" : "Full width"}
-            onClick={() => (s.open ? store.close() : store.activate())}
-          >
-            <Icon name={s.open ? "pane" : "expand"} />
-          </button>
-        )}
-      </>
-    );
-  }
-
   return (
     <>
       <Sprite />
@@ -478,7 +428,7 @@ export function App() {
         </div>
       </header>
       {config.header && <Prose class="note" html={config.header} />}
-      <div class="main">
+      <div class="main" style={`--slots: ${cut}`}>
         <section class="left" onClick={onListClick} onDblClick={onListDoubleClick}>
           {s.view === "list" && <Columns />}
           <VGrid
@@ -503,10 +453,7 @@ export function App() {
             )}
           </VGrid>
         </section>
-        <section class="right">
-          <div class="ph">{header}</div>
-          <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} />}</div>
-        </section>
+        <Side slots={cut} />
       </div>
       <footer class={filtering || s.filter ? "status filtering" : "status"}>
         <span class="mode">{s.open ? "view" : s.filter ? "filter" : "browse"}</span>
