@@ -64,18 +64,22 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
   );
 }
 
-const KEYS: [string[], string][] = [
+type Key = [string[], string];
+
+/** The keys as they work now: the one that flips a file to its source is listed only on a file that has one. */
+const keys = (): Key[] => [
   [["j", "k"], "Move down and up (arrows work too)"],
-  [["↵"], "Open the folder or file"],
+  [["↵"], "Open the folder, or the file at full width"],
+  [["space"], "Open or close the preview"],
+  ...(store.flippable() ? [[["r"], "Rendered or source"] satisfies Key] : []),
   [["⌫"], "Up one folder"],
   [["/"], "Filter this folder"],
   [[`${MOD} K`], "Find anything in the tree"],
   [["g"], "List or grid"],
-  [["p"], "Two panes or one folder"],
   [["s"], "Change the sort"],
   [["t"], "Light or dark"],
-  [["esc"], "Close the preview"],
-  ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies [string[], string]] : []),
+  [["esc"], "Close the file, the preview or the filter"],
+  ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies Key] : []),
   [["?"], "This list"],
 ];
 
@@ -85,10 +89,10 @@ export function Help() {
       <div class="help" role="dialog" aria-label="Keyboard shortcuts">
         <h2>Keyboard</h2>
         <dl>
-          {KEYS.map(([keys, what]) => (
+          {keys().map(([caps, what]) => (
             <>
               <dt>
-                {keys.map((key) => (
+                {caps.map((key) => (
                   <kbd>{key}</kbd>
                 ))}
               </dt>

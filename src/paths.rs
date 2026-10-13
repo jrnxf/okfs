@@ -5,6 +5,7 @@ use std::ffi::OsStr;
 use std::fs::{self, FileType, Metadata};
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering as Atomic};
 use std::time::SystemTime;
 
 /// The served folder and the rules for what inside it may be shown.
@@ -96,6 +97,19 @@ pub struct Seen {
     pub dir: bool,
     /// Reached through a symbolic link. Links are shown, but never walked into.
     pub link: bool,
+}
+
+/// What a folder holds, counted down through every folder in it.
+#[derive(Debug, Default, PartialEq)]
+pub struct Sum {
+    pub files: usize,
+    pub folders: usize,
+    /// The bytes in those files.
+    pub bytes: u64,
+    /// The file written last: its path under the folder, and when.
+    pub newest: Option<(String, SystemTime)>,
+    /// The count stopped at its limit: the folder holds more than this says.
+    pub cut: bool,
 }
 
 impl Root {
@@ -303,6 +317,49 @@ impl Root {
         meta.is_file().then(|| meta.modified().ok()).flatten()
     }
 
+    /// Adds up the folder at `abs`, which must come from `resolve`, and every folder in it.
+    /// Only what is shown is counted. A link is counted and not gone into, as the index
+    /// does, so nothing is counted twice and the count ends. It reads `limit` entries at
+    /// most, the nearest folders first, and says so when it stopped there: a tree of a
+    /// million files costs what one of `limit` does. `gone` turning true stops it too.
+    pub fn sum(&self, abs: &Path, limit: usize, gone: &AtomicBool) -> Sum {
+        let mut sum = Sum::default();
+        let mut read = 0;
+        let mut todo = std::collections::VecDeque::from([(abs.to_path_buf(), String::new())]);
+        while let Some((dir, rel)) = todo.pop_front() {
+            if gone.load(Atomic::Relaxed) {
+                sum.cut = true;
+                break;
+            }
+            let Ok(seen) = self.scan(&dir) else { continue };
+            for entry in seen {
+                if read == limit {
+                    sum.cut = true;
+                    return sum;
+                }
+                read += 1;
+                let at = dir.join(&entry.name);
+                let path = join(&rel, &entry.name);
+                if entry.dir {
+                    sum.folders += 1;
+                    if !entry.link {
+                        todo.push_back((at, path));
+                    }
+                    continue;
+                }
+                sum.files += 1;
+                let Ok(meta) = fs::metadata(&at) else { continue };
+                sum.bytes += meta.len();
+                if let Ok(written) = meta.modified()
+                    && sum.newest.as_ref().is_none_or(|(_, newest)| written > *newest)
+                {
+                    sum.newest = Some((path, written));
+                }
+            }
+        }
+        sum
+    }
+
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
     pub fn scan(&self, abs: &Path) -> io::Result<Vec<Seen>> {
         let mut out = Vec::new();
@@ -432,6 +489,43 @@ mod tests {
         for name in ["link.txt", "folder", "missing.txt"] {
             assert!(root.modified(served, name).is_none(), "{name}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_is_added_up_through_its_folders_and_not_through_a_link_or_past_its_limit() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, outside) = served_beside_outside();
+        let top = root.dir().join("top");
+        fs::create_dir_all(top.join("a/b")).unwrap();
+        fs::write(top.join("one.txt"), "1").unwrap();
+        fs::write(top.join("a/two.txt"), "22").unwrap();
+        fs::write(top.join("a/b/three.txt"), "333").unwrap();
+        fs::write(top.join("a/.hidden"), "not shown").unwrap();
+        // A link back up would never end, and a link out is not shown at all.
+        symlink(&top, top.join("a/b/loop")).unwrap();
+        symlink(&outside, top.join("out")).unwrap();
+        let later = SystemTime::now() + std::time::Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(top.join("a/two.txt"))
+            .and_then(|file| file.set_modified(later))
+            .unwrap();
+        let stays = AtomicBool::new(false);
+
+        let sum = root.sum(&top, 100, &stays);
+        assert_eq!((sum.files, sum.folders, sum.bytes, sum.cut), (3, 3, 6, false));
+        assert_eq!(sum.newest, Some(("a/two.txt".to_owned(), later)));
+
+        // The nearest entries are counted first, and the count says it stopped.
+        let cut = root.sum(&top, 2, &stays);
+        assert_eq!((cut.files + cut.folders, cut.cut), (2, true));
+        assert!(cut.bytes <= 1);
+        // Exactly at the limit nothing was left out.
+        assert!(!root.sum(&top, 6, &stays).cut);
+        // A reader who left stops it before it reads anything.
+        let left = root.sum(&top, 100, &AtomicBool::new(true));
+        assert_eq!((left.files, left.cut), (0, true));
     }
 
     #[cfg(unix)]

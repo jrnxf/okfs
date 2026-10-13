@@ -1,12 +1,13 @@
-// What the pane shows for a file: the one under the cursor, or the one the path of the folder under it ends on.
+// What the pane shows for a file: the one under the cursor while the preview is open, or the one given the
+// full width.
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type Listing, type TextPreview, getJson, joinPath, pathOf, urls } from "./api";
+import { type Archive, type TextPreview, getJson, pathOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
-import { LABEL } from "./kinds";
+import { LABEL, hasSource } from "./kinds";
 import { slots } from "./slots";
 import type { Entry } from "./store";
 
@@ -97,11 +98,6 @@ const AHEAD_PICTURES = 10;
  */
 const AHEAD_UNPACKED = 3;
 const UNPACK_PIXELS = 8_000_000;
-/**
- * A picture at the end of a folder's path larger than this waits under a held key, as a large page does: the
- * key passes a folder faster than the picture can come, and each one started takes the line from the columns.
- */
-const END_PICTURE_BYTES = 1024 * 1024;
 /** Requests of the pane on their way at once. Past this the oldest gives way. */
 const FLIGHTS = 12;
 
@@ -116,17 +112,6 @@ function remember(url: string, data: unknown): void {
   answers.set(url, data);
   // Oldest first out: a Map keeps insertion order.
   if (answers.size > 200) answers.delete(answers.keys().next().value as string);
-}
-
-/**
- * The answer for a folder's columns holds the start of the text file its path ends on. It is kept as the
- * answer that file would give when asked, so the file is drawn with its columns and never asked for.
- */
-function keepStart(data: unknown): void {
-  for (let at = data as Listing | undefined; at && Array.isArray(at.entries); at = at.under) {
-    const first = at.entries[0];
-    if (at.start && first) remember(startUrl(joinPath(at.path, first.n)), at.start);
-  }
 }
 
 /**
@@ -170,10 +155,7 @@ function ask<T>(url: string): Promise<T> {
   flight.done = getJson<T>(url, flight.abort.signal)
     .then((data) => {
       // An answer to a request that was dropped describes a file that has changed since.
-      if (flights.get(url)?.abort === flight.abort) {
-        remember(url, data);
-        keepStart(data);
-      }
+      if (flights.get(url)?.abort === flight.abort) remember(url, data);
       return data;
     })
     .finally(() => land(url, flight));
@@ -181,8 +163,9 @@ function ask<T>(url: string): Promise<T> {
   return flight.done as Promise<T>;
 }
 
-/** The start of a text file: what the pane asks for first. */
-const startUrl = (path: string): string => `${urls.preview(path)}&lines=${FIRST_LINES}`;
+/** The start of a text file, by the address of the whole of it: what the pane asks for first. */
+const startOf = (whole: string): string => `${whole}&lines=${FIRST_LINES}`;
+const startUrl = (path: string): string => startOf(urls.preview(path));
 
 /** Pictures loaded ahead of the cursor, held so the browser keeps them. */
 const pictures: HTMLImageElement[] = [];
@@ -204,14 +187,14 @@ function unpack(picture: HTMLImageElement): void {
 /**
  * Where the columns of the folder at `path` are had: its listing, and in the same answer the listing of each
  * folder its first entry leads to, for the slots past its own. One answer, so every column is drawn together.
+ * It holds names, sizes and times, and nothing read from a file.
  */
 export const columnsUrl = (path: string): string => urls.list(path, COLUMN_ROWS, slots() - 2);
 
-/** The JSON the pane asks for when the cursor is on `entry`, if it asks for any. */
+/** The JSON the pane asks for when the preview is open on the file `entry`, if it asks for any. */
 function addressOf(entry: Entry): string | null {
   switch (entry.kind) {
     case "folder":
-      return columnsUrl(entry.path);
     case "image":
     case "video":
     case "audio":
@@ -300,16 +283,23 @@ function sheetOf(entry: Entry): string {
 }
 
 /**
- * Asks for what lies past the cursor in the direction it moves, so a preview is here before the cursor is.
- * `stamp` gives the stamp a picture is loaded under.
+ * Asks for what lies past the cursor in the direction it moves, so that it is here before the cursor is.
+ * With the preview closed that is the columns of each folder, and nothing about any file. With `previews`,
+ * while it is open, it is the preview of each file. `stamp` gives the stamp a picture is loaded under.
  */
-export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string): void {
+export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string, previews: boolean): void {
   // Text files whose start is not known and not on its way, nearest first.
   const unknown: { url: string; path: string }[] = [];
   let nearest = 0;
   for (let i = 1; i <= AHEAD; i++) {
     const entry = entries[cursor + step * i];
     if (!entry) break;
+    if (entry.dir) {
+      // An open preview adds a folder up, which is not done for a folder the cursor may never stop on.
+      if (!previews && flights.size < FLIGHTS) ask(columnsUrl(entry.path)).catch(() => undefined);
+      continue;
+    }
+    if (!previews) continue;
     const url = addressOf(entry);
     if (url === startUrl(entry.path)) {
       if (answers.get(url) !== undefined || flights.has(url)) continue;
@@ -546,29 +536,23 @@ function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
   );
 }
 
-function Picture({ entry, stamp, report, end }: Shown) {
+function Picture({ entry, stamp, report }: Shown) {
   // The stamp makes a rewritten picture a new address: a page keeps the pictures it has loaded by address.
   const src = `${urls.raw(entry.path)}?v=${stamp}`;
   const [broken, setBroken] = useState("");
-  // The picture under the cursor is asked for with the move. One at the end of a folder's path gives way to
-  // what the cursor is on, and a large one waits under a held key: see `END_PICTURE_BYTES`.
-  const go = useStarted(entry.path, !end || entry.size <= END_PICTURE_BYTES);
   if (broken === src) return <Card entry={entry} line="This image could not be shown" />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
   return (
     <div class="pv-center">
-      {go && (
-        <img
-          src={src}
-          alt={entry.name}
-          fetchpriority={end ? "low" : undefined}
-          onLoad={(event) => {
-            const { naturalWidth, naturalHeight } = event.currentTarget;
-            if (naturalWidth) report(entry.path, [`${naturalWidth} × ${naturalHeight}`]);
-          }}
-          onError={() => setBroken(src)}
-        />
-      )}
+      <img
+        src={src}
+        alt={entry.name}
+        onLoad={(event) => {
+          const { naturalWidth, naturalHeight } = event.currentTarget;
+          if (naturalWidth) report(entry.path, [`${naturalWidth} × ${naturalHeight}`]);
+        }}
+        onError={() => setBroken(src)}
+      />
     </div>
   );
 }
@@ -685,7 +669,7 @@ const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind 
  * the picture of this one lies over the frames from the move itself until the viewer has drawn its own: it
  * is see-through until it has arrived, so nothing is shown later than it would be without it.
  */
-function Page({ entry, stamp, end }: { entry: Entry; stamp: string; end?: boolean }) {
+function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
   const pdf = entry.kind === "pdf";
   const address = frameUrl(entry);
   // A rewritten file is the same address with a new stamp: it is loaded again.
@@ -886,7 +870,6 @@ function Page({ entry, stamp, end }: { entry: Entry; stamp: string; end?: boolea
             key={sheet}
             src={sheet}
             alt=""
-            fetchpriority={end ? "low" : undefined}
             onLoad={() => {
               sheets.add(sheet);
               arrived(sheet);
@@ -1024,11 +1007,12 @@ export function Prose({ html, class: extra }: { html: string; class?: string }) 
   return <article class={extra ? `md ${extra}` : "md"} onClick={onProseClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function Text({ entry, report }: { entry: Entry; report: Report }) {
+/** A text file as what is made from it, or with `source` as it is written: its text as source code. */
+function Text({ entry, report, source }: { entry: Entry; report: Report; source?: boolean }) {
   // The start of the file comes first. The whole of it is asked for once the cursor has rested, and only
   // when the start says there is more: a short file, a table and a Markdown file are whole already.
-  const whole = urls.preview(entry.path);
-  const start = startUrl(entry.path);
+  const whole = source ? urls.source(entry.path) : urls.preview(entry.path);
+  const start = startOf(whole);
   const rested = useSettled(entry.path, WHOLE_REST);
   const head = useLoaded<TextPreview>(start);
   const cut = head.url === start && head.data?.kind === "code" && head.data.more === true;
@@ -1039,10 +1023,10 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
   // position when the whole file takes the place of its start.
   const url = from.replace(/&lines=\d+$/, "");
   useEffect(() => {
-    if (!data || url !== urls.preview(entry.path)) return;
+    if (!data || url !== whole) return;
     if (data.kind === "table") report(entry.path, [`${fmt.count(data.total)} ${data.total === 1 ? "row" : "rows"}`]);
     else if (data.kind !== "none" && data.kind !== "doc") report(entry.path, [`${fmt.count(data.lines)} ${data.lines === 1 ? "line" : "lines"}`]);
-  }, [entry.path, data, url, report]);
+  }, [entry.path, data, url, whole, report]);
 
   if (failed) return <Card entry={entry} line="This file could not be read" />;
   if (!data) return null;
@@ -1051,7 +1035,7 @@ function Text({ entry, report }: { entry: Entry; report: Report }) {
       return null;
     case "none":
       // A card names its file, so it is never shown for the one before.
-      if (url !== urls.preview(entry.path)) return null;
+      if (url !== whole) return null;
       return <Card entry={entry} line={data.reason === "large" ? "Too large to preview" : "No preview for this type"} />;
     case "markdown":
       return (
@@ -1115,23 +1099,25 @@ interface Shown {
   entry: Entry;
   stamp: string;
   report: Report;
-  /** The file is not under the cursor: it is the one the path of the folder under the cursor ends on. */
-  end?: boolean;
+  /** Show the file's source in place of what is made from it. Only a file with both has it: see `hasSource`. */
+  raw?: boolean;
 }
 
-function Kind({ entry, stamp, report, end, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
+function Kind({ entry, stamp, report, raw, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
+  // The bytes as they are, colored and never run: the same answer for a page, a drawing, a table.
+  if (raw && hasSource(entry)) return <Text entry={entry} report={report} source />;
   switch (entry.kind) {
     case "folder":
-      // A folder has columns beside the list, not a preview: see `Side`.
+      // A folder has columns or a panel of its own beside the list: see `Side`.
       return null;
     case "image":
-      return <Picture entry={entry} stamp={stamp} report={report} end={end} />;
+      return <Picture entry={entry} stamp={stamp} report={report} />;
     case "video":
     case "audio":
       return <Media entry={entry} stamp={stamp} report={report} waiting={waiting} left={left} onReady={onReady} />;
     case "pdf":
     case "html":
-      return <Page entry={entry} stamp={stamp} end={end} />;
+      return <Page entry={entry} stamp={stamp} />;
     case "archive":
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;

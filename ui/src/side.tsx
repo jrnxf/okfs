@@ -1,18 +1,20 @@
-// What is beside the main list: the file under the cursor, or a column for the folder under it and for each
-// folder its first entry leads to, and then the file that path ends on.
+// What is beside the main list. With the preview closed: a column for the folder under the cursor and for
+// each folder its first entry leads to, or the facts the list has of the file under it. With it open: the
+// file under the cursor as it is shown, or the folder under it added up.
 
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
-import { type Item, type Listing, urls } from "./api";
+import { useCallback, useEffect, useState } from "preact/hooks";
+import { type FolderSum, type Item, type Listing, nameOf, parentOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
+import { LABEL, hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
-import { Preview, columnsUrl, lookAhead, useLoaded, useSettled } from "./preview";
-import { chainOf } from "./slots";
+import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled } from "./preview";
+import { columnsOf } from "./slots";
 import { type Entry, store, toEntry, versionOf } from "./store";
 
-/** Once the cursor has rested on a folder this long, its first files are asked for: it may be entered next. */
+/** Once the preview has rested on a folder this long, its first files are asked for: it may be entered next. */
 const FOLDER_REST = 150;
 /** How many of them. */
 const FOLDER_WARM = 10;
@@ -25,9 +27,12 @@ function visit(listing: Listing, item: Item, open: boolean): void {
   else void store.showDir(listing.path, { select: item.n });
 }
 
+/** A click on a button of a header leaves the focus where it was, so the keys go on working on the list. */
+const keepFocus = (event: MouseEvent) => event.preventDefault();
+
 /**
  * One folder as a column: its own header, then its first entries as the main list draws them, in name order.
- * `followed` marks the first entry: the next slot shows it, the inside of a folder or the preview of a file.
+ * `followed` marks the first entry: the next column is the inside of it.
  */
 function Column({ folder, listing, followed, edge }: { folder: Entry; listing: Listing | undefined; followed: boolean; edge: boolean }) {
   // The listing on screen is the last one's until this folder's has come.
@@ -45,7 +50,7 @@ function Column({ folder, listing, followed, edge }: { folder: Entry; listing: L
   };
   return (
     <section class={edge ? "col edge" : "col"} aria-label={folder.name}>
-      <div class="ph">
+      <div class="ph" onMouseDown={keepFocus}>
         <KindIcon kind="folder" />
         <span class="nm trunc">{folder.name}</span>
         <span class="facts trunc num">{facts.join(" · ")}</span>
@@ -90,37 +95,141 @@ function Column({ folder, listing, followed, edge }: { folder: Entry; listing: L
   );
 }
 
+/**
+ * The file under the cursor while the preview is closed: what the list already knows of it, and the way to
+ * open the preview. Nothing here asks the server about the file, so a held key costs a few words a move.
+ */
+function Closed({ entry }: { entry: Entry }) {
+  return (
+    <div class="pv-center">
+      <div class="pv-card" onMouseDown={keepFocus}>
+        <KindIcon kind={entry.kind} />
+        <b>{entry.name}</b>
+        <span>
+          {LABEL[entry.kind]} · {fmt.size(entry.size)}
+        </span>
+        <button class="btn btn-line" onClick={() => store.setPeek(true)}>
+          Preview
+          <kbd>space</kbd>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const plural = (n: number, one: string, many: string): string => `${fmt.count(n)} ${n === 1 ? one : many}`;
+
+/**
+ * The folder under the cursor while the preview is open: how much it holds, how large it is with everything in
+ * it, what was written last, its notes, and the whole of it as a zip.
+ */
+function Folder({ folder }: { folder: Entry }) {
+  const url = urls.folder(folder.path);
+  const loaded = useLoaded<FolderSum>(url);
+  // Numbers are of this folder or they are not shown: the last folder's would be wrong under this one's name.
+  const sum = loaded.data?.path === folder.path ? loaded.data : undefined;
+  const failed = loaded.failed === true && loaded.url === url;
+
+  // The first move into a folder is the one move nothing was loaded ahead for. A folder the preview rests on
+  // is likely to be entered, so its first previews are asked for now, as they would be on the way in.
+  const rested = useSettled(folder.path, FOLDER_REST);
+  const warm = rested ? urls.list(folder.path, FOLDER_WARM) : null;
+  const first = useLoaded<Listing>(warm);
+  useEffect(() => {
+    if (!warm || first.url !== warm || first.data?.path !== folder.path) return;
+    const files = first.data.entries.map((item, rank) => toEntry(item, folder.path, rank));
+    lookAhead(files, -1, 1, versionOf, true);
+  }, [warm, first.url, first.data, folder.path]);
+
+  const items = sum?.items ?? folder.count;
+  const newest = sum?.newest ?? null;
+  const within = (path: string): string => path.slice(folder.path.length + 1);
+  return (
+    <div class="pv-scroll fp" key={folder.path} data-name={folder.name} data-ready={sum ? "1" : undefined}>
+      <div class="fp-in">
+        <dl class="fp-stats" onMouseDown={keepFocus}>
+          <div>
+            <dt class="label">Items</dt>
+            <dd class="num">{items === undefined ? "–" : fmt.count(items)}</dd>
+            <span>
+              {!sum
+                ? " "
+                : sum.items === 0
+                  ? "This folder is empty"
+                  : `${[plural(sum.files, "file", "files"), ...(sum.folders ? [plural(sum.folders, "folder", "folders")] : [])].join(" and ")} in all${sum.cut ? ", and more" : ""}`}
+            </span>
+          </div>
+          <div>
+            <dt class="label">Total size</dt>
+            <dd class="num">{sum ? `${sum.cut ? "over " : ""}${fmt.size(sum.bytes)}` : "–"}</dd>
+            <span>{!sum ? " " : sum.cut ? `Counted in the first ${fmt.count(sum.files + sum.folders)} entries` : "With everything in it"}</span>
+          </div>
+          <div>
+            <dt class="label">Newest change</dt>
+            <dd class="num">{sum ? (newest ? fmt.abs(newest.m) : "–") : "–"}</dd>
+            {newest ? (
+              <button class="trunc" title={`/${newest.path}`} onClick={() => void store.showDir(parentOf(newest.path), { select: nameOf(newest.path) })}>
+                {within(newest.path)}
+              </button>
+            ) : (
+              <span>{sum ? "No files in it" : " "}</span>
+            )}
+          </div>
+        </dl>
+        <div class="fp-do" onMouseDown={keepFocus}>
+          <a class="btn btn-line" href={urls.zip(folder.path)} download>
+            <Icon name="download" />
+            Download as zip
+          </a>
+          <button class="btn btn-line" onClick={() => void store.showDir(folder.path)}>
+            Open
+            <kbd>↵</kbd>
+          </button>
+        </div>
+        {failed && <p class="fp-note">This folder could not be read.</p>}
+        {sum?.readme && (
+          <section class="fp-readme">
+            <div class="readme-hd label">
+              <KindIcon kind="md" />
+              {sum.readme.name}
+            </div>
+            <Prose html={sum.readme.html} />
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Side({ slots }: { slots: number }) {
   const { s } = store;
-  // Without the pane, nothing is shown, and so nothing is loaded, until a file is opened.
-  const cur = s.pane ? store.cur() : null;
+  const cur = store.cur();
+  const file = s.open ?? (cur && !cur.dir ? cur : null);
   const folder = !s.open && cur?.dir ? cur : null;
+  /** The file is shown, not only named: it is at full width, or the preview is open on it. */
+  const shown = store.shown() !== null;
 
   const [facts, setFacts] = useState<{ path: string; list: string[] }>({ path: "", list: [] });
   const report = useCallback((path: string, list: string[]) => {
     setFacts((old) => (old.path === path && old.list.join() === list.join() ? old : { path, list }));
   }, []);
 
-  const url = folder ? columnsUrl(folder.path) : null;
-  const { data, url: from } = useLoaded<Listing>(url);
-  const { levels, file: last } = folder ? chainOf(data, slots) : { levels: [], file: null };
-  // The file the folder's path ends on. It is the same entry from draw to draw, as an entry of the list is.
-  const end = useMemo(() => (last ? toEntry(last.item, last.dir, 0) : null), [last?.item, last?.dir]);
-  const file = s.open ?? (cur && !cur.dir ? cur : end);
+  // A folder has its columns while the preview is closed, and is added up in the pane while it is open.
+  const columns = folder && !s.peek ? folder : null;
+  const summed = folder && s.peek ? folder : null;
+  const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path) : null);
+  const levels = columns ? columnsOf(data, slots) : [];
 
-  // The first move into a folder is the one move nothing was loaded ahead for. A folder the cursor rests on
-  // is likely to be entered, so its first previews are asked for now, as they would be on the way in.
-  const rested = useSettled(folder?.path ?? "", FOLDER_REST);
-  useEffect(() => {
-    if (!rested || !data || !url || from !== url) return;
-    const first = data.entries.slice(0, FOLDER_WARM).map((item, rank) => toEntry(item, data.path, rank));
-    lookAhead(first, -1, 1, versionOf);
-  }, [rested, data, from, url]);
-
+  const unpeek = s.peek && !s.open && (
+    <button class="btn" aria-label="Close the preview" title="Close the preview (space)" onClick={() => store.setPeek(false)}>
+      <Icon name="close" />
+    </button>
+  );
   let header: ComponentChildren = null;
   if (file) {
-    const learned = facts.path === file.path ? facts.list : [];
+    const learned = shown && facts.path === file.path ? facts.list : [];
     const files = s.open ? store.files() : [];
+    const raw = s.raw === file.path;
     header = (
       <>
         <button class="btn only-open" aria-label="Back to the list" onClick={() => store.close()}>
@@ -138,24 +247,44 @@ export function Side({ slots }: { slots: number }) {
         <button class="btn only-open" aria-label="Next file" onClick={() => store.step(1)}>
           <Icon name="down" />
         </button>
+        {shown && hasSource(file) && (
+          <button class="btn" aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw()}>
+            <Icon name="code" />
+          </button>
+        )}
         <a class="btn" href={urls.raw(file.path)} download aria-label="Download" title="Download">
           <Icon name="download" />
         </a>
         {config.delete && (
-          // The key deletes what is under the cursor, which the file at the end of a path is not.
-          <button class="btn" aria-label="Delete" title={file === end ? "Delete" : `Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
+          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
             <Icon name="trash" />
           </button>
         )}
-        {s.pane && (
-          <button
-            class="btn widen"
-            aria-label={s.open ? "Back to two panes" : "Full width"}
-            onClick={() => (s.open ? store.close() : file === end ? void store.go(file.path, false) : store.activate())}
-          >
-            <Icon name={s.open ? "pane" : "expand"} />
+        <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
+          <Icon name={s.open ? "pane" : "expand"} />
+        </button>
+        {unpeek}
+      </>
+    );
+  } else if (summed) {
+    header = (
+      <>
+        <KindIcon kind="folder" />
+        <span class="nm trunc">{summed.name}</span>
+        <span class="facts trunc num">{fmt.abs(summed.mtime)}</span>
+        {config.delete && (
+          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(summed)}>
+            <Icon name="trash" />
           </button>
         )}
+        {unpeek}
+      </>
+    );
+  } else if (!cur) {
+    header = (
+      <>
+        <span class="sp" />
+        {unpeek}
       </>
     );
   }
@@ -164,18 +293,24 @@ export function Side({ slots }: { slots: number }) {
     <section class="right">
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
-      {(file || !cur) && (
+      {!columns && (
         <div class="pane" key="pane">
-          <div class="ph">{header}</div>
-          <div class="pv">{file && <Preview entry={file} stamp={store.stamp(file)} report={report} end={file === end} />}</div>
+          <div class="ph" onMouseDown={keepFocus}>
+            {header}
+          </div>
+          <div class="pv">
+            {file && shown && <Preview entry={file} stamp={store.stamp(file)} report={report} raw={s.raw === file.path} />}
+            {file && !shown && <Closed entry={file} />}
+            {summed && <Folder folder={summed} />}
+          </div>
         </div>
       )}
       {levels.map((listing, level) => {
         const above = levels[level - 1];
         const first = above?.entries[0];
         // The folder under the cursor heads the first column. Each one after is the first entry of the one before.
-        const head = level === 0 ? folder : above && first ? toEntry(first, above.path, 0) : null;
-        return head && <Column key={level} folder={head} listing={listing} followed={level + 1 < levels.length || end !== null} edge={level === slots - 2} />;
+        const head = level === 0 ? columns : above && first ? toEntry(first, above.path, 0) : null;
+        return head && <Column key={level} folder={head} listing={listing} followed={level + 1 < levels.length} edge={level === slots - 2} />;
       })}
     </section>
   );

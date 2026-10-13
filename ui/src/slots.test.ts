@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import type { Listing } from "./api";
-import { chainOf, slotsFor } from "./slots";
+import { columnsOf, slotsFor } from "./slots";
 
 /** A folder holding one folder under another, `depth` deep, the last one holding `last`. */
 function nest(depth: number, last: Listing["entries"] = []): Listing {
@@ -17,36 +17,20 @@ test("a window has four slots from 1,200 px, three from 900 px and two under tha
   expect([899, 800, 761, 320].map(slotsFor)).toEqual([2, 2, 2, 2]);
 });
 
-const file = { n: "a.txt", s: 1, m: 0 };
-/** How many columns, and whether a file is previewed after them. */
-const shape = (listing: Listing | undefined, slots: number): [number, boolean] => {
-  const { levels, file } = chainOf(listing, slots);
-  return [levels.length, file !== null];
-};
-
 test("each folder down the first entries takes a slot, while there are slots", () => {
   const deep = nest(6);
-  expect(shape(deep, 4)).toEqual([3, false]);
-  expect(shape(deep, 3)).toEqual([2, false]);
-  expect(shape(deep, 2)).toEqual([1, false]);
-  expect(shape(nest(2), 4)).toEqual([2, false]);
+  expect(columnsOf(deep, 4).length).toBe(3);
+  expect(columnsOf(deep, 3).length).toBe(2);
+  expect(columnsOf(deep, 2).length).toBe(1);
+  expect(columnsOf(nest(2), 4).length).toBe(2);
 });
 
-test("the file the path ends on is previewed only when a slot is left for it", () => {
-  expect(shape(nest(1, [file]), 4)).toEqual([1, true]);
-  expect(shape(nest(2, [file]), 4)).toEqual([2, true]);
-  expect(shape(nest(3, [file]), 4)).toEqual([3, false]);
-  expect(shape(nest(1, [file]), 3)).toEqual([1, true]);
-  expect(shape(nest(2, [file]), 3)).toEqual([2, false]);
-  expect(shape(nest(1, [file]), 2)).toEqual([1, false]);
-  expect(chainOf({ ...nest(1, [file]), path: "top" }, 4).file).toEqual({ dir: "top", item: file });
-});
-
-test("the columns stop at an empty folder and at a level that did not come", () => {
-  expect(shape(nest(1), 4)).toEqual([1, false]);
+test("the columns stop at a file, at an empty folder and at a level that did not come", () => {
+  expect(columnsOf(nest(1, [{ n: "a.txt", s: 1, m: 0 }]), 4).length).toBe(1);
+  expect(columnsOf(nest(1), 4).length).toBe(1);
   const cut = nest(3);
   delete cut.under?.under;
-  expect(shape(cut, 4)).toEqual([2, false]);
+  expect(columnsOf(cut, 4).length).toBe(2);
   // A folder whose answer is on its way has its column already.
-  expect(chainOf(undefined, 4)).toEqual({ levels: [undefined], file: null });
+  expect(columnsOf(undefined, 4)).toEqual([undefined]);
 });

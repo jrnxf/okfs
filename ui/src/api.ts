@@ -26,8 +26,22 @@ export interface Listing {
   readme: Readme | null;
   /** The listing of the first entry, when levels were asked for and it is a folder. */
   under?: Listing;
-  /** The start of the first entry, when levels were asked for and it is a small text file. */
-  start?: TextPreview;
+}
+
+/** A folder added up, for its preview. */
+export interface FolderSum {
+  path: string;
+  /** The entries right in the folder. */
+  items: number;
+  /** The files and folders in it at every depth, and the bytes in those files. */
+  files: number;
+  folders: number;
+  bytes: number;
+  /** The file written last, at any depth, with its time in seconds. */
+  newest: Changed | null;
+  /** The server stopped counting at its limit: the folder holds more than this says. */
+  cut?: boolean;
+  readme: Readme | null;
 }
 
 export type TextPreview =
@@ -75,10 +89,14 @@ const RESERVED = new Set(["api", "raw", "zip", "assets", "theme.css", "-"]);
 const encode = (path: string): string => path.split("/").map(encodeURIComponent).join("/");
 
 export const urls = {
-  /** With `limit`, the first entries only; with `depth`, also what the first entry leads to, that many levels down. */
+  /** With `limit`, the first entries only; with `depth`, also the folders the first entry leads to, that many levels down. */
   list: (path: string, limit?: number, depth?: number) =>
     `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}${depth ? `&depth=${depth}` : ""}`,
+  /** A folder added up: what its preview shows. */
+  folder: (path: string) => `/api/folder?path=${encodeURIComponent(path)}`,
   preview: (path: string) => `/api/preview?path=${encodeURIComponent(path)}`,
+  /** The text of a file as it is written, as source code, whatever the file is. */
+  source: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&raw=1`,
   /** Several text files in one answer, by path, source code cut to its first `lines` lines. */
   previews: (paths: string[], lines: number) =>
     `/api/previews?lines=${lines}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,

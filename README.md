@@ -8,9 +8,11 @@
 
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
-- A dense list on the left, the file under the cursor beside it. Hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too.
-- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the list of its first folder in the next, as far down as the window has room. When that path reaches a file, its preview takes the room that is left. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, with the start of a text file the path ends on, so a held key shows them as it passes. A page at the end of the path runs its scripts as one under the cursor does.
-- Or one folder at a time: `p` takes the pane away. The list is the page, in one column down the middle, nothing is loaded until a file is opened, and the file opens over the whole window. The choice is kept.
+- A dense list on the left, and beside it what is under the cursor. Moving the cursor asks nothing about a file, so the list moves as fast as a held `j` repeats.
+- `Space` opens the preview, as it does in the Finder: the file under the cursor is shown beside the list and follows the cursor until `Space` or `Esc` closes it. It starts closed on every visit. With it open, hold `j` to flip through a folder: every file's preview shows as the cursor passes it. A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too. A phone has no space bar: there a tap opens the file over the list.
+- `r` flips a file between what okfs makes of it and its source. An HTML page, Markdown, an SVG drawing, a CSV table and JSON each show their text as it is written, colored and never run. It works in the preview and at full width, and there is a button for it beside the file's name.
+- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the list of its first folder in the next, as far down as the window has room. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them.
+- `Space` on a folder adds it up: how many items it holds, its size with everything in it, its newest change, its `README.md`, and the whole of it as a zip. A folder of more than 50,000 entries is counted that far and says so.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
@@ -88,14 +90,15 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | --- | --- |
 | `j` `k`, arrows | Move down and up |
 | `Enter` | Open the folder, or give the file the full width |
+| `Space` | Open or close the preview of what is under the cursor |
+| `r` | Rendered or source, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
 | `Backspace` | Up one folder |
 | `/` | Filter this folder |
 | `Ctrl K`, `Cmd K` | Find anything in the tree. Start with `>` for commands. |
 | `g` | List or grid |
-| `p` | Two panes, or one folder at a time: the list alone, and a file opens over it |
 | `s` | Change the sort |
 | `t` | Light or dark |
-| `Esc` | Close the preview |
+| `Esc` | Close the open file, the preview or the filter |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 

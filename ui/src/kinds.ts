@@ -86,6 +86,14 @@ export const LABEL: Record<Kind, string> = {
   file: "File",
 };
 
+/**
+ * True for a file that is shown as something made from its text: a page, rendered Markdown, a drawing, a
+ * table, a tree. Such a file has a second form, its source as it is written.
+ */
+export function hasSource(file: { kind: Kind; ext: string }): boolean {
+  return file.kind === "html" || file.kind === "md" || file.kind === "csv" || file.kind === "json" || file.ext === "svg";
+}
+
 export function extension(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";

@@ -32,6 +32,7 @@ const LINE: Record<string, string> = {
     '<circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5"/><path d="M8 2.25a5.75 5.75 0 010 11.5z" fill="currentColor"/>',
   expand: '<path d="M9.5 2.75h3.75V6.5M6.5 13.25H2.75V9.5M13.25 2.75L9 7M2.75 13.25L7 9"/>',
   pane: `${R}<path d="M9.25 2.25v11.5"/>`,
+  close: '<path d="M4 4l8 8M12 4l-8 8"/>',
   trash:
     '<path d="M2.75 4.25h10.5M6.25 4.25v-1.5h3.5v1.5M4 4.25l.62 8.11c.06.78.71 1.39 1.5 1.39h3.76c.79 0 1.44-.61 1.5-1.39L12 4.25M6.75 7.25v3.5M9.25 7.25v3.5"/>',
 };

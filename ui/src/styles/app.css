@@ -1,4 +1,4 @@
-/* Twin Pane: a dense list on the left, the file or folder under the cursor beside it, a status line below.
+/* Twin Pane: a dense list on the left, what is under the cursor beside it, a status line below.
    This file is layout only. Every color, size and shape comes from the tokens. */
 body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .top { display: flex; align-items: center; gap: 14px; height: calc(46px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); min-width: 0; }
@@ -15,8 +15,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .tools .touch { display: none; }
 
 /* The window is cut into equal slots, as many as the page counts for its width. The list is one. Beside it a
-   folder takes one for each of its columns and the file its path ends on takes the rest, and a file under the
-   cursor takes all of them. */
+   folder takes one for each of its columns, and a file under the cursor, or the preview, takes all of them. */
 .main { display: grid; grid-template-columns: repeat(var(--slots, 4), minmax(0, 1fr)); min-height: 0; }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
@@ -60,6 +59,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .ph .facts { color: var(--faint); font-size: var(--text-xs); flex: 1; }
 .ph .btn { height: calc(24px * var(--density)); padding: 0 6px; }
 .ph .pos { color: var(--faint); font-size: var(--text-xs); padding: 0 4px; white-space: nowrap; }
+.ph .sp { flex: 1; }
 .ph .only-open { display: none; }
 #pv { flex: 1; min-height: 0; }
 body.open .main { grid-template-columns: minmax(0, 1fr); }
@@ -83,7 +83,8 @@ body.open .ph .only-open { display: inline-flex; }
 @media (max-width: 760px) {
   .main { grid-template-columns: minmax(0, 1fr); }
   .right { display: none; position: fixed; inset: 0; z-index: 20; grid-column: 1; }
-  body.open .right { display: flex; }
+  /* A file that is opened, or the preview a keyboard opened, is a sheet over the list. */
+  body.open .right, body.peek .right { display: flex; }
   .left { border-right: 0; }
   .find { width: auto; } .find .sp, .find kbd { display: none; }
   .wm { font-size: 0; gap: 0; } .wm-mark { font-size: 15px; }
@@ -95,7 +96,8 @@ body.open .ph .only-open { display: inline-flex; }
   [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 62px; }
   :root { --row-h: calc(42px * var(--density)); }
   .ph { height: calc(46px * var(--density)); }
-  .ph .facts { display: none; } .ph .nm { flex: 1; }
+  /* the name needs the room more than the count of files does */
+  .ph .facts, body.open .ph .pos { display: none; } .ph .nm { flex: 1; }
   .ph .btn { height: 34px; padding: 0 9px; }
   /* the back arrow already does this here, and the name needs the room */
   .ph .widen { display: none; }
@@ -109,19 +111,19 @@ body.open .ph .only-open { display: inline-flex; }
   .ask-do .btn { height: 38px; flex: 1; justify-content: center; }
 }
 
-/* One folder at a time: the list is the page, in one column down the middle, and a file opens over it.
-   Under 761px that is the layout above already. */
-@media (min-width: 761px) {
-  body.no-pane .main { grid-template-columns: minmax(0, 1fr); }
-  body.no-pane .left { border-right: 0; }
-  body.no-pane:not(.open) .right { display: none; }
-  body.no-pane .cols, body.no-pane .rows:not(.tiles), body.no-pane .readme { width: min(100%, 760px); margin-inline: auto; }
-  body.no-pane .cols { border-bottom: 0; box-shadow: inset 0 calc(var(--line-w) * -1) 0 var(--line); }
-  body.no-pane .row { border-radius: var(--radius); }
-  body.no-pane .row[aria-selected="true"] { border-radius: 0 var(--radius) var(--radius) 0; }
-  body.no-pane .readme { border: var(--border); border-radius: var(--radius-lg); margin-block: 18px; overflow: hidden; background: var(--surface); }
-  body.no-pane .readme .md { max-width: none; }
-}
+/* A folder in the preview: three numbers side by side, what can be done with it, then its notes. */
+.fp-in { display: grid; gap: calc(var(--pad) * 1.5); padding: calc(var(--pad) * 2) calc(var(--pad) * 2.2) 48px; max-width: 60em; margin: 0 auto; }
+.fp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--pad); margin: 0; }
+.fp-stats > div { display: grid; gap: 4px; align-content: start; justify-items: start; min-width: 0; padding: calc(var(--pad) * 1.1) calc(var(--pad) * 1.25); border: var(--border); border-radius: var(--radius-lg); background: var(--bg); }
+.fp-stats dd { margin: 0; font-size: calc(var(--text) * 1.5); line-height: 1.25; color: var(--fg); white-space: nowrap; }
+.fp-stats span, .fp-stats button { color: var(--muted); font-size: var(--text-s); min-height: 1.45em; white-space: pre-wrap; text-align: left; }
+.fp-stats button { max-width: 100%; white-space: nowrap; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.fp-do { display: flex; flex-wrap: wrap; gap: 8px; }
+.fp-do .btn { height: calc(32px * var(--density)); padding: 0 calc(12px * var(--density)); text-decoration: none; }
+.fp-note { margin: 0; color: var(--muted); }
+.fp-readme { border: var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.fp-readme .md { max-width: none; margin: 0; padding: calc(var(--pad) * 1.6) calc(var(--pad) * 1.6) calc(var(--pad) * 2); font-size: var(--text); }
+.pv-card kbd { margin-left: 2px; }
 
 .sprite { position: absolute; }
 body.has-note { grid-template-rows: auto auto minmax(0, 1fr) auto; }

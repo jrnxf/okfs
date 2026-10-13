@@ -139,9 +139,9 @@ kbd {
 .pv-audio .ic { width: 44px; height: 44px; }
 .pv-audio audio { width: 100%; }
 .pv-card { display: grid; gap: 6px; justify-items: center; text-align: center; color: var(--muted); }
-.pv-card .ic { width: 40px; height: 40px; margin-bottom: 8px; }
+.pv-card > .ic { width: 40px; height: 40px; margin-bottom: 8px; }
 .pv-card b { color: var(--fg); font-weight: var(--weight-strong); }
-.pv-card .btn { margin-top: 12px; }
+.pv-card .btn { margin-top: 12px; text-decoration: none; }
 
 .md { font-family: var(--font-prose); font-size: calc(var(--text) * 1.12); line-height: 1.65; padding: calc(var(--pad) * 2) calc(var(--pad) * 2.2) 64px; max-width: 46em; margin: 0 auto; overflow-wrap: break-word; }
 .md > :first-child { margin-top: 0; }

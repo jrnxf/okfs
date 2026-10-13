@@ -1,4 +1,4 @@
-// Twin Pane: a dense list on the left, the file or folder under the cursor beside it, a status line below.
+// Twin Pane: a dense list on the left, what is under the cursor beside it, a status line below.
 
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -6,7 +6,7 @@ import { type Archive, type Listing, type TextPreview, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
-import { listKeys } from "./keys";
+import { keyFor, pressOf } from "./keys";
 import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
@@ -282,16 +282,18 @@ export function App() {
   }, []);
 
   const here = store.here();
+  const flippable = store.flippable();
 
-  // What lies past the cursor, the way it is moving, is asked for before the cursor gets there.
-  const previewing = s.pane || s.open !== null;
+  // What lies past the cursor, the way it is moving, is asked for before the cursor gets there: the columns
+  // of the folders, and the previews of the files only while one is on show.
+  const previewing = s.peek || s.open !== null;
   const cursorWas = useRef(s.cursor);
   useLayoutEffect(() => {
     const step = s.cursor >= cursorWas.current ? 1 : -1;
     cursorWas.current = s.cursor;
-    if (s.status !== "ready" || !previewing) return;
-    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
-    pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
+    if (s.status !== "ready") return;
+    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), previewing);
+    if (previewing) pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
   }, [s.cursor, s.entries, s.status, previewing, cut]);
 
   useEffect(() => {
@@ -299,8 +301,8 @@ export function App() {
   }, [s.open]);
 
   useEffect(() => {
-    document.body.classList.toggle("no-pane", !s.pane);
-  }, [s.pane]);
+    document.body.classList.toggle("peek", s.peek);
+  }, [s.peek]);
 
   useEffect(() => {
     const name = s.open?.name ?? (s.path ? s.path.slice(s.path.lastIndexOf("/") + 1) : "");
@@ -325,17 +327,15 @@ export function App() {
         }
         return;
       }
-      const typing = (event.target as Element).closest("input, textarea, select");
-      if (s.palette || typing || event.ctrlKey || event.metaKey || event.altKey) return;
-
-      const actions = listKeys(store, {
+      if (s.palette) return;
+      const host = {
         across: cols.current,
         filter: focusFilter,
         closeMenu: () => setMenu(null),
         flipScheme: () => setScheme(isDark() ? "light" : "dark"),
-      });
-      if (event.shiftKey) actions.D = () => store.askDelete();
-      const action = actions[key];
+      };
+      // A key the list takes does only what the list does with it: space opens the preview and scrolls nothing.
+      const action = keyFor(store, host, pressOf(event));
       if (action) {
         event.preventDefault();
         action();
@@ -353,8 +353,8 @@ export function App() {
     const index = indexOf(event);
     const entry = index === null ? undefined : s.entries[index];
     if (index === null || !entry) return;
-    // One click moves the cursor, which is already the preview. A second opens, and so does the first with no pane.
-    if (entry.dir || phone() || !s.pane || index === s.cursor) store.activate(index);
+    // One click moves the cursor. A second opens, and so does the first on a phone, which has no keys to open with.
+    if (entry.dir || phone() || index === s.cursor) store.activate(index);
     else store.moveTo(index);
   };
   const onListDoubleClick = (event: MouseEvent) => {
@@ -407,7 +407,7 @@ export function App() {
           {config.title}
         </a>
         <Crumbs />
-        <div class="tools">
+        <div class="tools" onMouseDown={(event) => event.preventDefault()}>
           <button class="btn btn-line find" aria-label="Find anything" onClick={() => store.setPalette(true)}>
             <Icon name="search" />
             <span class="sp">Find anything</span>
@@ -491,9 +491,14 @@ export function App() {
           <span>
             <kbd>↵</kbd> open
           </span>
-          {!s.pane && (
+          {!s.open && (
             <span>
-              <kbd>-</kbd> up
+              <kbd>space</kbd> preview
+            </span>
+          )}
+          {flippable && (
+            <span>
+              <kbd>r</kbd> {s.raw === flippable.path ? "rendered" : "source"}
             </span>
           )}
           <span>
@@ -501,9 +506,6 @@ export function App() {
           </span>
           <span>
             <kbd>g</kbd> grid
-          </span>
-          <span>
-            <kbd>p</kbd> {s.pane ? "one folder" : "two panes"}
           </span>
           <span>
             <kbd>s</kbd> sort

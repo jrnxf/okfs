@@ -2035,30 +2035,15 @@ async fn a_listing_sends_the_levels_under_its_first_entry_only_as_deep_as_allowe
 }
 
 #[tokio::test]
-async fn a_listing_with_levels_is_bounded_in_entries_and_in_the_text_it_carries() {
+async fn a_listing_with_levels_is_bounded_in_entries_and_carries_no_file() {
     let site = Site::new();
     let wide = site.served.join("wide");
     fs::create_dir_all(wide.join("0-first")).unwrap();
     for at in 0..250 {
         fs::write(wide.join(format!("file{at}.txt")), "x").unwrap();
     }
-    for (folder, name, text) in [
-        ("small", "notes.txt", "a line\n".repeat(200)),
-        ("large", "notes.txt", "a line\n".repeat(10_000)),
-        ("page", "index.html", "<p>a page</p>".to_owned()),
-        (
-            "drawing",
-            "shape.svg",
-            "<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_owned(),
-        ),
-    ] {
-        fs::create_dir_all(site.served.join(folder)).unwrap();
-        fs::write(site.served.join(folder).join(name), text).unwrap();
-    }
-    fs::create_dir_all(site.served.join("binary")).unwrap();
-    fs::write(site.served.join("binary/blob.bin"), [0_u8; 64]).unwrap();
-    fs::create_dir_all(site.served.join("outer/inner")).unwrap();
-    fs::write(site.served.join("outer/inner/notes.txt"), "two levels down").unwrap();
+    fs::create_dir_all(site.served.join("small")).unwrap();
+    fs::write(site.served.join("small/notes.txt"), "a line\n".repeat(200)).unwrap();
     let app = site.router();
 
     let column = json(&app, "/api/list?path=wide&limit=1000&depth=1").await;
@@ -2068,28 +2053,103 @@ async fn a_listing_with_levels_is_bounded_in_entries_and_in_the_text_it_carries(
     let plain = json(&app, "/api/list?path=wide&limit=1000").await;
     assert_eq!(plain["entries"].as_array().unwrap().len(), 251);
 
-    // A small text file comes with its folder, cut as the page would ask for it.
+    // The columns of a folder are its names. No file in it is read for them: a file is
+    // read when its preview is asked for, and the page asks only once the preview is open.
     let small = json(&app, "/api/list?path=small&limit=5&depth=1").await;
-    assert_eq!(small["start"]["kind"], "code");
-    assert_eq!(small["start"]["more"], true);
-    assert_eq!(
-        small["start"],
-        json(&app, "/api/preview?path=small/notes.txt&lines=80").await
-    );
-    // A file counts as a level: it comes while levels are left, and not after.
-    let outer = json(&app, "/api/list?path=outer&limit=5&depth=2").await;
-    assert_eq!(outer["under"]["start"]["kind"], "code");
-    let short = json(&app, "/api/list?path=outer&limit=5&depth=1").await;
-    assert!(short["under"].get("start").is_none());
-    // Not when no level was asked for, not a large file, and not what the page shows as itself.
-    for uri in [
-        "/api/list?path=small&limit=5",
-        "/api/list?path=large&limit=5&depth=1",
-        "/api/list?path=page&limit=5&depth=1",
-        "/api/list?path=drawing&limit=5&depth=1",
-        "/api/list?path=binary&limit=5&depth=1",
+    assert_eq!(names(&small), ["notes.txt"]);
+    assert!(small.get("start").is_none() && small.get("under").is_none());
+}
+
+#[tokio::test]
+async fn a_file_shown_as_something_made_from_its_text_can_be_asked_for_as_its_source() {
+    let site = Site::new();
+    let app = site.router();
+    fs::write(site.served.join("notes.md"), "# Title\n\nSome *text*.\n").unwrap();
+    fs::write(site.served.join("table.csv"), "name,n\na,1\n").unwrap();
+    fs::write(site.served.join("data.json"), "{\"a\": [1, 2]}\n").unwrap();
+    fs::write(site.served.join("page.html"), "<h1>Hi</h1>\n<script>1</script>\n").unwrap();
+    fs::write(
+        site.served.join("shape.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n",
+    )
+    .unwrap();
+
+    for (name, shown, written) in [
+        ("notes.md", "markdown", "# Title"),
+        ("table.csv", "table", "name,n"),
+        ("data.json", "json", "&quot;a&quot;"),
+        ("page.html", "code", "&lt;h1&gt;Hi&lt;/h1&gt;"),
+        ("shape.svg", "code", "&lt;svg"),
     ] {
-        assert!(json(&app, uri).await.get("start").is_none(), "{uri}");
+        assert_eq!(json(&app, &format!("/api/preview?path={name}")).await["kind"], shown);
+        let source = json(&app, &format!("/api/preview?path={name}&raw=1")).await;
+        assert_eq!(source["kind"], "code", "{name}");
+        // The text as it is written: its markup is escaped, never run, and nothing is left out.
+        let html = source["html"].as_str().unwrap();
+        let plain: String = strip_tags(html);
+        assert!(plain.contains(written), "{name}: {plain}");
+        assert!(!html.contains("<h1>") && !html.contains("<script>"), "{name}: {html}");
+    }
+    // The start alone, as for any source file.
+    fs::write(site.served.join("long.md"), "a line\n".repeat(200)).unwrap();
+    let start = json(&app, "/api/preview?path=long.md&raw=1&lines=80").await;
+    assert_eq!(
+        (start["lines"].as_u64(), start["more"].as_bool()),
+        (Some(200), Some(true))
+    );
+    // What is not text has no source either.
+    fs::write(site.served.join("blob.bin"), [0_u8; 64]).unwrap();
+    assert_eq!(json(&app, "/api/preview?path=blob.bin&raw=1").await["kind"], "none");
+}
+
+/// Markup with its tags taken out: the text a reader sees.
+fn strip_tags(html: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for c in html.chars() {
+        match c {
+            '<' => inside = true,
+            '>' => inside = false,
+            c if !inside => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn a_folder_is_added_up_with_its_notes_and_nothing_outside_it() {
+    let site = Site::new();
+    fs::write(site.served.join("sub/README.md"), "# Sub\n").unwrap();
+    fs::create_dir_all(site.served.join("empty")).unwrap();
+    let app = site.router();
+
+    let sub = json(&app, "/api/folder?path=sub").await;
+    // b.txt, README.md and deep/ right in it; c.rs one folder down.
+    assert_eq!((sub["path"].as_str(), sub["items"].as_u64()), (Some("sub"), Some(3)));
+    assert_eq!((sub["files"].as_u64(), sub["folders"].as_u64()), (Some(3), Some(1)));
+    assert_eq!(
+        sub["bytes"].as_u64(),
+        Some(("inside".len() + "fn main() {}\n".len() + "# Sub\n".len()) as u64)
+    );
+    assert!(sub["newest"]["path"].as_str().unwrap().starts_with("sub/"));
+    assert!(sub["newest"]["m"].as_i64().unwrap() > 0);
+    assert_eq!(sub["readme"]["name"], "README.md");
+    assert!(sub["readme"]["html"].as_str().unwrap().contains("<h1>Sub</h1>"));
+    assert!(sub.get("cut").is_none());
+
+    let empty = json(&app, "/api/folder?path=empty").await;
+    assert_eq!((empty["items"].as_u64(), empty["bytes"].as_u64()), (Some(0), Some(0)));
+    assert!(empty["newest"].is_null() && empty["readme"].is_null());
+
+    // The served folder itself: the links out of it and the dotfile are not counted.
+    let (response, body) = get(&app, "/api/folder?path=").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(body).unwrap();
+    assert!(!body.contains("secret") && !body.contains(".hidden"), "{body}");
+    for path in ["../outside", "..", "link-out-dir", "a.txt", "missing", "/etc"] {
+        let uri = format!("/api/folder?path={path}");
+        assert_eq!(get(&app, &uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
     }
 }
 
@@ -2126,5 +2186,5 @@ async fn a_listing_with_levels_reads_nothing_outside_the_served_folder() {
     }
     let lead = json(&app, "/api/list?path=lead&limit=50&depth=3").await;
     assert!(names(&lead).is_empty());
-    assert!(lead.get("under").is_none() && lead.get("start").is_none());
+    assert!(lead.get("under").is_none());
 }

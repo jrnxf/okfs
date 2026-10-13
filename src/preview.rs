@@ -1,5 +1,5 @@
 //! What the preview pane shows for a text file: rendered Markdown, colored code,
-//! a table, or JSON. Inputs are bounded before anything is read.
+//! a table, or JSON, or its source as it is written. Inputs are bounded before anything is read.
 
 use std::fs;
 use std::io::Read;
@@ -59,9 +59,19 @@ pub enum Preview {
     },
 }
 
-/// Builds the preview of the file at `abs`, known to the browser as `rel`. With `first`,
-/// source code is cut to that many lines. `gone` turns true when the reader has left.
-pub fn of(abs: &Path, rel: &str, size: u64, first: Option<usize>, gone: &AtomicBool) -> std::io::Result<Preview> {
+/// How much of a file a preview is of, and in which of its two forms.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Form {
+    /// Source code is cut to this many lines.
+    pub first: Option<usize>,
+    /// The text as it is written, as source code, whatever the file is: Markdown is not
+    /// rendered, and a table and JSON are not read.
+    pub source: bool,
+}
+
+/// Builds the preview of the file at `abs`, known to the browser as `rel`, in the form
+/// asked for. `gone` turns true when the reader has left.
+pub fn of(abs: &Path, rel: &str, size: u64, form: Form, gone: &AtomicBool) -> std::io::Result<Preview> {
     if size > MAX_TEXT {
         return Ok(Preview::None { reason: "large" });
     }
@@ -77,7 +87,12 @@ pub fn of(abs: &Path, rel: &str, size: u64, first: Option<usize>, gone: &AtomicB
     let name = paths::file_name(rel);
     let lines = text.lines().count();
 
-    Ok(match paths::extension(name).as_str() {
+    let extension = if form.source {
+        String::new()
+    } else {
+        paths::extension(name)
+    };
+    Ok(match extension.as_str() {
         "md" | "markdown" => Preview::Markdown {
             html: render::markdown(text, paths::parent(rel)),
             lines,
@@ -89,7 +104,7 @@ pub fn of(abs: &Path, rel: &str, size: u64, first: Option<usize>, gone: &AtomicB
             lines,
         },
         _ => {
-            let code = render::code_start(text, name, first, gone);
+            let code = render::code_start(text, name, form.first, gone);
             Preview::Code {
                 html: code.html,
                 lines: code.lines,

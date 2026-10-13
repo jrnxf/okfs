@@ -2,7 +2,7 @@
 
 import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
 import { type Config, config, locate } from "./config";
-import { type Kind, extension, kindOf } from "./kinds";
+import { type Kind, extension, hasSource, kindOf } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
 
@@ -51,8 +51,13 @@ export interface State {
   entries: Entry[];
   cursor: number;
   view: View;
-  /** False for the one-folder view: the list is the page, with no file beside it. */
-  pane: boolean;
+  /**
+   * The preview is open: what is under the cursor is shown beside the list, and follows the cursor. Closed,
+   * nothing is asked of the server about a file until one is opened. It starts closed on every visit.
+   */
+  peek: boolean;
+  /** The path of the file shown as its source, not as what is made from it. Empty for none. */
+  raw: string;
   sort: Sort;
   filter: string;
   /** The file given the full width, if any. */
@@ -116,7 +121,8 @@ export class Store {
     entries: [],
     cursor: 0,
     view: prefs.get("view") === "grid" ? "grid" : "list",
-    pane: prefs.get("pane") !== "off",
+    peek: false,
+    raw: "",
     sort: savedSort(),
     filter: "",
     open: null,
@@ -152,11 +158,26 @@ export class Store {
   }
 
   private emit(): void {
+    // The source is shown of one file: it is left behind when another file, or none, is on show.
+    if (this.s.raw && this.shown()?.path !== this.s.raw) this.s.raw = "";
     for (const listener of this.listeners) listener();
   }
 
   cur(): Entry | null {
     return this.s.entries[this.s.cursor] ?? null;
+  }
+
+  /** The file on show: the one given the full width, or the one under the cursor while the preview is open. */
+  shown(): Entry | null {
+    const { s } = this;
+    const cur = this.cur();
+    return s.open ?? (s.peek && cur && !cur.dir ? cur : null);
+  }
+
+  /** The file on show, when it has a second form to flip to: see `hasSource`. */
+  flippable(): Entry | null {
+    const file = this.shown();
+    return file && hasSource(file) ? file : null;
   }
 
   /** The files of the current list, in order: what next and previous step through. */
@@ -541,10 +562,18 @@ export class Store {
     this.emit();
   }
 
-  /** Switches between the two panes and the one-folder view. */
-  setPane(pane = !this.s.pane): void {
-    this.s.pane = pane;
-    prefs.set("pane", pane ? "on" : "off");
+  /** Opens or closes the preview. The choice is for this visit: nothing is kept. */
+  setPeek(peek = !this.s.peek): void {
+    this.s.peek = peek;
+    this.emit();
+  }
+
+  /** Flips the file on show between what is made from it and its source. A file with one form stays as it is. */
+  flipRaw(): void {
+    const { s } = this;
+    const file = this.flippable();
+    if (!file) return;
+    s.raw = s.raw === file.path ? "" : file.path;
     this.emit();
   }
 

@@ -200,6 +200,7 @@ pub fn read_theme(path: &std::path::Path) -> Result<(SystemTime, Theme), String>
 pub fn router(app: Arc<App>) -> Router {
     let packed = Router::new()
         .route("/api/list", get(list))
+        .route("/api/folder", get(folder_sum))
         .route("/api/entry", delete(delete_entry))
         .route("/api/preview", get(preview_file))
         .route("/api/previews", get(preview_many))
@@ -304,9 +305,9 @@ struct ListQuery {
     path: String,
     /// Send only the first entries by name, folders first. For a folder under the cursor.
     limit: Option<usize>,
-    /// With `limit`: also send what the first entry leads to, this many levels down:
-    /// the listing of a folder, the start of a small text file. The page draws a column
-    /// for each level and the file after them, and they all come in this one answer.
+    /// With `limit`: also send the listing of the folder the first entry is, and of the
+    /// one under that, this many levels down. The page draws a column for each level,
+    /// and they all come in this one answer.
     #[serde(default)]
     depth: usize,
 }
@@ -315,13 +316,10 @@ struct ListQuery {
 const MAX_DEPTH: usize = 3;
 /// Entries sent for each level when levels under it are asked for, at most.
 const MAX_COLUMN: usize = 200;
-/// The start of a text file larger than this is not put in a listing's answer: the
-/// whole file is read to make it, and the listing waits for it.
-const MAX_START: u64 = 64 * 1024;
-/// Lines of source code in that start: what the page asks for first of any file.
-const START_LINES: usize = 80;
-/// Text that the page shows as itself, not as source: its start is not sent.
-const SHOWN_AS_ITSELF: [&str; 3] = ["html", "htm", "svg"];
+/// Entries read to add a folder up, at most. Each costs one look at the disk, so a
+/// folder of any size is answered in the time this many take. Past it the page says
+/// that the folder holds more than was counted.
+const MAX_SUMMED: usize = 50_000;
 
 #[derive(Serialize)]
 struct Item {
@@ -364,14 +362,25 @@ struct Listing {
     /// The listing of the first entry, when it is a folder and levels were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     under: Option<Box<Listing>>,
-    /// The start of the first entry, when levels were asked for and it is a small text
-    /// file: what `/api/preview` answers for it, cut to its first lines.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    start: Option<preview::Preview>,
 }
 
-/// Lists the folder at `path`. With `limit`, only its first entries, and then what the
-/// first of them leads to, `depth` levels down: see `ListQuery`.
+/// The notes of the folder at `found`, when one of the names in it is a readme small
+/// enough to show.
+fn read_readme<'a>(found: &Resolved, names: impl IntoIterator<Item = &'a paths::Seen>) -> Option<Readme> {
+    let entry = names
+        .into_iter()
+        .find(|entry| !entry.dir && render::is_readme(&entry.name))?;
+    let at = found.abs.join(&entry.name);
+    let small = fs::metadata(&at).is_ok_and(|meta| meta.len() <= MAX_README);
+    let text = small.then(|| fs::read_to_string(&at).ok())??;
+    Some(Readme {
+        name: entry.name.clone(),
+        html: render::markdown(&text, &found.rel),
+    })
+}
+
+/// Lists the folder at `path`. With `limit`, only its first entries, and then the folder
+/// the first of them is, `depth` levels down: see `ListQuery`.
 fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Option<Listing> {
     let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
     let mut seen = app.root.scan(&found.abs).ok()?;
@@ -382,19 +391,7 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
         seen.truncate(limit);
     }
 
-    let readme = seen
-        .iter()
-        .filter(|_| limit.is_none())
-        .find(|entry| !entry.dir && render::is_readme(&entry.name))
-        .and_then(|entry| {
-            let at = found.abs.join(&entry.name);
-            let small = fs::metadata(&at).is_ok_and(|meta| meta.len() <= MAX_README);
-            let text = small.then(|| fs::read_to_string(&at).ok())??;
-            Some(Readme {
-                name: entry.name.clone(),
-                html: render::markdown(&text, &found.rel),
-            })
-        });
+    let readme = limit.is_none().then(|| read_readme(&found, &seen)).flatten();
 
     let entries: Vec<Item> = seen
         .into_iter()
@@ -420,21 +417,11 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
 
     // Each level is found by its own path, as a request for it would be: what a
     // request may not read, a level may not either.
-    let first = entries.first().filter(|_| limit.is_some() && depth > 0);
-    let under = first
-        .filter(|first| first.d)
+    let under = entries
+        .first()
+        .filter(|first| limit.is_some() && depth > 0 && first.d)
         .and_then(|first| list_folder(app, &paths::join(&found.rel, &first.n), limit, depth - 1))
         .map(Box::new);
-    let start = first
-        .filter(|first| !first.d && first.s <= MAX_START)
-        .filter(|first| !SHOWN_AS_ITSELF.contains(&paths::extension(&first.n).as_str()))
-        .and_then(|first| app.root.resolve(&paths::join(&found.rel, &first.n)))
-        .filter(|file| file.meta.is_file())
-        .and_then(|file| {
-            let reader_left = AtomicBool::new(false);
-            preview::of(&file.abs, &file.rel, file.meta.len(), Some(START_LINES), &reader_left).ok()
-        })
-        .filter(|start| !matches!(start, preview::Preview::None { .. }));
 
     let real = app
         .root
@@ -448,7 +435,6 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
         total,
         readme,
         under,
-        start,
     })
 }
 
@@ -461,6 +447,63 @@ async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Re
         .map(|limit| if depth > 0 { limit.min(MAX_COLUMN) } else { limit });
     match tokio::task::spawn_blocking(move || list_folder(&worker, &query.path, limit, depth)).await {
         Ok(Some(listing)) => Json(listing).into_response(),
+        _ => not_found(),
+    }
+}
+
+/// A file by its path under the served folder, and when it was written, in seconds.
+#[derive(Serialize)]
+struct Written {
+    path: String,
+    m: i64,
+}
+
+/// A folder added up: what the page shows when a folder is previewed.
+#[derive(Serialize)]
+struct FolderSum {
+    path: String,
+    /// The entries right in the folder.
+    items: usize,
+    /// The files and folders in it at every depth, and the bytes in those files.
+    files: usize,
+    folders: usize,
+    bytes: u64,
+    /// The file written last, at any depth.
+    newest: Option<Written>,
+    /// Only the first `MAX_SUMMED` entries were counted: the folder holds more.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    cut: bool,
+    readme: Option<Readme>,
+}
+
+/// Adds up the folder at `path`. `gone` turns true when the reader has left.
+fn sum_folder(app: &App, path: &str, gone: &AtomicBool) -> Option<FolderSum> {
+    let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
+    let seen = app.root.scan(&found.abs).ok()?;
+    let sum = app.root.sum(&found.abs, MAX_SUMMED, gone);
+    Some(FolderSum {
+        items: seen.len(),
+        files: sum.files,
+        folders: sum.folders,
+        bytes: sum.bytes,
+        newest: sum.newest.map(|(under, written)| Written {
+            path: paths::join(&found.rel, &under),
+            m: written
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs() as i64),
+        }),
+        cut: sum.cut,
+        readme: read_readme(&found, &seen),
+        path: found.rel,
+    })
+}
+
+async fn folder_sum(State(app): State<Arc<App>>, Query(query): Query<PathQuery>) -> Response {
+    let worker = Arc::clone(&app);
+    let gone = Gone(Arc::new(AtomicBool::new(false)));
+    let flag = Arc::clone(&gone.0);
+    match heavy(&app, move || sum_folder(&worker, &query.path, &flag)).await {
+        Some(Some(sum)) => Json(sum).into_response(),
         _ => not_found(),
     }
 }
@@ -501,6 +544,8 @@ struct PreviewQuery {
     /// Send only this many lines of source code. The page asks for a screen of them
     /// first, and for the whole file once the cursor rests on it.
     lines: Option<usize>,
+    /// Send the text as it is written, as source code, whatever the file is.
+    raw: Option<u8>,
 }
 
 /// Files previewed in one answer, at most.
@@ -521,7 +566,7 @@ async fn build_preview(
     app: &App,
     path: &str,
     head: bool,
-    lines: Option<usize>,
+    form: preview::Form,
 ) -> Option<std::io::Result<preview::Preview>> {
     let found = app.root.resolve(path).filter(|found| found.meta.is_file())?;
     let size = found.meta.len();
@@ -531,7 +576,7 @@ async fn build_preview(
         if head {
             preview::head(&found.abs, &found.rel)
         } else {
-            preview::of(&found.abs, &found.rel, size, lines, &flag)
+            preview::of(&found.abs, &found.rel, size, form, &flag)
         }
     };
     Some(
@@ -542,7 +587,11 @@ async fn build_preview(
 }
 
 async fn preview_file(State(app): State<Arc<App>>, Query(query): Query<PreviewQuery>) -> Response {
-    match build_preview(&app, &query.path, query.head.is_some(), query.lines).await {
+    let form = preview::Form {
+        first: query.lines,
+        source: query.raw.is_some(),
+    };
+    match build_preview(&app, &query.path, query.head.is_some(), form).await {
         None => not_found(),
         Some(Ok(preview)) => Json(preview).into_response(),
         Some(Err(_)) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the file could not be read"),
@@ -566,7 +615,11 @@ async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
             _ => {}
         }
     }
-    let built = future::join_all(paths.iter().map(|path| build_preview(&app, path, false, lines))).await;
+    let form = preview::Form {
+        first: lines,
+        source: false,
+    };
+    let built = future::join_all(paths.iter().map(|path| build_preview(&app, path, false, form))).await;
     let previews: std::collections::BTreeMap<String, preview::Preview> = paths
         .into_iter()
         .zip(built)

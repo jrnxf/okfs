@@ -102,16 +102,20 @@ shoot() { # name scheme size url setup-function
   echo "$name"
 }
 
-hero() { move_to harbor-at-dawn.jpg j; }
-grid() { "$cdp" press g >/dev/null; move_to 05-headland.jpg l; }
+# The preview is closed when the page loads: space opens it on what is under the cursor.
+preview() { "$cdp" press Space >/dev/null; }
+
+hero() { move_to harbor-at-dawn.jpg j; preview; }
+grid() { "$cdp" press g >/dev/null; move_to 05-headland.jpg l; preview; }
 palette() {
   move_to harbor-at-dawn.jpg j
+  preview
   "$cdp" press Control+k >/dev/null
   "$cdp" wait 300 >/dev/null
   "$cdp" type tide >/dev/null
   "$cdp" wait 400 >/dev/null
 }
-notes() { move_to field-notes.md j; }
+notes() { move_to field-notes.md j; preview; }
 
 for scheme in light dark; do
   q="scheme=$scheme"
