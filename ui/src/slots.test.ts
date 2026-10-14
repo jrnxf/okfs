@@ -8,7 +8,7 @@ import { columnsOf, slotsFor } from "./slots";
 function nest(depth: number, last: Listing["entries"] = []): Listing {
   const under = depth > 1 ? nest(depth - 1, last) : undefined;
   const entries = under ? [{ n: "in", d: true, s: 0, m: 0 }] : last;
-  return { path: "", entries, total: entries.length, readme: null, under };
+  return { path: "", m: 0, entries, total: entries.length, readme: null, under };
 }
 
 test("a window has four slots from 1,200 px, three from 900 px and two under that", () => {

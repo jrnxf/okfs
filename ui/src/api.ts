@@ -21,6 +21,8 @@ export interface Listing {
   real?: string;
   /** The folder is reached through a link. Deleting it removes the link only. Sent with a whole listing only. */
   link?: boolean;
+  /** The folder's own modified time, in seconds. */
+  m: number;
   entries: Item[];
   total: number;
   readme: Readme | null;

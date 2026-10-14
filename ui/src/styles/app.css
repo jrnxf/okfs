@@ -16,7 +16,10 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 
 /* The window is cut into equal slots, as many as the page counts for its width. The list is one. Beside it a
    folder takes one for each of its columns, and a file under the cursor, or the preview, takes all of them. */
-.main { display: grid; grid-template-columns: repeat(var(--slots, 4), minmax(0, 1fr)); min-height: 0; }
+.main { display: grid; grid-template-columns: repeat(var(--slots, 4), minmax(0, 1fr)); min-height: 0; position: relative; overflow: clip; }
+/* A pane that has gone, sliding out over the strip: see slide.ts. */
+.ghost { position: absolute; z-index: 1; pointer-events: none; }
+.ghost.left, .ghost.col { background: var(--bg); }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 68px 66px; }
@@ -86,6 +89,8 @@ body.open .ph .only-open { display: inline-flex; }
   /* A file that is opened, or the preview a keyboard opened, is a sheet over the list. */
   body.open .right, body.peek .right { display: flex; }
   .left { border-right: 0; }
+  /* the top bar already names the folder, and the delete button there does what this one's would */
+  .left > .ph { display: none; }
   .find { width: auto; } .find .sp, .find kbd { display: none; }
   .wm { font-size: 0; gap: 0; } .wm-mark { font-size: 15px; }
   .crumbs a, .crumbs i { display: none; }

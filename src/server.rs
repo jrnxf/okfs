@@ -355,6 +355,8 @@ struct Listing {
     /// Told with a whole listing only, as the notes are.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     link: bool,
+    /// The folder's own modified time, in seconds, as its entry in its parent has it.
+    m: i64,
     /// In name order. The page sorts and filters from here.
     entries: Vec<Item>,
     total: usize,
@@ -427,7 +429,13 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
         .root
         .place(&found)
         .filter(|real| limit.is_none() && *real != found.rel);
+    let modified = found
+        .meta
+        .modified()
+        .ok()
+        .and_then(|at| at.duration_since(UNIX_EPOCH).ok());
     Some(Listing {
+        m: modified.map_or(0, |since| since.as_secs() as i64),
         real,
         link: limit.is_none() && app.root.entry(&found.rel).is_ok_and(|entry| entry.is_link()),
         path: found.rel,

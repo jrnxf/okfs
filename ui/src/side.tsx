@@ -12,7 +12,7 @@ import { LABEL, hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
 import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled } from "./preview";
 import { columnsOf } from "./slots";
-import { type Entry, store, toEntry, versionOf } from "./store";
+import { type Doomed, type Entry, store, toEntry, versionOf } from "./store";
 
 /** Once the preview has rested on a folder this long, its first files are asked for: it may be entered next. */
 const FOLDER_REST = 150;
@@ -31,14 +31,36 @@ function visit(listing: Listing, item: Item, open: boolean): void {
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
 /**
- * One folder as a column: its own header, then its first entries as the main list draws them, in name order.
+ * A folder's bar: its name, how much it holds, when it changed, and what can be done with it. The main list has
+ * one as every column does, so a folder's rows sit at the same height in every slot, and on one grid with the
+ * rows beside them.
+ */
+export function FolderBar({ name, path, count, mtime, doomed }: { name: string; path: string; count: number | undefined; mtime: number | undefined; doomed: Doomed | null }) {
+  const facts = [...(count === undefined ? [] : [fmt.items(count)]), ...(mtime === undefined ? [] : [fmt.abs(mtime)])];
+  return (
+    <div class="ph" onMouseDown={keepFocus}>
+      <KindIcon kind="folder" />
+      <span class="nm trunc">{name}</span>
+      <span class="facts trunc num">{facts.join(" · ")}</span>
+      <a class="btn" href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
+        <Icon name="download" />
+      </a>
+      {doomed && (
+        <button class="btn" aria-label="Delete" title="Delete" onClick={() => store.askDelete(doomed)}>
+          <Icon name="trash" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One folder as a column: its own bar, then its first entries as the main list draws them, in name order.
  * `followed` marks the first entry: the next column is the inside of it.
  */
 function Column({ folder, listing, followed, edge }: { folder: Entry; listing: Listing | undefined; followed: boolean; edge: boolean }) {
   // The listing on screen is the last one's until this folder's has come.
   const own = listing?.path === folder.path ? listing : undefined;
-  const count = own?.total ?? folder.count;
-  const facts = [...(count === undefined ? [] : [fmt.items(count)]), fmt.abs(folder.mtime)];
   const more = listing ? listing.total - listing.entries.length : 0;
   const itemOf = (event: MouseEvent): Item | undefined => {
     const row = (event.target as Element).closest<HTMLElement>("[data-i]");
@@ -49,20 +71,8 @@ function Column({ folder, listing, followed, edge }: { folder: Entry; listing: L
     if (listing && item) visit(listing, item, open);
   };
   return (
-    <section class={edge ? "col edge" : "col"} aria-label={folder.name}>
-      <div class="ph" onMouseDown={keepFocus}>
-        <KindIcon kind="folder" />
-        <span class="nm trunc">{folder.name}</span>
-        <span class="facts trunc num">{facts.join(" · ")}</span>
-        <a class="btn" href={urls.zip(folder.path)} download aria-label="Download as a zip" title="Download as a zip">
-          <Icon name="download" />
-        </a>
-        {config.delete && (
-          <button class="btn" aria-label="Delete" title="Delete" onClick={() => store.askDelete(folder)}>
-            <Icon name="trash" />
-          </button>
-        )}
-      </div>
+    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path}>
+      <FolderBar name={folder.name} path={folder.path} count={own?.total ?? folder.count} mtime={folder.mtime} doomed={config.delete ? folder : null} />
       <div class="cols label">
         <span />
         <span class="hd">
@@ -294,7 +304,7 @@ export function Side({ slots }: { slots: number }) {
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
       {!columns && (
-        <div class="pane" key="pane">
+        <div class="pane" key="pane" data-pane="">
           <div class="ph" onMouseDown={keepFocus}>
             {header}
           </div>

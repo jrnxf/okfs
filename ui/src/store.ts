@@ -46,6 +46,8 @@ export interface State {
   path: string;
   /** True when that folder is reached through a link. */
   link: boolean;
+  /** That folder's own modified time, in seconds. */
+  mtime: number;
   all: Entry[];
   /** `all` after the filter and the sort: what the list shows. */
   entries: Entry[];
@@ -117,6 +119,7 @@ export class Store {
     status: "loading",
     path: "",
     link: false,
+    mtime: 0,
     all: [],
     entries: [],
     cursor: 0,
@@ -227,6 +230,7 @@ export class Store {
     s.path = listing.path;
     this.real = listing.real ?? listing.path;
     s.link = listing.link === true;
+    s.mtime = listing.m;
     s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.readme = listing.readme;
@@ -235,7 +239,7 @@ export class Store {
   /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
-    Object.assign(this.s, { status: "missing", path, link: false, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
   }
 
   /**

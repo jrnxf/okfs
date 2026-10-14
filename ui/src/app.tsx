@@ -2,7 +2,7 @@
 
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type Listing, type TextPreview, urls } from "./api";
+import { type Archive, type Listing, type TextPreview, nameOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
@@ -11,7 +11,8 @@ import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { Prose, lookAhead, pagesAhead, useLoaded } from "./preview";
-import { Side } from "./side";
+import { FolderBar, Side } from "./side";
+import { useSlide } from "./slide";
 import { slots } from "./slots";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
@@ -267,6 +268,8 @@ export function App() {
   const cut = slots();
 
   const scroller = useRef<HTMLDivElement>(null);
+  const main = useRef<HTMLDivElement>(null);
+  useSlide(main, s.path);
   const filterInput = useRef<HTMLInputElement>(null);
   const cols = useRef(1);
   const [filtering, setFiltering] = useState(false);
@@ -428,8 +431,15 @@ export function App() {
         </div>
       </header>
       {config.header && <Prose class="note" html={config.header} />}
-      <div class="main" style={`--slots: ${cut}`}>
-        <section class="left" onClick={onListClick} onDblClick={onListDoubleClick}>
+      <div class="main" ref={main} style={`--slots: ${cut}`}>
+        <section class="left" data-pane={s.path} onClick={onListClick} onDblClick={onListDoubleClick}>
+          <FolderBar
+            name={s.path ? nameOf(s.path) : config.root}
+            path={s.path}
+            count={s.status === "ready" ? s.all.length : undefined}
+            mtime={s.status === "ready" ? s.mtime : undefined}
+            doomed={here}
+          />
           {s.view === "list" && <Columns />}
           <VGrid
             scroller={scroller}

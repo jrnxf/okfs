@@ -360,6 +360,8 @@ async fn a_folder_is_listed_in_reading_order_with_what_the_page_needs() {
 
     let sub = json(&app, "/api/list?path=sub").await;
     assert_eq!(sub["path"], "sub");
+    // A folder's own time is the one its entry in the parent shows.
+    assert_eq!(sub["m"], entry("sub")["m"]);
     let readme = sub["readme"]["html"].as_str().unwrap();
     assert!(readme.contains("<h1>Notes</h1>"));
     assert!(!readme.contains("<script"));
