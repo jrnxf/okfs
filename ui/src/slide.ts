@@ -1,9 +1,9 @@
 // Panes slide sideways into their new slots when the folder shown changes to one beside it: a step in, a step
-// out, or a click a few columns along. Nothing moves up or down, and nothing waits for the slide.
+// out, or a click a few columns along. Nothing moves up or down, and nothing waits for the slide. Only a move made
+// with the pointer slides: a key is pressed many times in a row, and a move made with one is in its slots at once.
 
 import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { keyHeld } from "./preview";
 import { store } from "./store";
 
 /** How long a slide takes. It is a step through folders, taken many times a day: short, so no step waits on it. */
@@ -26,6 +26,12 @@ interface Was {
 }
 
 const still = (): boolean => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** True from a key going down to the next press of the pointer: a move made now was made with a key. */
+let byKey = false;
+// Heard on the way down, before the key or the pointer moves anything.
+document.addEventListener("keydown", () => (byKey = true), true);
+document.addEventListener("pointerdown", () => (byKey = false), true);
 
 /** Each pane of the strip by its folder's path. The preview pane has an empty one: it is never the same pane. */
 function panesOf(strip: HTMLElement): HTMLElement[] {
@@ -61,12 +67,14 @@ function look(strip: HTMLElement): Was[] {
  * after slides from where it is on screen to its new slot; a pane that comes slides in with them, fading up; a
  * pane that goes slides on out, fading away. A move during a slide takes the panes on from where they are, so
  * nothing jumps. A move with no pane in common, a phone's single pane, a reader who asked for less motion, and a
- * held key do not slide: under a held key the panes are where the key has taken them at once.
+ * move made with a key do not slide. A move made with a key during a slide puts every pane in its slot at once,
+ * and the panes sliding out are gone with it.
  */
 export function useSlide(strip: RefObject<HTMLElement | null>, path: string): void {
   const shown = useRef(path);
   const before = useRef<Was[] | null>(null);
   const stop = useRef<(() => void) | null>(null);
+  const outs = useRef(new Set<Animation>());
 
   // The store tells of the new folder before the page draws it: the panes are looked at while they are the old ones.
   useEffect(
@@ -74,7 +82,7 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string): vo
       store.subscribe(() => {
         const el = strip.current;
         if (!el || before.current || store.s.path === shown.current) return;
-        if (still() || keyHeld()) return;
+        if (still() || byKey) return;
         before.current = look(el);
       }),
     [strip],
@@ -89,6 +97,7 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string): vo
     // nothing looked at, the panes are in their new slots at once. Copies sliding out finish on their own.
     stop.current?.();
     stop.current = null;
+    if (byKey) for (const out of outs.current) out.finish();
     const el = strip.current;
     if (!el || !was || store.s.open) return;
 
@@ -126,10 +135,12 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string): vo
         scroller.scrollTop = it.scrolls[at] ?? 0;
       });
       const out = copy.animate([{ transform: "none", opacity: it.opacity }, { transform: `translateX(${-along}px)`, opacity: 0 }], timing);
-      void out.finished.then(
-        () => copy.remove(),
-        () => copy.remove(),
-      );
+      outs.current.add(out);
+      const gone = () => {
+        outs.current.delete(out);
+        copy.remove();
+      };
+      void out.finished.then(gone, gone);
     }
     const end = () => {
       for (const run of runs) run.cancel();
