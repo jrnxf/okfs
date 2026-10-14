@@ -21,3 +21,13 @@ export function columnsOf(listing: Listing | undefined, slots: number): (Listing
   for (let at = listing?.under; at && levels.length < slots - 1; at = at.under) levels.push(at);
   return levels;
 }
+
+/**
+ * The part of an answer that starts at the folder `path`. The answer for a folder above it already holds its
+ * columns, so a step into the folder under the cursor shows them with the step while the folder's own answer is
+ * on its way: no column shows the last folder's rows under this one's name, and each is in its slot for the slide.
+ */
+export function startingAt(listing: Listing | undefined, path: string): Listing | undefined {
+  for (let at = listing; at; at = at.under) if (at.path === path) return at;
+  return listing;
+}

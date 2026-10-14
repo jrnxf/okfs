@@ -11,7 +11,7 @@ import { Icon, KindIcon } from "./icons";
 import { LABEL, hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
 import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled } from "./preview";
-import { columnsOf } from "./slots";
+import { columnsOf, startingAt } from "./slots";
 import { type Doomed, type Entry, store, toEntry, versionOf } from "./store";
 
 /** Once the preview has rested on a folder this long, its first files are asked for: it may be entered next. */
@@ -228,7 +228,7 @@ export function Side({ slots }: { slots: number }) {
   const columns = folder && !s.peek ? folder : null;
   const summed = folder && s.peek ? folder : null;
   const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path) : null);
-  const levels = columns ? columnsOf(data, slots) : [];
+  const levels = columns ? columnsOf(startingAt(data, columns.path), slots) : [];
 
   const unpeek = s.peek && !s.open && (
     <button class="btn" aria-label="Close the preview" title="Close the preview (space)" onClick={() => store.setPeek(false)}>

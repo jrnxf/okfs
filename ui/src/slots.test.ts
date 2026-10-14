@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import type { Listing } from "./api";
-import { columnsOf, slotsFor } from "./slots";
+import { columnsOf, slotsFor, startingAt } from "./slots";
 
 /** A folder holding one folder under another, `depth` deep, the last one holding `last`. */
 function nest(depth: number, last: Listing["entries"] = []): Listing {
@@ -33,4 +33,14 @@ test("the columns stop at a file, at an empty folder and at a level that did not
   expect(columnsOf(cut, 4).length).toBe(2);
   // A folder whose answer is on its way has its column already.
   expect(columnsOf(undefined, 4)).toEqual([undefined]);
+});
+
+test("a step into a folder starts its columns from the answer of the folder above, until its own comes", () => {
+  const level = (path: string, under?: Listing): Listing => ({ path, m: 0, entries: [{ n: "in", d: true, s: 0, m: 0 }], total: 1, readme: null, under });
+  const above = level("a", level("a/in", level("a/in/in")));
+  expect(startingAt(above, "a/in")).toBe(above.under);
+  expect(columnsOf(startingAt(above, "a/in"), 4).map((it) => it?.path)).toEqual(["a/in", "a/in/in"]);
+  // An answer that does not reach the folder stays on screen as it is, until the folder's own replaces it.
+  expect(startingAt(above, "b")).toBe(above);
+  expect(startingAt(undefined, "a")).toBeUndefined();
 });
