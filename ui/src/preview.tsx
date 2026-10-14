@@ -435,6 +435,8 @@ export function useSettled(key: string, delay: number): boolean {
 
 /** True while a key is held down and repeating: the cursor is passing files, not stopping on them. */
 let held = false;
+/** True while a key is held down and repeating, as `held` is: the panes do not slide under it. */
+export const keyHeld = (): boolean => held;
 /** True while it repeats faster than `AHEAD_PAGES_PACE`. */
 let racing = false;
 let pressed = 0;
