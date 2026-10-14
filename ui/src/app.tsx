@@ -299,6 +299,24 @@ export function App() {
     if (previewing) pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
   }, [s.cursor, s.entries, s.status, previewing, cut]);
 
+  // A name cut short by an ellipsis is shown in full under the pointer. A name that fits has no tip to repeat it.
+  useEffect(() => {
+    const tip = (event: PointerEvent) => {
+      const el = (event.target as Element).closest?.<HTMLElement>(".trunc");
+      // A tip of its own, such as a time's date, stays.
+      if (!el || (el.title && el.dataset.tip === undefined)) return;
+      if (el.scrollWidth > el.clientWidth) {
+        el.title = el.textContent ?? "";
+        el.dataset.tip = "";
+      } else if (el.dataset.tip !== undefined) {
+        el.removeAttribute("title");
+        delete el.dataset.tip;
+      }
+    };
+    document.addEventListener("pointerover", tip);
+    return () => document.removeEventListener("pointerover", tip);
+  }, []);
+
   useEffect(() => {
     document.body.classList.toggle("open", s.open !== null);
   }, [s.open]);

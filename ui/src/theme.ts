@@ -25,10 +25,13 @@ export const isDark = (): boolean => (active.scheme === "auto" ? media.matches :
 
 const href = (id: string): string => (id === config.theme ? "/theme.css" : `/assets/themes/${id}.css`);
 
-/** Tokens are read by CSS, except the icon set, which picks markup: mirror it onto the root. */
+/** Tokens are read by CSS, except the icon set, which picks markup, and the page's color, which the browser's bars take: mirror them. */
 function tokensChanged(): void {
-  const set = getComputedStyle(document.documentElement).getPropertyValue("--icon-set").trim() || "line";
-  document.documentElement.dataset.icons = set;
+  const tokens = getComputedStyle(document.documentElement);
+  document.documentElement.dataset.icons = tokens.getPropertyValue("--icon-set").trim() || "line";
+  // A phone tints its own bars to match the top of the page.
+  const bg = tokens.getPropertyValue("--bg").trim();
+  if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
   requestAnimationFrame(() => listeners.forEach((listener) => listener()));
 }
 

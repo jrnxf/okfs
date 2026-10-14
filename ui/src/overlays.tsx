@@ -21,9 +21,13 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
     const el = pop.current;
     if (!el) return;
     const box = anchor.getBoundingClientRect();
-    el.style.left = `${Math.max(8, Math.min(box.right - WIDTH, innerWidth - WIDTH - 8))}px`;
-    if (box.top > innerHeight / 2) el.style.bottom = `${innerHeight - box.top + 8}px`;
+    const left = Math.max(8, Math.min(box.right - WIDTH, innerWidth - WIDTH - 8));
+    const above = box.top > innerHeight / 2;
+    el.style.left = `${left}px`;
+    if (above) el.style.bottom = `${innerHeight - box.top + 8}px`;
     else el.style.top = `${box.bottom + 8}px`;
+    // It grows out of the button: from the button's middle, at the edge nearest it.
+    el.style.transformOrigin = `${box.left + box.width / 2 - left}px ${above ? "100%" : "0"}`;
   }, [anchor]);
 
   useEffect(() => {
@@ -155,7 +159,7 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
     else what = `This folder holds ${fmt.items(doomed.count)}. It will be removed with everything in it.`;
   }
   return (
-    <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && close()}>
+    <div class="scrim scrim-ask" onPointerDown={(event) => event.target === event.currentTarget && close()}>
       <div class="ask" role="alertdialog" aria-modal="true" aria-labelledby="ask-title" aria-describedby="ask-what">
         <h2 id="ask-title">Delete this {noun}?</h2>
         <div class="ask-name">

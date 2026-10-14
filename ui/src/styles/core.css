@@ -6,12 +6,17 @@
   --text-s: calc(var(--text) * 0.89);
   --text-xs: calc(var(--text) * 0.8);
   --border: var(--line-w) solid var(--line);
+  /* motion: fast out of the gate, settling at the end. Every transition and the panes' slide use it. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   color-scheme: light;
 }
 :root[data-scheme="dark"] { color-scheme: dark; }
 
 *, *::before, *::after { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
+/* The page does not bounce or pull to refresh: it follows the folder by itself. Sideways stays the browser's, to go back. */
+html, body { height: 100%; margin: 0; overscroll-behavior-y: none; }
+/* A tap is answered by the control's own pressed look, not by a grey flash painted over it. */
+html { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
 body {
   background: var(--bg);
   color: var(--fg);
@@ -23,6 +28,11 @@ body {
 }
 button, input { font: inherit; letter-spacing: inherit; color: inherit; }
 button { background: none; border: 0; padding: 0; cursor: pointer; }
+/* A control answers a tap at once, and a long press on one selects nothing. Text that is read stays selectable. */
+button, a, .row, .tile { touch-action: manipulation; }
+button, .btn { -webkit-user-select: none; user-select: none; }
+/* A scrolled list that reaches its end stops there, and does not drag the page behind it. */
+.list, .col-rows, .pv-scroll, .pal-list, .note, .ask-name { overscroll-behavior: contain; }
 a { color: inherit; }
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -53,12 +63,16 @@ kbd {
   display: inline-flex; align-items: center; gap: 6px; height: calc(28px * var(--density)); padding: 0 calc(9px * var(--density));
   border-radius: var(--radius); color: var(--muted); white-space: nowrap; font-size: var(--text-s);
 }
-.btn:hover { background: var(--hover); color: var(--fg); }
+@media (hover: hover) and (pointer: fine) { .btn:hover { background: var(--hover); color: var(--fg); } }
 .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--fg); }
 .btn-line { border: var(--border); border-color: var(--line-strong); background: var(--surface); }
-.btn-fill, .btn-fill:hover { background: var(--accent); color: var(--accent-fg); font-weight: var(--weight-strong); }
+.btn-fill { background: var(--accent); color: var(--accent-fg); font-weight: var(--weight-strong); }
+@media (hover: hover) and (pointer: fine) { .btn-fill:hover { background: var(--accent); color: var(--accent-fg); } }
 .btn-fill:focus-visible { outline-offset: 2px; }
 .btn:disabled { opacity: 0.55; cursor: default; }
+/* A pressed button gives a little under the pointer or the finger, and springs back as soon as it is let go. */
+.btn, .seg button { transition: transform 160ms var(--ease-out); }
+.btn:active:not(:disabled), .seg button:active { transform: scale(0.97); }
 
 /* wordmark */
 .wm { display: inline-flex; align-items: center; gap: 0.5em; font: var(--weight-strong) calc(var(--text) * 1.08) / 1 var(--font-display); letter-spacing: -0.02em; color: var(--fg); text-decoration: none; }
@@ -90,11 +104,15 @@ kbd {
 
 .pop { position: fixed; z-index: 60; width: 248px; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow); padding: 6px; }
 .pop[hidden] { display: none; }
+/* The theme menu grows out of the button that opened it, which sets its origin. It is opened by a click, now and
+   then. The palette and the list of keys, opened from the keyboard many times a day, show at once. */
+.pop { transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out); }
+@starting-style { .pop { opacity: 0; transform: scale(0.96); } }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 2px; background: var(--sunken); border-radius: var(--radius); margin-bottom: 6px; }
 .seg button { height: calc(26px * var(--density)); border-radius: max(0px, calc(var(--radius) - 2px)); color: var(--muted); font-size: var(--text-s); }
 .seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 var(--line-w) var(--line); }
 .tm-row { display: flex; align-items: center; gap: 10px; width: 100%; height: var(--row-h); padding: 0 8px; border-radius: var(--radius); text-align: left; }
-.tm-row:hover { background: var(--hover); }
+@media (hover: hover) and (pointer: fine) { .tm-row:hover { background: var(--hover); } }
 .tm-row[aria-pressed="true"] { background: var(--accent-soft); }
 .tm-row .nm { flex: 1; }
 .tm-sw { display: inline-flex; flex: none; border-radius: 99px; overflow: hidden; box-shadow: 0 0 0 1px var(--line-strong); }
@@ -112,6 +130,17 @@ kbd {
 .ask-name .ic { margin-top: 0.14em; }
 .ask-do { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .ask-do .btn { height: calc(30px * var(--density)); padding: 0 calc(12px * var(--density)); }
+/* The delete dialog is rare and asks for a decision: it comes up over a fading backdrop rather than appearing. */
+.scrim-ask { transition: opacity 150ms ease; }
+.scrim-ask .ask { transition: opacity 180ms var(--ease-out), transform 180ms var(--ease-out); }
+@starting-style {
+  .scrim-ask { opacity: 0; }
+  .scrim-ask .ask { opacity: 0; transform: scale(0.96); }
+}
+/* Less motion: the menu and the dialog fade in where they stand. */
+@media (prefers-reduced-motion: reduce) {
+  @starting-style { .pop, .scrim-ask .ask { transform: none; } }
+}
 
 /* preview content */
 .pv { height: 100%; min-height: 0; display: flex; flex-direction: column; position: relative; }
@@ -171,7 +200,7 @@ kbd {
 .tbl th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: var(--weight); text-transform: var(--label-case); font-size: var(--text-xs); border-bottom-color: var(--line-strong); z-index: 1; }
 .tbl td.r, .tbl th.r { text-align: right; }
 .tbl td.i { color: var(--faint); width: 1%; }
-.tbl tbody tr:hover td { background: var(--hover); }
+@media (hover: hover) and (pointer: fine) { .tbl tbody tr:hover td { background: var(--hover); } }
 
 .json { padding: var(--pad) var(--pad) 48px; font: calc(var(--text) * 0.92) / 1.7 var(--font-mono); letter-spacing: 0; }
 .json details { padding-left: 1.3em; }
