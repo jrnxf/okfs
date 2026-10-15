@@ -175,7 +175,7 @@ export class Store {
     return s.open ?? (cur && !cur.dir ? cur : null);
   }
 
-  /** Whether `file` is shown as its source: a page, Markdown and a drawing are until their kind is flipped. */
+  /** Whether `file` is shown as its source: a page, Markdown, a drawing and JSON are until their kind is flipped. */
   isRaw(file: Entry): boolean {
     return hasSource(file) && sourceFirst(file) !== this.s.flipped.includes(formOf(file));
   }
@@ -570,12 +570,13 @@ export class Store {
 
   /**
    * Flips the file on show between its source and what is made from it. The choice holds for the files of
-   * its kind that follow. A file with one form stays as it is.
+   * its kind that follow. A file with one form stays as it is. `shown` is a file other than the cursor's, such
+   * as one the pointer rests on in a column.
    */
-  flipRaw(): void {
+  flipRaw(shown?: Entry): void {
     const { s } = this;
-    const file = this.flippable();
-    if (!file) return;
+    const file = shown ?? this.flippable();
+    if (!file || !hasSource(file)) return;
     const form = formOf(file);
     s.flipped = s.flipped.includes(form) ? s.flipped.filter((kept) => kept !== form) : [...s.flipped, form];
     this.emit();

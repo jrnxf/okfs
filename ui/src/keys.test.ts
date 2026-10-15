@@ -77,12 +77,12 @@ test("a file under the cursor is shown, and asked for ahead, with the preview cl
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
 });
 
-test("a page, Markdown and a drawing open as their source, and the flip holds for their kind", () => {
+test("a page, Markdown, a drawing and JSON open as their source, and the flip holds for their kind", () => {
   const store = showing("a.md", "b.md", "page.html", "shape.svg", "t.csv", "d.json", "main.rs");
   const [a, b, page, shape, csv, json, rs] = store.s.entries;
-  for (const file of [a, b, page, shape]) expect(store.isRaw(file!)).toBe(true);
-  // A table and JSON open as what is made from them, and code has no second form.
-  for (const file of [csv, json, rs]) expect(store.isRaw(file!)).toBe(false);
+  for (const file of [a, b, page, shape, json]) expect(store.isRaw(file!)).toBe(true);
+  // A table opens as what is made from it, and code has no second form.
+  for (const file of [csv, rs]) expect(store.isRaw(file!)).toBe(false);
 
   // The source is the form asked for ahead, and the flip is the page's: its request is the rendered one.
   asked.length = 0;
@@ -102,6 +102,10 @@ test("a page, Markdown and a drawing open as their source, and the flip holds fo
   store.moveTo(4);
   keys.keyFor(store, host, press("r"))?.();
   expect(store.isRaw(csv!)).toBe(true);
+  expect(store.isRaw(json!)).toBe(true);
+  // JSON flips to its tree.
+  store.moveTo(5);
+  keys.keyFor(store, host, press("r"))?.();
   expect(store.isRaw(json!)).toBe(false);
 });
 

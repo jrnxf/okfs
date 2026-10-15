@@ -58,7 +58,23 @@ export function FolderBar({ name, path, count, mtime, doomed }: { name: string; 
  * One folder as a column: its own bar, then its first entries as the main list draws them, in name order.
  * `followed` marks the first entry: the next column is the inside of it.
  */
-function Column({ folder, listing, followed, edge }: { folder: Entry; listing: Listing | undefined; followed: boolean; edge: boolean }) {
+function Column({
+  folder,
+  listing,
+  followed,
+  edge,
+  level,
+  hovered,
+  onHover,
+}: {
+  folder: Entry;
+  listing: Listing | undefined;
+  followed: boolean;
+  edge: boolean;
+  level: number;
+  hovered: string | null;
+  onHover: (at: Hover | null) => void;
+}) {
   // The listing on screen is the last one's until this folder's has come.
   const own = listing?.path === folder.path ? listing : undefined;
   const more = listing ? listing.total - listing.entries.length : 0;
@@ -70,8 +86,14 @@ function Column({ folder, listing, followed, edge }: { folder: Entry; listing: L
     const item = itemOf(event);
     if (listing && item) visit(listing, item, open);
   };
+  // The pointer resting on a file shows it in place of the columns to the right; on a folder, they come back.
+  const look = (event: PointerEvent) => {
+    if (event.pointerType === "touch") return;
+    const item = itemOf(event);
+    if (item) onHover(item.d ? null : { level, name: item.n });
+  };
   return (
-    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path}>
+    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path} onPointerMove={look}>
       <FolderBar name={folder.name} path={folder.path} count={own?.total ?? folder.count} mtime={folder.mtime} doomed={config.delete ? folder : null} />
       <div class="cols label">
         <span />
@@ -86,7 +108,7 @@ function Column({ folder, listing, followed, edge }: { folder: Entry; listing: L
         {listing?.entries.map((item, at) => {
           const entry = toEntry(item, listing.path, at);
           return (
-            <div class={followed && at === 0 ? "row at" : "row"} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
+            <div class={(followed && at === 0) || item.n === hovered ? "row at" : "row"} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
               <KindIcon kind={entry.kind} />
               <span class="nm trunc">
                 <b>{entry.name}</b>
@@ -189,6 +211,12 @@ function Folder({ folder }: { folder: Entry }) {
   );
 }
 
+/** A file under the pointer in a column: the level of the column and the file's name. */
+interface Hover {
+  level: number;
+  name: string;
+}
+
 export function Side({ slots }: { slots: number }) {
   const { s } = store;
   const cur = store.cur();
@@ -204,15 +232,31 @@ export function Side({ slots }: { slots: number }) {
   const columns = folder && !s.peek ? folder : null;
   const summed = folder && s.peek ? folder : null;
   const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path) : null);
-  const levels = columns ? columnsOf(startingAt(data, columns.path), slots) : [];
+  const all = columns ? columnsOf(startingAt(data, columns.path), slots) : [];
+
+  // A file the pointer rests on in a column fills the space of the columns to the right of it.
+  const [hover, setHover] = useState<(Hover & { root: string }) | null>(null);
+  const onHover = useCallback(
+    (at: Hover | null) => {
+      const root = columns?.path ?? "";
+      setHover((old) => (old?.level === at?.level && old?.name === at?.name && old?.root === root ? old : at && { ...at, root }));
+    },
+    [columns?.path],
+  );
+  const hoverList = hover && columns && hover.root === columns.path ? all[hover.level] : undefined;
+  const at = hoverList ? hoverList.entries.findIndex((item) => item.n === hover?.name && !item.d) : -1;
+  const hoverFile = hoverList && at >= 0 ? toEntry(hoverList.entries[at]!, hoverList.path, at) : null;
+  const levels = hoverFile && hover ? all.slice(0, hover.level + 1) : all;
 
   const unpeek = s.peek && !s.open && (
     <button class="btn" aria-label="Close the preview" title="Close the preview (space)" onClick={() => store.setPeek(false)}>
       <Icon name="close" />
     </button>
   );
+  const shown = file ?? hoverFile;
   let header: ComponentChildren = null;
-  if (file) {
+  if (shown) {
+    const file = shown;
     const learned = facts.path === file.path ? facts.list : [];
     const files = s.open ? store.files() : [];
     const raw = store.isRaw(file);
@@ -234,7 +278,7 @@ export function Side({ slots }: { slots: number }) {
           <Icon name="down" />
         </button>
         {hasSource(file) && (
-          <button class="btn" aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw()}>
+          <button class="btn" aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw(file)}>
             <Icon name="code" />
           </button>
         )}
@@ -246,9 +290,11 @@ export function Side({ slots }: { slots: number }) {
             <Icon name="trash" />
           </button>
         )}
-        <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
-          <Icon name={s.open ? "pane" : "expand"} />
-        </button>
+        {!hoverFile && (
+          <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
+            <Icon name={s.open ? "pane" : "expand"} />
+          </button>
+        )}
       </>
     );
   } else if (summed) {
@@ -275,16 +321,16 @@ export function Side({ slots }: { slots: number }) {
   }
 
   return (
-    <section class="right">
+    <section class="right" onPointerLeave={() => onHover(null)}>
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
-      {!columns && (
+      {(!columns || hoverFile) && (
         <div class="pane" key="pane" data-pane="">
           <div class="ph" onMouseDown={keepFocus}>
             {header}
           </div>
           <div class="pv">
-            {file && <Preview entry={file} stamp={store.stamp(file)} report={report} raw={store.isRaw(file)} />}
+            {shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} />}
             {summed && <Folder folder={summed} />}
           </div>
         </div>
@@ -294,7 +340,16 @@ export function Side({ slots }: { slots: number }) {
         const first = above?.entries[0];
         // The folder under the cursor heads the first column. Each one after is the first entry of the one before.
         const head = level === 0 ? columns : above && first ? toEntry(first, above.path, 0) : null;
-        return head && <Column key={level} folder={head} listing={listing} followed={level + 1 < levels.length} edge={level === slots - 2} />;
+        return head && <Column
+            key={level}
+            folder={head}
+            listing={listing}
+            followed={level + 1 < levels.length && !hoverFile}
+            edge={level === slots - 2}
+            level={level}
+            hovered={hoverFile && hover?.level === level ? hoverFile.name : null}
+            onHover={onHover}
+          />;
       })}
     </section>
   );
