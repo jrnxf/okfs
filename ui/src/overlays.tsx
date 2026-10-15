@@ -79,7 +79,6 @@ const keys = (): Key[] => [
   [["⌫"], "Up one folder"],
   [["/"], "Filter this folder"],
   [[`${MOD} K`], "Find anything in the tree"],
-  [["g"], "List or grid"],
   [["s"], "Change the sort"],
   [["t"], "Light or dark"],
   [["esc"], "Close the file, the preview or the filter"],

@@ -1,6 +1,6 @@
-// What is beside the main list. With the preview closed: a column for the folder under the cursor and for
-// each folder its first entry leads to, or the facts the list has of the file under it. With it open: the
-// file under the cursor as it is shown, or the folder under it added up.
+// What is beside the main list. The file under the cursor as it is shown. For a folder under it: with the
+// preview closed, a column for it and for each folder its first entry leads to; with it open, the folder
+// added up.
 
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
@@ -8,7 +8,7 @@ import { type FolderSum, type Item, type Listing, nameOf, parentOf, urls } from 
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
-import { LABEL, hasSource } from "./kinds";
+import { hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
 import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled } from "./preview";
 import { columnsOf, startingAt } from "./slots";
@@ -105,28 +105,6 @@ function Column({ folder, listing, followed, edge }: { folder: Entry; listing: L
   );
 }
 
-/**
- * The file under the cursor while the preview is closed: what the list already knows of it, and the way to
- * open the preview. Nothing here asks the server about the file, so a held key costs a few words a move.
- */
-function Closed({ entry }: { entry: Entry }) {
-  return (
-    <div class="pv-center">
-      <div class="pv-card" onMouseDown={keepFocus}>
-        <KindIcon kind={entry.kind} />
-        <b>{entry.name}</b>
-        <span>
-          {LABEL[entry.kind]} · {fmt.size(entry.size)}
-        </span>
-        <button class="btn btn-line" onClick={() => store.setPeek(true)}>
-          Preview
-          <kbd>space</kbd>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 const plural = (n: number, one: string, many: string): string => `${fmt.count(n)} ${n === 1 ? one : many}`;
 
 /**
@@ -148,7 +126,7 @@ function Folder({ folder }: { folder: Entry }) {
   useEffect(() => {
     if (!warm || first.url !== warm || first.data?.path !== folder.path) return;
     const files = first.data.entries.map((item, rank) => toEntry(item, folder.path, rank));
-    lookAhead(files, -1, 1, versionOf, true);
+    lookAhead(files, -1, 1, versionOf, false, (file) => store.isRaw(file));
   }, [warm, first.url, first.data, folder.path]);
 
   const items = sum?.items ?? folder.count;
@@ -216,8 +194,6 @@ export function Side({ slots }: { slots: number }) {
   const cur = store.cur();
   const file = s.open ?? (cur && !cur.dir ? cur : null);
   const folder = !s.open && cur?.dir ? cur : null;
-  /** The file is shown, not only named: it is at full width, or the preview is open on it. */
-  const shown = store.shown() !== null;
 
   const [facts, setFacts] = useState<{ path: string; list: string[] }>({ path: "", list: [] });
   const report = useCallback((path: string, list: string[]) => {
@@ -237,9 +213,9 @@ export function Side({ slots }: { slots: number }) {
   );
   let header: ComponentChildren = null;
   if (file) {
-    const learned = shown && facts.path === file.path ? facts.list : [];
+    const learned = facts.path === file.path ? facts.list : [];
     const files = s.open ? store.files() : [];
-    const raw = s.raw === file.path;
+    const raw = store.isRaw(file);
     header = (
       <>
         <button class="btn only-open" aria-label="Back to the list" onClick={() => store.close()}>
@@ -257,7 +233,7 @@ export function Side({ slots }: { slots: number }) {
         <button class="btn only-open" aria-label="Next file" onClick={() => store.step(1)}>
           <Icon name="down" />
         </button>
-        {shown && hasSource(file) && (
+        {hasSource(file) && (
           <button class="btn" aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw()}>
             <Icon name="code" />
           </button>
@@ -273,7 +249,6 @@ export function Side({ slots }: { slots: number }) {
         <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
           <Icon name={s.open ? "pane" : "expand"} />
         </button>
-        {unpeek}
       </>
     );
   } else if (summed) {
@@ -309,8 +284,7 @@ export function Side({ slots }: { slots: number }) {
             {header}
           </div>
           <div class="pv">
-            {file && shown && <Preview entry={file} stamp={store.stamp(file)} report={report} raw={s.raw === file.path} />}
-            {file && !shown && <Closed entry={file} />}
+            {file && <Preview entry={file} stamp={store.stamp(file)} report={report} raw={store.isRaw(file)} />}
             {summed && <Folder folder={summed} />}
           </div>
         </div>

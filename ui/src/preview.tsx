@@ -165,7 +165,7 @@ function ask<T>(url: string): Promise<T> {
 
 /** The start of a text file, by the address of the whole of it: what the pane asks for first. */
 const startOf = (whole: string): string => `${whole}&lines=${FIRST_LINES}`;
-const startUrl = (path: string): string => startOf(urls.preview(path));
+const startUrl = (path: string, source = false): string => startOf(source ? urls.source(path) : urls.preview(path));
 
 /** Pictures loaded ahead of the cursor, held so the browser keeps them. */
 const pictures: HTMLImageElement[] = [];
@@ -191,8 +191,9 @@ function unpack(picture: HTMLImageElement): void {
  */
 export const columnsUrl = (path: string): string => urls.list(path, COLUMN_ROWS, slots() - 2);
 
-/** The JSON the pane asks for when the preview is open on the file `entry`, if it asks for any. */
-function addressOf(entry: Entry): string | null {
+/** The JSON the pane asks for when it shows the file `entry`, if it asks for any. `source`: as its source. */
+function addressOf(entry: Entry, source: boolean): string | null {
+  if (source && hasSource(entry)) return startUrl(entry.path, true);
   switch (entry.kind) {
     case "folder":
     case "image":
@@ -283,28 +284,35 @@ function sheetOf(entry: Entry): string {
 }
 
 /**
- * Asks for what lies past the cursor in the direction it moves, so that it is here before the cursor is.
- * With the preview closed that is the columns of each folder, and nothing about any file. With `previews`,
- * while it is open, it is the preview of each file. `stamp` gives the stamp a picture is loaded under.
+ * Asks for what lies past the cursor in the direction it moves, so that it is here before the cursor is: the
+ * preview of each file, in the form `source` says it is shown in. With the preview closed (`columns`) it is
+ * also the columns of each folder. `stamp` gives the stamp a picture is loaded under.
  */
-export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string, previews: boolean): void {
+export function lookAhead(
+  entries: Entry[],
+  cursor: number,
+  step: 1 | -1,
+  stamp: (entry: Entry) => string,
+  columns: boolean,
+  source: (entry: Entry) => boolean,
+): void {
   // Text files whose start is not known and not on its way, nearest first.
-  const unknown: { url: string; path: string }[] = [];
+  const unknown: { url: string; path: string; source: boolean }[] = [];
   let nearest = 0;
   for (let i = 1; i <= AHEAD; i++) {
     const entry = entries[cursor + step * i];
     if (!entry) break;
     if (entry.dir) {
       // An open preview adds a folder up, which is not done for a folder the cursor may never stop on.
-      if (!previews && flights.size < FLIGHTS) ask(columnsUrl(entry.path)).catch(() => undefined);
+      if (columns && flights.size < FLIGHTS) ask(columnsUrl(entry.path)).catch(() => undefined);
       continue;
     }
-    if (!previews) continue;
-    const url = addressOf(entry);
-    if (url === startUrl(entry.path)) {
+    const raw = source(entry);
+    const url = addressOf(entry, raw);
+    if (url !== null && url === startUrl(entry.path, raw && hasSource(entry))) {
       if (answers.get(url) !== undefined || flights.has(url)) continue;
       if (!unknown.length) nearest = i;
-      unknown.push({ url, path: entry.path });
+      unknown.push({ url, path: entry.path, source: raw && hasSource(entry) });
     } else if (url) {
       if (flights.size < FLIGHTS) ask(url).catch(() => undefined);
     } else if (entry.kind === "video") {
@@ -327,20 +335,25 @@ export function lookAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp:
   // One request for all of them, once half of what lies ahead is unknown or the cursor is about to reach
   // it. A request for each file needs several turns of the page to land, and a held key leaves it few.
   if (!unknown.length || (unknown.length < AHEAD / 2 && nearest > 3)) return;
-  const flight = { abort: new AbortController(), done: Promise.resolve() as Promise<unknown> };
-  const all = getJson<Record<string, unknown>>(urls.previews(unknown.map((file) => file.path), FIRST_LINES), flight.abort.signal);
-  for (const file of unknown) {
-    const one = { abort: flight.abort, done: flight.done };
-    one.done = all
-      .then((found) => {
-        const data = found[file.path];
-        if (data === undefined) throw new Error("no preview");
-        if (flights.get(file.url)?.abort === one.abort) remember(file.url, data);
-        return data;
-      })
-      .finally(() => land(file.url, one));
-    one.done.catch(() => undefined);
-    flights.set(file.url, one);
+  // The files shown as their source are asked for in a request of their own: a request has one form.
+  for (const sources of [false, true]) {
+    const group = unknown.filter((file) => file.source === sources);
+    if (!group.length) continue;
+    const flight = { abort: new AbortController(), done: Promise.resolve() as Promise<unknown> };
+    const all = getJson<Record<string, unknown>>(urls.previews(group.map((file) => file.path), FIRST_LINES, sources), flight.abort.signal);
+    for (const file of group) {
+      const one = { abort: flight.abort, done: flight.done };
+      one.done = all
+        .then((found) => {
+          const data = found[file.path];
+          if (data === undefined) throw new Error("no preview");
+          if (flights.get(file.url)?.abort === one.abort) remember(file.url, data);
+          return data;
+        })
+        .finally(() => land(file.url, one));
+      one.done.catch(() => undefined);
+      flights.set(file.url, one);
+    }
   }
 }
 
@@ -460,12 +473,12 @@ document.addEventListener(
 );
 
 /** Where the cursor is in its folder and which way it last moved: what `Page` loads ahead from. */
-let near: { entries: Entry[]; cursor: number; step: 1 | -1; stamp: (entry: Entry) => string } | null = null;
+let near: { entries: Entry[]; cursor: number; step: 1 | -1; stamp: (entry: Entry) => string; source: (entry: Entry) => boolean } | null = null;
 const nearby = new Set<() => void>();
 
 /** Tells the pane where the cursor is, so the pages past it can be loaded before it gets there. */
-export function pagesAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string): void {
-  near = { entries, cursor, step, stamp };
+export function pagesAhead(entries: Entry[], cursor: number, step: 1 | -1, stamp: (entry: Entry) => string, source: (entry: Entry) => boolean): void {
+  near = { entries, cursor, step, stamp, source };
   for (const heard of nearby) heard();
 }
 
@@ -807,6 +820,8 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
         const next = here.entries[here.cursor + here.step * i];
         if (!next) break;
         if ((next.kind !== "html" && next.kind !== "pdf") || next.size > AHEAD_PAGE_BYTES) continue;
+        // A page that is shown as its source is no page to load.
+        if (next.kind === "html" && here.source(next)) continue;
         if (next.kind === "pdf" && ++pdfs > AHEAD_PDFS) continue;
         if (bytes + next.size > AHEAD_PAGES_BYTES) break;
         bytes += next.size;
@@ -1027,14 +1042,12 @@ function Text({ entry, report, source }: { entry: Entry; report: Report; source?
   useEffect(() => {
     if (!data || url !== whole) return;
     if (data.kind === "table") report(entry.path, [`${fmt.count(data.total)} ${data.total === 1 ? "row" : "rows"}`]);
-    else if (data.kind !== "none" && data.kind !== "doc") report(entry.path, [`${fmt.count(data.lines)} ${data.lines === 1 ? "line" : "lines"}`]);
+    else if (data.kind !== "none") report(entry.path, [`${fmt.count(data.lines)} ${data.lines === 1 ? "line" : "lines"}`]);
   }, [entry.path, data, url, whole, report]);
 
   if (failed) return <Card entry={entry} line="This file could not be read" />;
   if (!data) return null;
   switch (data.kind) {
-    case "doc":
-      return null;
     case "none":
       // A card names its file, so it is never shown for the one before.
       if (url !== whole) return null;

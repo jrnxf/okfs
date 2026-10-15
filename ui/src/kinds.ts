@@ -94,6 +94,19 @@ export function hasSource(file: { kind: Kind; ext: string }): boolean {
   return file.kind === "html" || file.kind === "md" || file.kind === "csv" || file.kind === "json" || file.ext === "svg";
 }
 
+/** What a flip of a file is remembered by: its kind, and an SVG drawing apart from the pictures. */
+export function formOf(file: { kind: Kind; ext: string }): string {
+  return file.ext === "svg" ? "svg" : file.kind;
+}
+
+/**
+ * True for a file with a source that is shown as its source when it is opened: a page, Markdown and a drawing.
+ * A table and JSON open as what is made from them.
+ */
+export function sourceFirst(file: { kind: Kind; ext: string }): boolean {
+  return file.kind === "html" || file.kind === "md" || file.ext === "svg";
+}
+
 export function extension(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";

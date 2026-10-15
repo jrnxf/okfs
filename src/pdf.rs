@@ -1,5 +1,4 @@
-//! The first page of a PDF as a picture, for the pane while the browser's viewer starts
-//! and for the grid.
+//! The first page of a PDF as a picture, for the pane while the browser's viewer starts.
 //!
 //! A PDF is whatever its author made it, and the engine that draws it is young. So it
 //! never draws inside the server: the server starts itself again as `okfs pdf-page`,

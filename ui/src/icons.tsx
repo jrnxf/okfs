@@ -21,7 +21,6 @@ const LINE: Record<string, string> = {
   archive:
     '<path d="M2.75 5.25h10.5v7c0 .83-.67 1.5-1.5 1.5h-7.5c-.83 0-1.5-.67-1.5-1.5z"/><path d="M1.75 2.75h12.5v2.5H1.75zM6.5 8.25h3"/>',
   search: '<circle cx="7" cy="7" r="4.25"/><path d="M10.25 10.25l3.25 3.25"/>',
-  grid: '<rect x="2.25" y="2.25" width="4.5" height="4.5" rx="1"/><rect x="9.25" y="2.25" width="4.5" height="4.5" rx="1"/><rect x="2.25" y="9.25" width="4.5" height="4.5" rx="1"/><rect x="9.25" y="9.25" width="4.5" height="4.5" rx="1"/>',
   list: '<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>',
   right: '<path d="M6 3.5L10.5 8 6 12.5"/>',
   left: '<path d="M10 3.5L5.5 8l4.5 4.5"/>',

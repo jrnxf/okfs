@@ -51,7 +51,6 @@ export type TextPreview =
   | { kind: "code"; html: string; lines: number; highlighted: boolean; more?: boolean }
   | { kind: "table"; head: string[]; rows: string[][]; numeric: boolean[]; total: number }
   | { kind: "json"; text: string; lines: number }
-  | { kind: "doc"; title: string; text: string }
   | { kind: "none"; reason: "binary" | "large" };
 
 export interface Hit {
@@ -100,10 +99,8 @@ export const urls = {
   /** The text of a file as it is written, as source code, whatever the file is. */
   source: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&raw=1`,
   /** Several text files in one answer, by path, source code cut to its first `lines` lines. */
-  previews: (paths: string[], lines: number) =>
-    `/api/previews?lines=${lines}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,
-  /** The start of a text file only, for a grid tile. */
-  head: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&head=1`,
+  previews: (paths: string[], lines: number, source = false) =>
+    `/api/previews?lines=${lines}${source ? "&raw=1" : ""}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
   search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
   recent: "/api/recent",

@@ -1,4 +1,4 @@
-//! Small versions of images for the grid view. Inputs are bounded, and the cache
+//! Small versions of images, and first pages of PDFs. Inputs are bounded, and the cache
 //! lives outside the served folder. The first pages of PDFs are kept in it too: see `pdf`.
 
 use std::fs;

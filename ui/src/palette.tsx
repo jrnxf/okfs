@@ -65,9 +65,8 @@ function commands(): Entry[] {
   if (config.delete && under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
   if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
   return [
-    { title: s.view === "list" ? "Switch to grid view" : "Switch to list view", key: "g", run: () => store.setView() },
     ...(s.open ? [] : [{ title: s.peek ? "Close the preview" : "Open the preview", key: "space", run: () => store.setPeek() }]),
-    ...(flippable ? [{ title: s.raw === flippable.path ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
+    ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
     {
       title: isDark() ? "Use light scheme" : "Use dark scheme",

@@ -2,7 +2,7 @@
 
 import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
 import { type Config, config, locate } from "./config";
-import { type Kind, extension, hasSource, kindOf } from "./kinds";
+import { type Kind, extension, formOf, hasSource, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
 
@@ -28,7 +28,6 @@ export interface Entry {
 export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count">;
 
 export type SortKey = "name" | "time" | "size" | "kind";
-export type View = "list" | "grid";
 export interface Sort {
   key: SortKey;
   dir: 1 | -1;
@@ -52,14 +51,16 @@ export interface State {
   /** `all` after the filter and the sort: what the list shows. */
   entries: Entry[];
   cursor: number;
-  view: View;
   /**
-   * The preview is open: what is under the cursor is shown beside the list, and follows the cursor. Closed,
-   * nothing is asked of the server about a file until one is opened. It starts closed on every visit.
+   * The preview is open: a folder under the cursor is added up beside the list, where closed it has its
+   * columns. A file under the cursor is shown either way. It starts closed on every visit.
    */
   peek: boolean;
-  /** The path of the file shown as its source, not as what is made from it. Empty for none. */
-  raw: string;
+  /**
+   * The kinds of file the reader flipped away from the form they open in: see `formOf` and `sourceFirst`.
+   * It starts empty on every visit.
+   */
+  flipped: string[];
   sort: Sort;
   filter: string;
   /** The file given the full width, if any. */
@@ -123,9 +124,8 @@ export class Store {
     all: [],
     entries: [],
     cursor: 0,
-    view: prefs.get("view") === "grid" ? "grid" : "list",
     peek: false,
-    raw: "",
+    flipped: [],
     sort: savedSort(),
     filter: "",
     open: null,
@@ -161,8 +161,6 @@ export class Store {
   }
 
   private emit(): void {
-    // The source is shown of one file: it is left behind when another file, or none, is on show.
-    if (this.s.raw && this.shown()?.path !== this.s.raw) this.s.raw = "";
     for (const listener of this.listeners) listener();
   }
 
@@ -170,11 +168,16 @@ export class Store {
     return this.s.entries[this.s.cursor] ?? null;
   }
 
-  /** The file on show: the one given the full width, or the one under the cursor while the preview is open. */
+  /** The file on show: the one given the full width, or the one under the cursor. */
   shown(): Entry | null {
     const { s } = this;
     const cur = this.cur();
-    return s.open ?? (s.peek && cur && !cur.dir ? cur : null);
+    return s.open ?? (cur && !cur.dir ? cur : null);
+  }
+
+  /** Whether `file` is shown as its source: a page, Markdown and a drawing are until their kind is flipped. */
+  isRaw(file: Entry): boolean {
+    return hasSource(file) && sourceFirst(file) !== this.s.flipped.includes(formOf(file));
   }
 
   /** The file on show, when it has a second form to flip to: see `hasSource`. */
@@ -559,25 +562,22 @@ export class Store {
     }
   }
 
-  setView(view?: View): void {
-    const { s } = this;
-    s.view = view ?? (s.view === "list" ? "grid" : "list");
-    prefs.set("view", s.view);
-    this.emit();
-  }
-
   /** Opens or closes the preview. The choice is for this visit: nothing is kept. */
   setPeek(peek = !this.s.peek): void {
     this.s.peek = peek;
     this.emit();
   }
 
-  /** Flips the file on show between what is made from it and its source. A file with one form stays as it is. */
+  /**
+   * Flips the file on show between its source and what is made from it. The choice holds for the files of
+   * its kind that follow. A file with one form stays as it is.
+   */
   flipRaw(): void {
     const { s } = this;
     const file = this.flippable();
     if (!file) return;
-    s.raw = s.raw === file.path ? "" : file.path;
+    const form = formOf(file);
+    s.flipped = s.flipped.includes(form) ? s.flipped.filter((kept) => kept !== form) : [...s.flipped, form];
     this.emit();
   }
 

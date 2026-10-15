@@ -706,12 +706,6 @@ async fn text_previews_are_bounded() {
         (Some("none"), Some("binary"))
     );
 
-    // A tile's cover reads the start of a file only, however large the file is.
-    let head = json(&app, "/api/preview?path=huge.log&head=1").await;
-    assert_eq!(head["kind"], "none");
-    fs::write(site.served.join("long.txt"), "line\n".repeat(100_000)).unwrap();
-    assert_eq!(json(&app, "/api/preview?path=long.txt&head=1").await["lines"], 16);
-
     let code = json(&app, "/api/preview?path=sub/deep/c.rs").await;
     assert_eq!(code["kind"], "code");
     assert!(code["html"].as_str().unwrap().contains("tk-k"));
@@ -775,6 +769,10 @@ async fn several_previews_come_in_one_answer_by_path() {
         json(&app, "/api/preview?path=sub/deep/c.rs").await
     );
     assert_eq!(many["data.json"]["kind"], "json");
+
+    // With `raw=1` each is as it is written: a table is code, not rows.
+    let raw = json(&app, "/api/previews?lines=80&raw=1&p=data.json").await;
+    assert_eq!(raw["data.json"]["kind"], "code");
 
     // Nothing asked for, nothing sent; a path outside the served folder is left out like a missing one.
     assert_eq!(json(&app, "/api/previews").await, serde_json::json!({}));

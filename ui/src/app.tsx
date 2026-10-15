@@ -2,22 +2,21 @@
 
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type Listing, type TextPreview, nameOf, urls } from "./api";
+import { nameOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
 import { keyFor, pressOf } from "./keys";
-import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
-import { Prose, lookAhead, pagesAhead, useLoaded } from "./preview";
+import { Prose, lookAhead, pagesAhead } from "./preview";
 import { Aim, AIM_RECHECK } from "./aim";
 import { FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
 import { slots } from "./slots";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
-import { type Cell, VGrid } from "./vgrid";
+import { type Cell, VList } from "./vlist";
 
 /** At this width and below, the list takes the whole screen and a file opens as a sheet over it. */
 const PHONE = 760;
@@ -49,137 +48,6 @@ function inPlace(run: () => void) {
     event.preventDefault();
     run();
   };
-}
-
-/** Tiles wait this long before asking for their cover, so scrolling past does not ask at all. */
-const COVER_SETTLE = 120;
-const COVER_KINDS = new Set(["md", "code", "json", "csv", "text"]);
-
-/** A folder's tile: its first four entries, pictures shown as pictures. */
-function FolderCover({ entry }: { entry: Entry }) {
-  const { data } = useLoaded<Listing>(urls.list(entry.path, 4), COVER_SETTLE);
-  if (entry.count === 0 || !data || data.path !== entry.path || !data.entries.length) {
-    return (
-      <div class="th th-icon">
-        <KindIcon kind="folder" />
-        {entry.count === 0 && <span>Empty</span>}
-      </div>
-    );
-  }
-  return (
-    <div class="th th-folder">
-      {[0, 1, 2, 3].map((slot) => {
-        const item = data.entries[slot];
-        if (!item) return <div />;
-        const kind = kindOf(item.n, item.d === true);
-        const path = `${entry.path}/${item.n}`;
-        return (
-          <div>
-            {kind === "image" && !item.n.toLowerCase().endsWith(".svg") ? (
-              <img src={urls.thumb(path, 160, item.m, item.s)} loading="lazy" alt="" />
-            ) : (
-              <KindIcon kind={kind} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** A text file's tile: its first lines, or for Markdown its title and opening words. */
-function TextCover({ entry }: { entry: Entry }) {
-  const url = urls.head(entry.path);
-  const { data, url: from } = useLoaded<TextPreview>(url, COVER_SETTLE);
-  if (data && from === url && data.kind === "doc") {
-    return (
-      <div class="th th-doc">
-        <span class="bar" />
-        <span class="t">{data.title}</span>
-        <span class="x">{data.text}</span>
-      </div>
-    );
-  }
-  if (data && from === url && data.kind === "code") {
-    return <div class="th th-code" dangerouslySetInnerHTML={{ __html: data.html }} />;
-  }
-  return (
-    <div class="th th-icon">
-      <KindIcon kind={entry.kind} />
-      <span class="big">.{entry.ext || "?"}</span>
-    </div>
-  );
-}
-
-/** A zip's tile: the names inside it. */
-function ZipCover({ entry }: { entry: Entry }) {
-  const url = urls.archive(entry.path);
-  const { data, url: from } = useLoaded<Archive>(url, COVER_SETTLE);
-  if (data && from === url && data.entries.length) {
-    return <div class="th th-code">{data.entries.slice(0, 16).map((item) => `${item.name}\n`)}</div>;
-  }
-  return (
-    <div class="th th-icon">
-      <KindIcon kind="archive" />
-      <span class="big">.zip</span>
-    </div>
-  );
-}
-
-/** A grid tile's picture. */
-function Thumb({ entry, width }: { entry: Entry; width: number }) {
-  // 0: the thumbnail, 1: the image itself, 2: give up and show an icon.
-  const [stage, setStage] = useState(entry.ext === "svg" ? 1 : 0);
-  if (entry.dir) return <FolderCover entry={entry} />;
-  if (COVER_KINDS.has(entry.kind)) return <TextCover entry={entry} />;
-  if (entry.ext === "zip") return <ZipCover entry={entry} />;
-  // The file itself is asked for by an address that moves when it is rewritten, as the thumbnail's does.
-  const raw = `${urls.raw(entry.path)}?v=${entry.mtime}.${entry.size}`;
-  if (entry.kind === "image" && stage < 2) {
-    const wanted = Math.ceil(width * (window.devicePixelRatio || 1));
-    const src = stage === 0 ? urls.thumb(entry.path, wanted, entry.mtime, entry.size) : raw;
-    return (
-      <div class="th">
-        <img src={src} loading="lazy" alt="" onError={() => setStage(stage + 1)} />
-      </div>
-    );
-  }
-  if (entry.kind === "video" && stage < 2) {
-    return (
-      <div class="th">
-        <video src={`${raw}#t=2`} preload="metadata" muted playsInline onError={() => setStage(2)} />
-      </div>
-    );
-  }
-  if (entry.kind === "pdf" && config.pdf && stage === 0) {
-    // The first page, drawn by the server. A PDF it cannot draw gets the sheet below, as every PDF did.
-    const wanted = Math.ceil(width * (window.devicePixelRatio || 1));
-    return (
-      <div class="th th-page">
-        <img src={urls.thumb(entry.path, wanted, entry.mtime, entry.size)} loading="lazy" alt="" onError={() => setStage(2)} />
-      </div>
-    );
-  }
-  if (entry.kind === "pdf") {
-    return (
-      <div class="th th-sheet">
-        <div>
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div class="th th-icon">
-      <KindIcon kind={entry.kind} />
-      <span class="big">.{entry.ext || "?"}</span>
-    </div>
-  );
 }
 
 function Crumbs() {
@@ -272,13 +140,9 @@ export function App() {
   const main = useRef<HTMLDivElement>(null);
   useSlide(main, s.path);
   const filterInput = useRef<HTMLInputElement>(null);
-  const cols = useRef(1);
   const [filtering, setFiltering] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
 
-  const onCols = useCallback((count: number) => {
-    cols.current = count;
-  }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
   const focusFilter = useCallback(() => {
     setFiltering(true);
@@ -288,17 +152,18 @@ export function App() {
   const here = store.here();
   const flippable = store.flippable();
 
-  // What lies past the cursor, the way it is moving, is asked for before the cursor gets there: the columns
-  // of the folders, and the previews of the files only while one is on show.
-  const previewing = s.peek || s.open !== null;
+  // What lies past the cursor, the way it is moving, is asked for before the cursor gets there: the previews
+  // of the files, and the columns of the folders while the preview is closed.
+  const columns = !s.peek && s.open === null;
   const cursorWas = useRef(s.cursor);
   useLayoutEffect(() => {
     const step = s.cursor >= cursorWas.current ? 1 : -1;
     cursorWas.current = s.cursor;
     if (s.status !== "ready") return;
-    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), previewing);
-    if (previewing) pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry));
-  }, [s.cursor, s.entries, s.status, previewing, cut]);
+    const source = (entry: Entry) => store.isRaw(entry);
+    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), columns, source);
+    pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), source);
+  }, [s.cursor, s.entries, s.status, columns, cut]);
 
   // A name cut short by an ellipsis is shown in full under the pointer. A name that fits has no tip to repeat it.
   useEffect(() => {
@@ -351,7 +216,6 @@ export function App() {
       }
       if (s.palette) return;
       const host = {
-        across: cols.current,
         filter: focusFilter,
         closeMenu: () => setMenu(null),
         flipScheme: () => setScheme(isDark() ? "light" : "dark"),
@@ -448,17 +312,6 @@ export function App() {
     if (!entry) return null;
     const on = index === s.cursor;
     const style = { top: `${cell.top}px`, left: `${cell.left}px`, width: `${cell.width}px`, height: `${cell.height}px` };
-    if (s.view === "grid") {
-      return (
-        <div class="tile" role="option" aria-selected={on} data-i={index} style={style} key={entry.path}>
-          <div class="box">
-            {/* A cover that failed while its file was being written is tried again when the file has changed. */}
-            <Thumb key={`${entry.mtime} ${entry.size}`} entry={entry} width={cell.width} />
-          </div>
-          <div class="nm trunc">{entry.name}</div>
-        </div>
-      );
-    }
     return (
       <div class="row" role="option" aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style} key={index}>
         <KindIcon kind={entry.kind} />
@@ -500,9 +353,6 @@ export function App() {
               <Icon name="trash" />
             </button>
           )}
-          <button class="btn" aria-label="List or grid" onClick={() => store.setView()}>
-            <Icon name={s.view === "list" ? "grid" : "list"} />
-          </button>
           <button class="btn" aria-label="Theme" onClick={(event) => setMenu(menu ? null : event.currentTarget)}>
             <Icon name="swatch" />
           </button>
@@ -518,16 +368,14 @@ export function App() {
             mtime={s.status === "ready" ? s.mtime : undefined}
             doomed={here}
           />
-          {s.view === "list" && <Columns />}
-          <VGrid
+          <Columns />
+          <VList
             scroller={scroller}
             count={s.entries.length}
-            grid={s.view === "grid"}
             cursor={s.cursor}
             caught={s.caught}
             listKey={`${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
             render={renderCell}
-            onCols={onCols}
             empty={<Empty />}
           >
             {s.readme && !s.filter && (
@@ -539,7 +387,7 @@ export function App() {
                 <Prose html={s.readme.html} />
               </section>
             )}
-          </VGrid>
+          </VList>
         </section>
         <Side slots={cut} />
       </div>
@@ -586,14 +434,11 @@ export function App() {
           )}
           {flippable && (
             <span>
-              <kbd>r</kbd> {s.raw === flippable.path ? "rendered" : "source"}
+              <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
             </span>
           )}
           <span>
             <kbd>/</kbd> filter
-          </span>
-          <span>
-            <kbd>g</kbd> grid
           </span>
           <span>
             <kbd>s</kbd> sort

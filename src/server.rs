@@ -547,8 +547,6 @@ async fn events(State(app): State<Arc<App>>) -> Response {
 struct PreviewQuery {
     #[serde(default)]
     path: String,
-    /// Send only the start of the file, for a grid tile.
-    head: Option<u8>,
     /// Send only this many lines of source code. The page asks for a screen of them
     /// first, and for the whole file once the cursor rests on it.
     lines: Option<usize>,
@@ -570,23 +568,12 @@ impl Drop for Gone {
 }
 
 /// Builds the preview of one file. `None` when there is no such file.
-async fn build_preview(
-    app: &App,
-    path: &str,
-    head: bool,
-    form: preview::Form,
-) -> Option<std::io::Result<preview::Preview>> {
+async fn build_preview(app: &App, path: &str, form: preview::Form) -> Option<std::io::Result<preview::Preview>> {
     let found = app.root.resolve(path).filter(|found| found.meta.is_file())?;
     let size = found.meta.len();
     let gone = Gone(Arc::new(AtomicBool::new(false)));
     let flag = Arc::clone(&gone.0);
-    let work = move || {
-        if head {
-            preview::head(&found.abs, &found.rel)
-        } else {
-            preview::of(&found.abs, &found.rel, size, form, &flag)
-        }
-    };
+    let work = move || preview::of(&found.abs, &found.rel, size, form, &flag);
     Some(
         heavy(app, work)
             .await
@@ -599,18 +586,20 @@ async fn preview_file(State(app): State<Arc<App>>, Query(query): Query<PreviewQu
         first: query.lines,
         source: query.raw.is_some(),
     };
-    match build_preview(&app, &query.path, query.head.is_some(), form).await {
+    match build_preview(&app, &query.path, form).await {
         None => not_found(),
         Some(Ok(preview)) => Json(preview).into_response(),
         Some(Err(_)) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the file could not be read"),
     }
 }
 
-/// The previews of several files in one answer, by path: `?lines=80&p=a.rs&p=b.rs`.
+/// The previews of several files in one answer, by path: `?lines=80&p=a.rs&p=b.rs`, with `raw=1` for
+/// each as it is written.
 /// The page asks this way for what lies ahead of a moving cursor. A file that is
 /// missing or cannot be read is left out.
 async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
     let mut lines = None;
+    let mut source = false;
     let mut paths = Vec::new();
     for pair in uri.query().unwrap_or("").split('&') {
         let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -619,15 +608,13 @@ async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
             .into_owned();
         match name {
             "lines" => lines = value.parse().ok(),
+            "raw" => source = true,
             "p" if paths.len() < MAX_PREVIEWS => paths.push(value),
             _ => {}
         }
     }
-    let form = preview::Form {
-        first: lines,
-        source: false,
-    };
-    let built = future::join_all(paths.iter().map(|path| build_preview(&app, path, false, form))).await;
+    let form = preview::Form { first: lines, source };
+    let built = future::join_all(paths.iter().map(|path| build_preview(&app, path, form))).await;
     let previews: std::collections::BTreeMap<String, preview::Preview> = paths
         .into_iter()
         .zip(built)

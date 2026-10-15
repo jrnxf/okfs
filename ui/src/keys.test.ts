@@ -12,7 +12,7 @@ Object.assign(globalThis, {
   document: { getElementById: () => null, addEventListener: () => undefined, querySelector: () => null },
   localStorage: { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) },
   innerWidth: 1495,
-  location: { pathname: "/", search: "" },
+  location: { pathname: "/", search: "", href: "http://localhost/" },
   history: { state: null, pushState: () => undefined, replaceState: () => undefined },
   fetch: (url: string) => {
     asked.push(url);
@@ -39,7 +39,7 @@ beforeEach(() => {
   asked.length = 0;
 });
 
-const host: KeyHost = { across: 1, filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined };
+const host: KeyHost = { filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined };
 
 /** A store showing a folder that holds `names`, in that order, with the cursor on the first. A name ending in `/` is a folder. */
 function showing(...names: string[]) {
@@ -55,24 +55,54 @@ function press(key: string, ...matching: string[]): Press {
   return keys.pressOf({ key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, target: { closest } as unknown as EventTarget });
 }
 
-test("with the preview closed nothing is asked about a file, under the cursor or ahead of it", () => {
+test("a file under the cursor is shown, and asked for ahead, with the preview closed or open", () => {
   const store = showing("photo.jpg", "notes.md", "main.rs", "data.json", "inner/", "page.html", "paper.pdf", "pack.zip");
   const stamp = (entry: import("./store").Entry) => store.stamp(entry);
+  const source = (entry: import("./store").Entry) => store.isRaw(entry);
   expect(store.s.peek).toBe(false);
-  // No file is on show, so the pane draws none: see `Side`.
-  expect(store.shown()).toBeNull();
-  preview.lookAhead(store.s.entries, 0, 1, stamp, false);
-  // The columns of the folder ahead are still had: they hold names and no file.
-  expect(asked).toEqual([preview.columnsUrl("inner")]);
-
-  asked.length = 0;
-  store.setPeek(true);
   expect(store.shown()?.name).toBe("photo.jpg");
-  preview.lookAhead(store.s.entries, 0, 1, stamp, true);
+  preview.lookAhead(store.s.entries, 0, 1, stamp, true, source);
+  // Closed, the columns of the folder ahead are had as well.
+  expect(asked.some((url) => url === preview.columnsUrl("inner"))).toBe(true);
   expect(asked.some((url) => url.startsWith("/api/previews?"))).toBe(true);
   expect(asked.some((url) => url.startsWith("/api/archive?"))).toBe(true);
+
+  asked.length = 0;
+  preview.forgetAnswers();
+  store.setPeek(true);
+  expect(store.shown()?.name).toBe("photo.jpg");
+  preview.lookAhead(store.s.entries, 0, 1, stamp, false, source);
+  expect(asked.some((url) => url.startsWith("/api/previews?"))).toBe(true);
   // Open, a folder ahead is not added up before the cursor stops on it.
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
+});
+
+test("a page, Markdown and a drawing open as their source, and the flip holds for their kind", () => {
+  const store = showing("a.md", "b.md", "page.html", "shape.svg", "t.csv", "d.json", "main.rs");
+  const [a, b, page, shape, csv, json, rs] = store.s.entries;
+  for (const file of [a, b, page, shape]) expect(store.isRaw(file!)).toBe(true);
+  // A table and JSON open as what is made from them, and code has no second form.
+  for (const file of [csv, json, rs]) expect(store.isRaw(file!)).toBe(false);
+
+  // The source is the form asked for ahead, and the flip is the page's: its request is the rendered one.
+  asked.length = 0;
+  preview.forgetAnswers();
+  preview.lookAhead(store.s.entries, 0, 1, (entry) => store.stamp(entry), false, (entry) => store.isRaw(entry));
+  expect(asked.some((url) => url.startsWith("/api/previews?") && url.includes("raw=1"))).toBe(true);
+
+  keys.keyFor(store, host, press("r"))?.();
+  expect(store.isRaw(a!)).toBe(false);
+  expect(store.isRaw(b!)).toBe(false);
+  // Another kind is left as it was.
+  expect(store.isRaw(page!)).toBe(true);
+  keys.keyFor(store, host, press("r"))?.();
+  expect(store.isRaw(a!)).toBe(true);
+
+  // A table flips to its source, and holds it for the tables that follow.
+  store.moveTo(4);
+  keys.keyFor(store, host, press("r"))?.();
+  expect(store.isRaw(csv!)).toBe(true);
+  expect(store.isRaw(json!)).toBe(false);
 });
 
 test("space opens and closes the preview, and is left alone where it types or presses", () => {
@@ -87,8 +117,8 @@ test("space opens and closes the preview, and is left alone where it types or pr
     expect(keys.keyFor(store, host, press(" ", focused))).toBeUndefined();
   }
   // Letters are typed too, and are the list's again on a button.
-  expect(keys.keyFor(store, host, press("g", "input"))).toBeUndefined();
-  expect(keys.keyFor(store, host, press("g", "button"))).toBeDefined();
+  expect(keys.keyFor(store, host, press("s", "input"))).toBeUndefined();
+  expect(keys.keyFor(store, host, press("s", "button"))).toBeDefined();
   expect(store.s.peek).toBe(false);
 
   // A file at full width keeps space, and Esc closes one thing at a time.
@@ -100,28 +130,20 @@ test("space opens and closes the preview, and is left alone where it types or pr
   expect(store.s.peek).toBe(false);
 });
 
-test("r flips only a file that has two forms, and only while it is on show", () => {
+test("r flips only a file that has two forms", () => {
   const twoForms = ["page.html", "page.htm", "notes.md", "shape.svg", "table.csv", "table.tsv", "data.json"];
   const oneForm = ["main.rs", "photo.jpg", "clip.mp4", "paper.pdf", "pack.zip", "blob.bin", "notes.txt", "inner/"];
   for (const name of [...twoForms, ...oneForm]) {
     const store = showing(name, "other.md");
-    // Closed, there is nothing on show to flip.
-    expect(keys.keyFor(store, host, press("r"))).toBeUndefined();
-    store.setPeek(true);
     const flip = keys.keyFor(store, host, press("r"));
     expect(flip !== undefined).toBe(twoForms.includes(name));
     flip?.();
-    expect(store.s.raw).toBe(twoForms.includes(name) ? name : "");
-    // The source is of that file: the next one is shown as what is made from it.
-    store.move(1);
-    expect(store.s.raw).toBe("");
+    expect(store.s.flipped.length).toBe(twoForms.includes(name) ? 1 : 0);
   }
-  const store = showing("notes.md");
-  store.activate();
-  keys.keyFor(store, host, press("r"))?.();
-  expect(store.s.raw).toBe("notes.md");
-  keys.keyFor(store, host, press("r"))?.();
-  expect(store.s.raw).toBe("");
+});
+
+test("the grid key is gone", () => {
+  expect(keys.keyFor(showing("notes.md"), host, press("g"))).toBeUndefined();
 });
 
 test("the choice the one-folder view kept is ignored, and its key does nothing", () => {
