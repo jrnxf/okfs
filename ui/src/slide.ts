@@ -56,11 +56,23 @@ function look(strip: HTMLElement): Was[] {
   }));
 }
 
+/** True when `path` is a folder directly inside `from`: a step in, which slides left even with no pane in common. */
+const into = (from: string, path: string): boolean => {
+  const rest = from ? (path.startsWith(`${from}/`) ? path.slice(from.length + 1) : "") : path;
+  return rest !== "" && !rest.includes("/");
+};
+
+/** How far a slot is from the next, as the panes were: the main list's left edge to the first column's. */
+function slot(was: Was[]): number | undefined {
+  const [first, next] = was;
+  return first && next ? next.rect.left - first.rect.left : first?.rect.width;
+}
+
 /**
  * Slides the panes of `strip` when `path`, the folder shown, changes. A pane showing the same folder before and
  * after slides from where it is on screen to its new slot; a pane that comes slides in with them, fading up; a
  * pane that goes slides on out, fading away. A move during a slide takes the panes on from where they are, so
- * nothing jumps. A move with no pane in common, a phone's single pane, a reader who asked for less motion, and a
+ * nothing jumps. A step into a folder that was not shown slides by a slot; any other move with no pane in common, a phone's single pane, a reader who asked for less motion, and a
  * held key do not slide: under a held key the panes are where the key has taken them at once.
  */
 export function useSlide(strip: RefObject<HTMLElement | null>, path: string): void {
@@ -82,6 +94,7 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string): vo
 
   useLayoutEffect(() => {
     if (path === shown.current) return;
+    const from = shown.current;
     shown.current = path;
     const was = before.current;
     before.current = null;
@@ -100,8 +113,9 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string): vo
       const it = pane.dataset.pane ? old.get(pane.dataset.pane) : undefined;
       if (it) shift.set(pane, it.rect.left - pane.getBoundingClientRect().left);
     }
-    // The way the strip moves, from the panes it kept. A pane that comes or goes moves the same way.
-    const along = [...shift.values()][0];
+    // The way the strip moves, from the panes it kept. A pane that comes or goes moves the same way. A click in the
+    // first pane on a folder that was not shown keeps none: the step in slides by a slot, as one from a column does.
+    const along = [...shift.values()].find((dx) => dx !== 0) ?? (into(from, path) ? slot(was) : undefined);
     if (along === undefined || along === 0) return;
 
     const timing = { duration: SLIDE_MS, easing: EASE_OUT };
