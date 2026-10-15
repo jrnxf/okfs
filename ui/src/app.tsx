@@ -11,6 +11,7 @@ import { kindOf } from "./kinds";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { Prose, lookAhead, pagesAhead, useLoaded } from "./preview";
+import { Aim, AIM_RECHECK } from "./aim";
 import { FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
 import { slots } from "./slots";
@@ -358,6 +359,9 @@ export function App() {
       // A key the list takes does only what the list does with it: space opens the preview and scrolls nothing.
       const action = keyFor(store, host, pressOf(event));
       if (action) {
+        // From here the keys drive the cursor: the pointer does not until it moves again.
+        hover.current.keys = true;
+        hover.current.byHover = -1;
         event.preventDefault();
         action();
       }
@@ -365,6 +369,59 @@ export function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [focusFilter]);
+
+  // The pointer drives the cursor, at once, as long as no key has taken over. A pointer on its way to the preview
+  // is let past the rows between: see `aim.ts`.
+  const hover = useRef({ aim: new Aim(), keys: false, held: -1, byHover: -1, timer: 0, at: { x: -1, y: -1 } });
+  const settle = (index: number) => {
+    const h = hover.current;
+    clearTimeout(h.timer);
+    h.held = -1;
+    if (index !== store.s.cursor) {
+      h.byHover = index;
+      store.moveTo(index);
+    }
+  };
+  const aimed = (): boolean => {
+    const [list, pane] = [scroller.current, main.current?.querySelector<HTMLElement>(".right")];
+    if (!list || !pane) return false;
+    return hover.current.aim.aiming(list.getBoundingClientRect(), pane.getBoundingClientRect());
+  };
+  const onListMove = (event: PointerEvent) => {
+    const h = hover.current;
+    if (event.pointerType !== "mouse") return;
+    // A row that slid under a still pointer, as the keys scroll the list, is not the pointer moving.
+    if (event.clientX === h.at.x && event.clientY === h.at.y) return;
+    h.at = { x: event.clientX, y: event.clientY };
+    h.keys = false;
+    h.aim.track({ x: event.clientX, y: event.clientY });
+    const { s } = store;
+    if (s.open || s.palette || s.help || s.doomed || s.status !== "ready") return;
+    const index = indexOf(event);
+    if (index === null || !s.entries[index]) return;
+    if (index === s.cursor) {
+      clearTimeout(h.timer);
+      h.held = -1;
+      return;
+    }
+    clearTimeout(h.timer);
+    if (!aimed()) {
+      settle(index);
+      return;
+    }
+    // On its way to the preview: the row under the pointer waits, and is taken if the pointer stops.
+    h.held = index;
+    const look = () => {
+      if (hover.current.keys || hover.current.held !== index) return;
+      if (aimed()) hover.current.timer = window.setTimeout(look, AIM_RECHECK);
+      else settle(index);
+    };
+    h.timer = window.setTimeout(look, AIM_RECHECK);
+  };
+  const onListLeave = () => {
+    clearTimeout(hover.current.timer);
+    hover.current.held = -1;
+  };
 
   const indexOf = (event: MouseEvent): number | null => {
     const el = (event.target as Element).closest<HTMLElement>("[data-i]");
@@ -375,7 +432,10 @@ export function App() {
     const entry = index === null ? undefined : s.entries[index];
     if (index === null || !entry) return;
     // One click moves the cursor. A second opens, and so does the first on a phone, which has no keys to open with.
-    if (entry.dir || phone() || index === s.cursor) store.activate(index);
+    // A cursor the pointer put there is not a click yet: the first click on it still only selects, as before.
+    const placed = hover.current.byHover === index;
+    hover.current.byHover = -1;
+    if (entry.dir || phone() || (index === s.cursor && !placed)) store.activate(index);
     else store.moveTo(index);
   };
   const onListDoubleClick = (event: MouseEvent) => {
@@ -450,7 +510,7 @@ export function App() {
       </header>
       {config.header && <Prose class="note" html={config.header} />}
       <div class="main" ref={main} style={`--slots: ${cut}`}>
-        <section class="left" data-pane={s.path} onClick={onListClick} onDblClick={onListDoubleClick}>
+        <section class="left" data-pane={s.path} onPointerMove={onListMove} onPointerLeave={onListLeave} onClick={onListClick} onDblClick={onListDoubleClick}>
           <FolderBar
             name={s.path ? nameOf(s.path) : config.root}
             path={s.path}
