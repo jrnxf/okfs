@@ -47,6 +47,7 @@ tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "fs", "io
 tokio-util = { version = "0.7.20", features = ["io"] }
 tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
+webbrowser = "1.2.4"
 zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]

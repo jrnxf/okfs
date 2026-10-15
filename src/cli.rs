@@ -19,6 +19,7 @@ Examples:
   okfs ~/photos --port 9000       serve another folder on another port
   okfs --bind 0.0.0.0             let other machines on the network in
   okfs --bind 0.0.0.0 --qr        and print a QR code a phone can scan to open it
+  okfs --no-open                  serve without opening the browser
   okfs --index index.html         open a folder that holds an index.html as that page
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
   okfs --theme ./mine.css         start in your own theme
@@ -54,6 +55,10 @@ struct Serve {
     /// Print a QR code for the address another device can use. Needs a terminal
     #[arg(long)]
     qr: bool,
+
+    /// Do not open the browser. It is never opened without a terminal or over SSH
+    #[arg(long)]
+    no_open: bool,
 
     /// Open a folder that holds a file of this name as that page: --index index.html
     #[arg(long, value_name = "FILE")]
@@ -166,6 +171,12 @@ fn theme_list() {
     }
 }
 
+/// Whether to open the browser: not when asked not to, not when output goes anywhere but a
+/// terminal (a service, a pipe), and not over SSH, where it would open on the far machine.
+fn should_open(no_open: bool, terminal: bool, ssh: bool) -> bool {
+    !no_open && terminal && !ssh
+}
+
 fn serve(args: Serve) -> Result<(), String> {
     let root =
         Root::new(&args.path, args.hidden).map_err(|error| format!("cannot serve {}: {error}", args.path.display()))?;
@@ -258,6 +269,15 @@ fn serve(args: Serve) -> Result<(), String> {
                 Scan::Skipped => {}
             }
         }
+        let ssh = std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
+        if should_open(args.no_open, std::io::stdout().is_terminal(), ssh)
+            && let Some(ip) = addresses.first()
+        {
+            let link = lan::link(*ip, address.port());
+            if let Err(error) = webbrowser::open(&link) {
+                println!("  open     could not open the browser: {error}");
+            }
+        }
         axum::serve(listener, server::router(app))
             .with_graceful_shutdown(async move {
                 let _ = tokio::signal::ctrl_c().await;
@@ -267,4 +287,17 @@ fn serve(args: Serve) -> Result<(), String> {
             .await
             .map_err(|error| format!("the server stopped: {error}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_open;
+
+    #[test]
+    fn opens_only_in_a_local_terminal_unless_told_not_to() {
+        assert!(should_open(false, true, false));
+        assert!(!should_open(true, true, false));
+        assert!(!should_open(false, false, false));
+        assert!(!should_open(false, true, true));
+    }
 }

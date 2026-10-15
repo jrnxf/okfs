@@ -72,6 +72,7 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `-b`, `--bind <ADDR>` | Address to listen on. Default `127.0.0.1`. |
 | `-p`, `--port <PORT>` | Port to listen on. Default `8080`. |
 | `--qr` | Print a QR code for the first address another device can use, in a terminal. Off by default. |
+| `--no-open` | Do not open the browser. It opens by default in a terminal, never as a service and never over SSH. |
 | `--index <FILE>` | Open a folder that holds a file of this name as that page: `--index index.html`. Off by default. See below. |
 | `--theme <NAME\|FILE>` | Theme a new visitor starts in: a built-in name or a theme file. |
 | `--css <FILE>` | Your own stylesheet, loaded after the theme. Class names are not a promise and may change. |
