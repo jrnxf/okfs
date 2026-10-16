@@ -11,7 +11,7 @@ use syntect::util::LinesWithEndings;
 
 use crate::paths;
 
-/// Text larger than this is not previewed at all.
+/// No more of a text file than this is read for a preview: past it, only its start is shown.
 pub const MAX_TEXT: u64 = 2 * 1024 * 1024;
 /// Text larger than this is shown without colors: highlighting cost grows with size.
 const MAX_HIGHLIGHT: usize = 512 * 1024;

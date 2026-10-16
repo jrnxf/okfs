@@ -1,5 +1,6 @@
-//! Small versions of images, and first pages of PDFs. Inputs are bounded, and the cache
-//! lives outside the served folder. The first pages of PDFs are kept in it too: see `pdf`.
+//! Small versions of images, whole images in a format any browser shows, and first pages of PDFs.
+//! Inputs are bounded, and the cache lives outside the served folder. The first pages of PDFs are
+//! kept in it too: see `pdf`.
 
 use std::fs;
 use std::io::{BufReader, Cursor};
@@ -17,6 +18,10 @@ pub const MAX_FILE: u64 = 64 * 1024 * 1024;
 pub const MAX_SIDE: u32 = 16_384;
 /// The most memory one decode may take.
 const MAX_ALLOC: u64 = 384 * 1024 * 1024;
+/// A whole picture made for a browser is shrunk to this on its long side.
+pub const PICTURE_SIDE: u32 = 4096;
+/// The width a whole picture is kept under in the cache: no thumbnail has it.
+const WHOLE: u32 = 0;
 /// A thumbnail never grows past this many times its width on the long side.
 const MAX_ASPECT: u32 = 4;
 /// Cached thumbnails not used for this long are removed at start.
@@ -88,6 +93,17 @@ impl Thumbs {
         Ok(made)
     }
 
+    /// The image at `abs` whole, as a PNG or a JPEG, from the cache when it is there. For a format a
+    /// browser cannot show, such as TIFF.
+    pub fn picture(&self, abs: &Path, meta: &fs::Metadata) -> Result<Made, Refused> {
+        if let Some(made) = self.cached(abs, WHOLE, meta) {
+            return Ok(made);
+        }
+        let made = picture(abs, meta.len())?;
+        self.keep(abs, WHOLE, meta, &made);
+        Ok(made)
+    }
+
     /// The picture kept for `abs` as it is now, at this width.
     pub fn cached(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Option<Made> {
         let bytes = fs::read(self.slot(abs, w, meta)?).ok()?;
@@ -132,15 +148,43 @@ fn inside(dir: &Path, served: &Path) -> bool {
     }
 }
 
-/// Decodes, turns upright and shrinks one image.
+/// Decodes, turns upright and shrinks one image to a thumbnail `w` wide on its short side.
 pub fn make(abs: &Path, w: u32, size: u64) -> Result<Made, Refused> {
+    let mut image = decode(abs, size)?;
+    // Tiles crop to fill, so the short side is what has to reach the asked width.
+    let (width, height) = (image.width().max(1), image.height().max(1));
+    let short = width.min(height);
+    if short > w {
+        let scale = f64::from(w) / f64::from(short);
+        let fit = |side: u32| ((f64::from(side) * scale).round() as u32).clamp(1, w * MAX_ASPECT);
+        image = image.thumbnail(fit(width), fit(height));
+    }
+    encode(image)
+}
+
+/// Decodes and turns upright one image, shrunk only when its long side passes `PICTURE_SIDE`.
+pub fn picture(abs: &Path, size: u64) -> Result<Made, Refused> {
+    let image = decode(abs, size)?;
+    let image = if image.width().max(image.height()) > PICTURE_SIDE {
+        image.thumbnail(PICTURE_SIDE, PICTURE_SIDE)
+    } else {
+        image
+    };
+    encode(image)
+}
+
+fn unreadable(error: image::ImageError) -> Refused {
+    match error {
+        image::ImageError::Limits(_) => Refused::TooLarge,
+        other => Refused::Unreadable(other.to_string()),
+    }
+}
+
+/// Decodes one image within the limits, and turns it upright.
+fn decode(abs: &Path, size: u64) -> Result<DynamicImage, Refused> {
     if size > MAX_FILE {
         return Err(Refused::TooLarge);
     }
-    let unreadable = |error: image::ImageError| match error {
-        image::ImageError::Limits(_) => Refused::TooLarge,
-        other => Refused::Unreadable(other.to_string()),
-    };
     let file = fs::File::open(abs).map_err(|e| Refused::Unreadable(e.to_string()))?;
     let mut reader = ImageReader::new(BufReader::new(file))
         .with_guessed_format()
@@ -155,16 +199,11 @@ pub fn make(abs: &Path, w: u32, size: u64) -> Result<Made, Refused> {
     let orientation = decoder.orientation().map_err(unreadable)?;
     let mut image = DynamicImage::from_decoder(decoder).map_err(unreadable)?;
     image.apply_orientation(orientation);
+    Ok(image)
+}
 
-    // Tiles crop to fill, so the short side is what has to reach the asked width.
-    let (width, height) = (image.width().max(1), image.height().max(1));
-    let short = width.min(height);
-    if short > w {
-        let scale = f64::from(w) / f64::from(short);
-        let fit = |side: u32| ((f64::from(side) * scale).round() as u32).clamp(1, w * MAX_ASPECT);
-        image = image.thumbnail(fit(width), fit(height));
-    }
-
+/// A PNG when the image has see-through parts, else a JPEG.
+fn encode(image: DynamicImage) -> Result<Made, Refused> {
     let mut bytes = Vec::new();
     let mime = if image.color().has_alpha() {
         image

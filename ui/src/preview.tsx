@@ -7,7 +7,7 @@ import { type Archive, type TextPreview, getJson, pathOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
-import { LABEL, hasSource } from "./kinds";
+import { LABEL, decodedByServer, hasSource } from "./kinds";
 import { slots } from "./slots";
 import type { Entry } from "./store";
 
@@ -320,7 +320,7 @@ export function lookAhead(
     } else if ((entry.kind === "image" || sheetOf(entry)) && i <= AHEAD_PICTURES) {
       // A PDF's first page is a picture like any other: see `Page`.
       const sheet = sheetOf(entry);
-      const src = sheet || `${urls.raw(entry.path)}?v=${stamp(entry)}`;
+      const src = sheet || pictureSrc(entry, stamp(entry));
       let picture = pictures.find((kept) => kept.getAttribute("src") === src);
       if (!picture) {
         picture = new Image();
@@ -551,9 +551,16 @@ function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
   );
 }
 
+/**
+ * Where a picture is loaded from: the file itself, or what the server makes of it for a format a browser
+ * cannot show. The stamp makes a rewritten picture a new address: a page keeps the pictures it has loaded by
+ * address.
+ */
+const pictureSrc = (entry: Entry, stamp: string): string =>
+  decodedByServer(entry) ? `${urls.picture(entry.path)}&v=${stamp}` : `${urls.raw(entry.path)}?v=${stamp}`;
+
 function Picture({ entry, stamp, report }: Shown) {
-  // The stamp makes a rewritten picture a new address: a page keeps the pictures it has loaded by address.
-  const src = `${urls.raw(entry.path)}?v=${stamp}`;
+  const src = pictureSrc(entry, stamp);
   const [broken, setBroken] = useState("");
   if (broken === src) return <Card entry={entry} line="This image could not be shown" />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
@@ -1042,7 +1049,10 @@ function Text({ entry, report, source }: { entry: Entry; report: Report; source?
   useEffect(() => {
     if (!data || url !== whole) return;
     if (data.kind === "table") report(entry.path, [`${fmt.count(data.total)} ${data.total === 1 ? "row" : "rows"}`]);
-    else if (data.kind !== "none") report(entry.path, [`${fmt.count(data.lines)} ${data.lines === 1 ? "line" : "lines"}`]);
+    // Only the start of a cut file is counted, which says nothing of the whole of it.
+    else if (data.kind !== "none" && !(data.kind === "code" && data.cut)) {
+      report(entry.path, [`${fmt.count(data.lines)} ${data.lines === 1 ? "line" : "lines"}`]);
+    }
   }, [entry.path, data, url, whole, report]);
 
   if (failed) return <Card entry={entry} line="This file could not be read" />;
@@ -1051,7 +1061,7 @@ function Text({ entry, report, source }: { entry: Entry; report: Report; source?
     case "none":
       // A card names its file, so it is never shown for the one before.
       if (url !== whole) return null;
-      return <Card entry={entry} line={data.reason === "large" ? "Too large to preview" : "No preview for this type"} />;
+      return <Card entry={entry} line="No preview for this type" />;
     case "markdown":
       return (
         <Scroll id={url}>
@@ -1060,11 +1070,14 @@ function Text({ entry, report, source }: { entry: Entry; report: Report; source?
       );
     case "code":
       return (
-        <Scroll id={url}>
-          <pre class="code">
-            <code dangerouslySetInnerHTML={{ __html: data.html }} />
-          </pre>
-        </Scroll>
+        <>
+          <Scroll id={url}>
+            <pre class="code">
+              <code dangerouslySetInnerHTML={{ __html: data.html }} />
+            </pre>
+          </Scroll>
+          {data.cut && url === whole && <div class="pv-note">Showing the start of this {fmt.size(entry.size)} file.</div>}
+        </>
       );
     case "json":
       return (

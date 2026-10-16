@@ -218,6 +218,7 @@ pub fn router(app: Arc<App>) -> Router {
     let plain = Router::new()
         .route("/api/events", get(events))
         .route("/api/thumb", get(thumbnail))
+        .route("/api/picture", get(whole_picture))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
         .route("/zip", get(zip_folder))
@@ -646,6 +647,20 @@ async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>)
         let worker = Arc::clone(&app);
         heavy(&app, move || worker.thumbs.get(&found.abs, w, &found.meta)).await
     };
+    made_response(made, "a thumbnail")
+}
+
+/// An image whole, as a PNG or a JPEG: how a format a browser cannot show, such as TIFF, is shown.
+async fn whole_picture(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>) -> Response {
+    let Some(found) = app.root.resolve(&query.path).filter(|found| found.meta.is_file()) else {
+        return not_found();
+    };
+    let worker = Arc::clone(&app);
+    let made = heavy(&app, move || worker.thumbs.picture(&found.abs, &found.meta)).await;
+    made_response(made, "a picture")
+}
+
+fn made_response(made: Option<Result<thumb::Made, thumb::Refused>>, what: &str) -> Response {
     match made {
         Some(Ok(made)) => (
             [
@@ -655,14 +670,15 @@ async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>)
             made.bytes,
         )
             .into_response(),
-        Some(Err(thumb::Refused::TooLarge)) => {
-            fail(StatusCode::PAYLOAD_TOO_LARGE, "the file is too large for a thumbnail")
-        }
+        Some(Err(thumb::Refused::TooLarge)) => fail(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            &format!("the file is too large for {what}"),
+        ),
         Some(Err(thumb::Refused::Unreadable(_))) => fail(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "not an image or a PDF this build can read",
         ),
-        None => fail(StatusCode::INTERNAL_SERVER_ERROR, "the thumbnail could not be made"),
+        None => fail(StatusCode::INTERNAL_SERVER_ERROR, &format!("{what} could not be made")),
     }
 }
 

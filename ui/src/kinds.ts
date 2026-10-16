@@ -19,7 +19,7 @@ export type Kind =
 export type Group = "folder" | "image" | "media" | "doc" | "code" | "data" | "archive" | "file";
 
 const EXTENSIONS: Record<Exclude<Kind, "folder" | "file">, string> = {
-  image: "jpg jpeg png gif webp svg avif bmp ico",
+  image: "jpg jpeg png gif webp svg avif bmp ico tif tiff",
   video: "mp4 webm mov mkv m4v ogv",
   audio: "mp3 wav flac ogg m4a opus aac",
   pdf: "pdf",
@@ -105,6 +105,11 @@ export function formOf(file: { kind: Kind; ext: string }): string {
  */
 export function sourceFirst(file: { kind: Kind; ext: string }): boolean {
   return hasSource(file) && file.kind !== "csv";
+}
+
+/** True for a picture no browser is counted on to show as it is. The server sends it as a PNG or a JPEG. */
+export function decodedByServer(file: { ext: string }): boolean {
+  return file.ext === "tif" || file.ext === "tiff";
 }
 
 export function extension(name: string): string {

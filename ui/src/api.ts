@@ -48,10 +48,10 @@ export interface FolderSum {
 
 export type TextPreview =
   | { kind: "markdown"; html: string; lines: number }
-  | { kind: "code"; html: string; lines: number; highlighted: boolean; more?: boolean }
+  | { kind: "code"; html: string; lines: number; highlighted: boolean; more?: boolean; cut?: boolean }
   | { kind: "table"; head: string[]; rows: string[][]; numeric: boolean[]; total: number }
   | { kind: "json"; text: string; lines: number }
-  | { kind: "none"; reason: "binary" | "large" };
+  | { kind: "none"; reason: "binary" };
 
 export interface Hit {
   path: string;
@@ -107,6 +107,8 @@ export const urls = {
   /** The time and size make a rewritten picture a new address: the browser keeps a thumbnail by its address. */
   thumb: (path: string, width: number, modified: number, size: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}&s=${size}`,
+  /** A picture whole, as a PNG or a JPEG: see `decodedByServer`. */
+  picture: (path: string) => `/api/picture?path=${encodeURIComponent(path)}`,
   /** The stream of changes to the served folder. */
   events: "/api/events",
   /** One entry, for deleting it. */

@@ -1,7 +1,8 @@
 //! What the preview pane shows for a text file: rendered Markdown, colored code,
-//! a table, or JSON, or its source as it is written. Inputs are bounded before anything is read.
+//! a table, or JSON, or its source as it is written. No more of a file than `MAX_TEXT` is ever read.
 
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
@@ -30,6 +31,10 @@ pub enum Preview {
         /// Only the start of the file is in `html`.
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         more: bool,
+        /// The file is larger than a preview is ever made of: only its first `MAX_TEXT` bytes were read,
+        /// and `lines` counts the lines in them.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        cut: bool,
     },
     Table {
         head: Vec<String>,
@@ -42,7 +47,7 @@ pub enum Preview {
         text: String,
         lines: usize,
     },
-    /// Nothing to show: the file is `binary`, or too `large`.
+    /// Nothing to show: the file is `binary`.
     None {
         reason: &'static str,
     },
@@ -61,16 +66,31 @@ pub struct Form {
 /// Builds the preview of the file at `abs`, known to the browser as `rel`, in the form
 /// asked for. `gone` turns true when the reader has left.
 pub fn of(abs: &Path, rel: &str, size: u64, form: Form, gone: &AtomicBool) -> std::io::Result<Preview> {
-    if size > MAX_TEXT {
-        return Ok(Preview::None { reason: "large" });
-    }
-    let bytes = fs::read(abs)?;
-    if bytes.len() as u64 > MAX_TEXT {
-        return Ok(Preview::None { reason: "large" });
-    }
+    let mut bytes = Vec::with_capacity(size.min(MAX_TEXT + 1) as usize);
+    fs::File::open(abs)?.take(MAX_TEXT + 1).read_to_end(&mut bytes)?;
     if bytes[..bytes.len().min(SNIFF)].contains(&0) {
         return Ok(Preview::None { reason: "binary" });
     }
+    // A larger file is shown as the source of its start, cut after its last whole line.
+    let cut = bytes.len() as u64 > MAX_TEXT;
+    if cut {
+        bytes.truncate(MAX_TEXT as usize);
+        match bytes.iter().rposition(|byte| *byte == b'\n') {
+            Some(end) => bytes.truncate(end + 1),
+            // One line with no end: a character split by the cut is dropped.
+            None => {
+                if let Err(error) = std::str::from_utf8(&bytes)
+                    && error.error_len().is_none()
+                {
+                    bytes.truncate(error.valid_up_to());
+                }
+            }
+        }
+    }
+    let form = Form {
+        source: form.source || cut,
+        ..form
+    };
     let text = String::from_utf8_lossy(&bytes);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let name = paths::file_name(rel);
@@ -99,6 +119,7 @@ pub fn of(abs: &Path, rel: &str, size: u64, form: Form, gone: &AtomicBool) -> st
                 lines: code.lines,
                 highlighted: code.highlighted,
                 more: code.more,
+                cut,
             }
         }
     })

@@ -502,6 +502,32 @@ async fn thumbnails_shrink_turn_upright_and_refuse_oversized_input() {
 }
 
 #[tokio::test]
+async fn a_picture_is_made_whole_for_a_format_a_browser_cannot_show() {
+    let site = Site::new();
+    let mut tiff = Vec::new();
+    image::DynamicImage::new_rgb8(300, 200)
+        .write_to(&mut std::io::Cursor::new(&mut tiff), image::ImageFormat::Tiff)
+        .unwrap();
+    fs::write(site.served.join("scan.tiff"), tiff).unwrap();
+    let app = site.router();
+
+    let (response, body) = get(&app, "/api/picture?path=scan.tiff").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
+    let whole = image::load_from_memory(&body).unwrap();
+    assert_eq!((whole.width(), whole.height()), (300, 200));
+
+    assert_eq!(
+        get(&app, "/api/picture?path=a.txt").await.0.status(),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    assert_eq!(
+        get(&app, "/api/picture?path=gone.tiff").await.0.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
 async fn thumbnails_are_cached_outside_the_served_folder() {
     let site = Site::new();
     fs::write(site.served.join("wide.png"), png(800, 400)).unwrap();
@@ -621,6 +647,17 @@ async fn drawing_a_pdf_is_given_up_when_it_takes_too_long() {
     )
     .unwrap();
     fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
+    // Run once and ended at once, so the first start of a new program, which macOS checks and which can
+    // take longer than the limit when the tests run together, is not the one that is timed.
+    let mut first = std::process::Command::new(&stuck).spawn().unwrap();
+    let started = (0..1000).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        mark.exists()
+    });
+    assert!(started, "the stand-in program never started");
+    first.kill().unwrap();
+    first.wait().unwrap();
+    fs::remove_file(&mark).unwrap();
     let app = site.app(Options {
         cache: Some(site.outside.join("cache")),
         drawer: Some(stuck),
@@ -686,25 +723,50 @@ async fn pdfs_get_no_picture_without_a_program_to_draw_them() {
 #[tokio::test]
 async fn text_previews_are_bounded() {
     let site = Site::new();
-    fs::File::create(site.served.join("huge.log"))
-        .unwrap()
-        .set_len(okfs::render::MAX_TEXT + 1)
-        .unwrap();
+    let max = okfs::render::MAX_TEXT as usize;
+    // Lines of ten bytes, past the limit: only whole lines from the start are shown, as source.
+    fs::write(site.served.join("huge.md"), "# line 01\n".repeat(max / 10 + 100)).unwrap();
+    // One line with no end, a two-byte character astride the limit.
+    let mut one = vec![b'a'; max - 1];
+    one.extend("é and more".as_bytes());
+    fs::write(site.served.join("one.txt"), one).unwrap();
+    // A binary file is told as binary whatever its size.
+    let mut big = vec![0u8; 16];
+    big.resize(max + 1, b'x');
+    fs::write(site.served.join("big.bin"), big).unwrap();
     fs::write(site.served.join("blob.bin"), [0u8, 159, 146, 150, 0, 1, 2]).unwrap();
     fs::write(site.served.join("table.csv"), "name,n\n\"a, b\",1\nc,2\n").unwrap();
     fs::write(site.served.join("data.json"), "{\"a\": [1, 2]}").unwrap();
     let app = site.router();
 
-    let large = json(&app, "/api/preview?path=huge.log").await;
+    let large = json(&app, "/api/preview?path=huge.md").await;
     assert_eq!(
-        (large["kind"].as_str(), large["reason"].as_str()),
-        (Some("none"), Some("large"))
+        (large["kind"].as_str(), large["cut"].as_bool()),
+        (Some("code"), Some(true))
     );
-    let binary = json(&app, "/api/preview?path=blob.bin").await;
+    assert_eq!(large["lines"], max / 10);
+    let html = large["html"].as_str().unwrap();
+    assert!(html.ends_with("# line 01</span>"));
+    // The start of a cut file says nothing of more, so the whole of it is not asked for again.
+    let start = json(&app, "/api/preview?path=huge.md&lines=80").await;
     assert_eq!(
-        (binary["kind"].as_str(), binary["reason"].as_str()),
-        (Some("none"), Some("binary"))
+        (start["more"].as_bool(), start["cut"].as_bool()),
+        (Some(true), Some(true))
     );
+    assert!(large.get("more").is_none());
+
+    let one = json(&app, "/api/preview?path=one.txt").await;
+    assert_eq!(one["cut"], true);
+    assert!(!one["html"].as_str().unwrap().contains('\u{fffd}'));
+
+    for path in ["blob.bin", "big.bin"] {
+        let binary = json(&app, &format!("/api/preview?path={path}")).await;
+        assert_eq!(
+            (binary["kind"].as_str(), binary["reason"].as_str()),
+            (Some("none"), Some("binary")),
+            "{path}"
+        );
+    }
 
     let code = json(&app, "/api/preview?path=sub/deep/c.rs").await;
     assert_eq!(code["kind"], "code");
