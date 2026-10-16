@@ -34,6 +34,13 @@ nix profile install github:jrnxf/okfs   # or install it
 
 `nix profile upgrade okfs` brings an installed copy up to date.
 
+On x86-64 Linux, each [release](https://github.com/jrnxf/okfs/releases) has the binary on its own, built on Ubuntu 24.04, so it runs on any system with glibc 2.39 or newer:
+
+```sh
+curl -fLO https://github.com/jrnxf/okfs/releases/latest/download/okfs-x86_64-unknown-linux-gnu
+chmod +x okfs-x86_64-unknown-linux-gnu
+```
+
 Without nix you need a Rust toolchain and [bun](https://bun.sh). Bun builds the page while cargo builds the binary.
 
 ```sh

@@ -1,0 +1,67 @@
+name: release
+
+# A tag `v<version>` builds the Linux binary and publishes it as a release, so
+# a machine without nix or a Rust toolchain can download okfs and run it. A pull
+# request that changes this file builds the binary without publishing, to prove
+# the build before a tag depends on it.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [.github/workflows/release.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    # Not ubuntu-latest: the binary needs the glibc it was built against or
+    # newer, so the runner's release sets the oldest system it runs on. 24.04
+    # has glibc 2.39, which Debian 13 (2.41) and Ubuntu 24.04 both meet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      ASSET: okfs-x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The tag names the version the binary reports, so the two have to agree.
+      - name: Check the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+
+      # Not the nix build: that binary links against /nix/store and runs only
+      # where the same store paths exist.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Run
+        run: ./target/release/okfs --version
+
+      - name: Package
+        run: |
+          cp target/release/okfs "$ASSET"
+          sha256sum "$ASSET" > "$ASSET.sha256"
+          cat "$ASSET.sha256"
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes "$ASSET" "$ASSET.sha256"
