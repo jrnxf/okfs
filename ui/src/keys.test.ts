@@ -77,12 +77,12 @@ test("a file under the cursor is shown, and asked for ahead, with the preview cl
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
 });
 
-test("a page, Markdown, a drawing and JSON open as their source, and the flip holds for their kind", () => {
+test("Markdown, a drawing and JSON open as their source, and the flip holds for their kind", () => {
   const store = showing("a.md", "b.md", "page.html", "shape.svg", "t.csv", "d.json", "main.rs");
   const [a, b, page, shape, csv, json, rs] = store.s.entries;
-  for (const file of [a, b, page, shape, json]) expect(store.isRaw(file!)).toBe(true);
-  // A table opens as what is made from it, and code has no second form.
-  for (const file of [csv, rs]) expect(store.isRaw(file!)).toBe(false);
+  for (const file of [a, b, shape, json]) expect(store.isRaw(file!)).toBe(true);
+  // A page and a table open as what is made from them, and code has no second form.
+  for (const file of [page, csv, rs]) expect(store.isRaw(file!)).toBe(false);
 
   // The source is the form asked for ahead, and the flip is the page's: its request is the rendered one.
   asked.length = 0;
@@ -94,7 +94,7 @@ test("a page, Markdown, a drawing and JSON open as their source, and the flip ho
   expect(store.isRaw(a!)).toBe(false);
   expect(store.isRaw(b!)).toBe(false);
   // Another kind is left as it was.
-  expect(store.isRaw(page!)).toBe(true);
+  expect(store.isRaw(page!)).toBe(false);
   keys.keyFor(store, host, press("r"))?.();
   expect(store.isRaw(a!)).toBe(true);
 
@@ -143,6 +143,17 @@ test("r flips only a file that has two forms", () => {
     expect(flip !== undefined).toBe(twoForms.includes(name));
     flip?.();
     expect(store.s.flipped.length).toBe(twoForms.includes(name) ? 1 : 0);
+  }
+});
+
+test("a page opens rendered, Markdown, a drawing and JSON open as their source, and r flips each", () => {
+  const opens = { "page.html": false, "page.htm": false, "table.csv": false, "notes.md": true, "shape.svg": true, "data.json": true };
+  for (const [name, raw] of Object.entries(opens)) {
+    const store = showing(name, "other.md");
+    const file = store.s.entries.find((entry) => entry.name === name)!;
+    expect(store.isRaw(file)).toBe(raw);
+    keys.keyFor(store, host, press("r"))?.();
+    expect(store.isRaw(file)).toBe(!raw);
   }
 });
 
