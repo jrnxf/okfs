@@ -23,6 +23,8 @@ pub const BUILT_IN: bool = cfg!(feature = "pdf");
 pub const WIDTHS: [u32; 4] = [160, 320, 640, 1280];
 /// PDFs larger than this get no picture: the whole file is held in memory to draw it.
 pub const MAX_FILE: u64 = 64 * 1024 * 1024;
+/// Why a PDF has no first-page picture when its drawing failed, as opposed to taking too long or being too large.
+pub const UNDRAWABLE: &str = "this PDF could not be drawn";
 /// How long one page may take, from starting the process to its last byte.
 pub const LIMIT: Duration = Duration::from_secs(5);
 /// Pages drawn at once. Each is a process using a whole core.
@@ -75,7 +77,7 @@ impl Drawer {
             return Err(Refused::TooLarge);
         }
         if self.failed.lock().is_ok_and(|failed| failed.contains(version)) {
-            return Err(Refused::Unreadable("this PDF could not be drawn".to_owned()));
+            return Err(Refused::Unreadable(UNDRAWABLE.to_owned()));
         }
         let drawn = self.run(abs, w).await;
         if drawn.is_err()
@@ -109,7 +111,7 @@ impl Drawer {
             .map_err(|_| unreadable("drawing this PDF took too long"))?
             .map_err(|e| Refused::Unreadable(e.to_string()))?;
         if !output.status.success() || output.stdout.is_empty() {
-            return Err(unreadable("this PDF could not be drawn"));
+            return Err(unreadable(UNDRAWABLE));
         }
         Ok(Made {
             bytes: output.stdout,

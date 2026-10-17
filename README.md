@@ -101,7 +101,9 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `Space` | Add up the folder under the cursor, or go back to its columns |
 | `r` | Rendered or source, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
 | `w` | Wrap long lines or not, for prose shown as its source: Markdown, HTML, text, logs |
-| `Backspace` | Up one folder |
+| `Backspace`, `-` | Up one folder |
+| `h` `l`, left and right arrows | Out of a folder and into one. With a file open, back and on through the folder's files. |
+| `Home` `End` | First and last in the folder |
 | `/` | Filter this folder |
 | `Ctrl K`, `Cmd K` | Find anything in the tree. Start with `>` for commands. |
 | `s` | Change the sort |
@@ -217,7 +219,7 @@ The rules, all enforced by `okfs theme check` and again when okfs loads a theme 
   | `--icon-set` | `line`, `solid` or `none` |
   | `--label-case` | `none` or `uppercase` |
 
-- `--bg`, `--surface`, `--fg`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` needs at least 4.5:1 against `--bg` and `--surface`, and `--accent-fg` at least 3:1 against `--accent`.
+- `--bg`, `--surface`, `--fg`, `--faint`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` needs at least 4.5:1 against `--bg` and `--surface`, `--faint` at least 3:1 against `--bg`, and `--accent-fg` at least 3:1 against `--accent`.
 
 </details>
 

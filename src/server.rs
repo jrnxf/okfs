@@ -44,6 +44,8 @@ const PAGE_POLICY: &str = "default-src 'self'; img-src 'self' data: blob: https:
 /// in a frame. Another site that could would hide it and steer a visitor's clicks
 /// onto the delete button and through the dialog.
 const NO_FRAMING: &str = "frame-ancestors 'self'";
+/// The header that tells a page its PDF cannot be read.
+const PDF_HEADER: &str = "x-okfs-pdf";
 /// How often a stream of changes with nothing to tell sends a comment line, so that
 /// no proxy on the way takes it for dead and cuts it.
 const STREAM_BEAT: Duration = Duration::from_secs(15);
@@ -639,6 +641,11 @@ async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>)
         match first_page(&app, found, query.w).await {
             // A PDF that cannot be drawn has no picture, which is an answer and not a fault: the page
             // shows it as it did before there were pictures, with nothing in the browser's console.
+            // One that is damaged says so in a header, so that the page shows a card and never starts the
+            // browser's viewer, whose own error dialog takes the keys.
+            Some(Err(thumb::Refused::Unreadable(why))) if why == pdf::UNDRAWABLE => {
+                return (StatusCode::NO_CONTENT, [(PDF_HEADER, "damaged")]).into_response();
+            }
             Some(Err(_)) => return StatusCode::NO_CONTENT.into_response(),
             made => made,
         }

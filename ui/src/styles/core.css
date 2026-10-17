@@ -27,6 +27,7 @@ body {
   overflow: hidden;
 }
 button, input { font: inherit; letter-spacing: inherit; color: inherit; }
+button { text-transform: inherit; }
 button { background: none; border: 0; padding: 0; cursor: pointer; }
 /* A control answers a tap at once, and a long press on one selects nothing. Text that is read stays selectable. */
 button, a, .row { touch-action: manipulation; }
@@ -92,9 +93,9 @@ kbd {
 .pal-row { display: flex; align-items: center; gap: 10px; height: var(--row-h); padding: 0 8px; border-radius: var(--radius); cursor: pointer; }
 .pal-row[aria-selected="true"] { background: var(--accent-soft); }
 .pal-row .nm { flex: none; max-width: 60%; }
-.pal-row .dir { flex: 1; text-align: right; color: var(--faint); font-size: var(--text-s); direction: rtl; }
+.pal-row .dir { flex: 1; text-align: right; color: var(--muted); font-size: var(--text-s); direction: rtl; }
 .pal-row .dir bdi { direction: ltr; }
-.pal-row .age { flex: none; min-width: 3ch; text-align: right; color: var(--faint); font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+.pal-row .age { flex: none; min-width: 3ch; text-align: right; color: var(--muted); font-size: var(--text-s); font-variant-numeric: tabular-nums; }
 .pal-row .pal-more { flex: none; color: var(--faint); }
 .pal-row mark { background: none; color: var(--accent); font-weight: var(--weight-strong); }
 .pal-empty { padding: 28px 12px; text-align: center; color: var(--faint); }
@@ -148,6 +149,9 @@ kbd {
 .pv-center { flex: 1; min-height: 0; display: grid; place-items: center; padding: calc(var(--pad) * 1.5); overflow: hidden; background: var(--sunken); }
 .pv-center img, .pv-center video { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; border-radius: min(var(--radius), 4px); display: block; }
 .pv-center img { box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
+/* The last file's picture, held back once it would sit under the next file's name; the thumbnail of the right file takes its place. */
+.pv-center img.pv-stale { grid-area: 1 / 1; visibility: hidden; }
+.pv-center img.pv-thumb { grid-area: 1 / 1; width: 100%; height: 100%; max-width: none; max-height: none; filter: blur(6px); box-shadow: none; }
 /* A player getting ready behind the preview before it, at the size it will be shown at. */
 .pv-wait { position: absolute; inset: 0; visibility: hidden; }
 .pv-ph { width: min(100%, 520px); aspect-ratio: 3/2; border-radius: var(--radius); }
@@ -163,7 +167,7 @@ kbd {
 .pv-sheet { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; padding: 8px; }
 .pv-sheet-on { background: var(--sunken); }
 .pv-sheet img { display: block; width: 100%; box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); }
-.pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--faint); font-size: var(--text-xs); flex: none; }
+.pv-note { padding: 7px var(--pad); border-top: var(--border); color: var(--muted); font-size: var(--text-xs); flex: none; }
 .pv-audio { display: grid; gap: 22px; justify-items: center; width: min(100%, 420px); }
 .pv-audio .ic { width: 44px; height: 44px; }
 .pv-audio audio { width: 100%; }
@@ -189,12 +193,12 @@ kbd {
 .md th, .md td { text-align: left; padding: 6px 14px 6px 0; border-bottom: var(--border); white-space: nowrap; }
 .md th { color: var(--muted); font-weight: var(--weight); text-transform: var(--label-case); }
 
-.code { margin: 0; padding: var(--pad) 0 48px; font: calc(var(--text) * 0.92) / 1.6 var(--font-mono); letter-spacing: 0; counter-reset: ln; tab-size: 4; min-width: max-content; }
+.code { margin: 0; padding: var(--pad) 0 48px; font: calc(var(--text) * 0.92) / 1.6 var(--font-mono); letter-spacing: 0; counter-reset: ln; tab-size: 4; --ln: 3ch; min-width: max-content; }
 .code .ln { display: block; padding: 0 var(--pad) 0 0; white-space: pre; }
-.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 3.4em; padding-right: 1.2em; text-align: right; color: var(--faint); user-select: none; }
+.code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: calc(var(--ln) + 1.6em); padding-right: 1.2em; text-align: right; color: var(--faint); user-select: none; }
 /* Prose wraps at the edge of the pane, and a wrapped line hangs from the line number: the gutter is padding and the first line pulls back into it. */
 .code.wrap { min-width: 0; }
-.code.wrap .ln { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: var(--ln, 3.4em); text-indent: calc(-1 * var(--ln, 3.4em)); }
+.code.wrap .ln { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: calc(var(--ln) + 1.6em); text-indent: calc(-1 * (var(--ln) + 1.6em)); }
 .code.wrap .ln::before { text-indent: 0; }
 .tk-c { color: var(--syn-comment); font-style: italic; } .tk-k { color: var(--syn-keyword); } .tk-s { color: var(--syn-string); }
 .tk-n { color: var(--syn-number); } .tk-t { color: var(--syn-title); }

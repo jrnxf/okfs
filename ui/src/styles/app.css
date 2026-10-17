@@ -24,6 +24,7 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 68px 66px; }
 [data-icons="none"] .cols > :first-child { display: none; }
+.cols.label { color: var(--muted); }
 .cols { height: calc(30px * var(--density)); border-bottom: var(--border); flex: none; }
 .cols button, .cols .hd { text-align: left; display: inline-flex; align-items: center; gap: 3px; }
 @media (hover: hover) and (pointer: fine) { .cols button:hover { color: var(--fg); } }
@@ -37,8 +38,8 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .row[data-dir] .nm b { font-weight: 500; }
 .row .tag { margin-left: 8px; }
 .row .sz, .row .tm { text-align: right; color: var(--muted); font-size: var(--text-s); }
-.row .tm { color: var(--faint); white-space: nowrap; }
-.empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--faint); text-align: center; padding: 24px; }
+.row .tm { color: var(--muted); white-space: nowrap; }
+.empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--muted); text-align: center; padding: 24px; }
 .empty b { color: var(--muted); font-weight: var(--weight-strong); }
 .empty[hidden] { display: none; }
 
@@ -52,9 +53,9 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 /* The entry the next slot shows. */
 .col .row.at { background: var(--hover); box-shadow: inset 3px 0 0 var(--line-strong); }
 .col-note { display: flex; align-items: center; height: var(--row-h); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
-.ph { display: flex; align-items: center; gap: 10px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 var(--pad); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; }
+.ph { display: flex; align-items: center; gap: 10px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; }
 .ph .nm { font-weight: var(--weight-strong); flex: 0 1 auto; }
-.ph .facts { color: var(--faint); font-size: var(--text-xs); flex: 1; }
+.ph .facts { color: var(--muted); font-size: var(--text-xs); flex: 1; }
 .ph .btn { height: calc(24px * var(--density)); padding: 0 6px; }
 .ph .pos { color: var(--faint); font-size: var(--text-xs); padding: 0 4px; white-space: nowrap; }
 .ph .sp { flex: 1; }
@@ -129,6 +130,8 @@ body.open .ph .only-open { display: inline-flex; }
 /* A phone zooms the page into a text field set smaller than 16 px, and leaves it zoomed. */
 @media (pointer: coarse) {
   .pal-in input, .status .fil input { font-size: 16px; }
+  /* there is no Escape key here, and the chip sits over the end of the placeholder */
+  .pal-esc { display: none; }
 }
 
 /* A folder in the preview: three numbers side by side, what can be done with it, then its notes. */
