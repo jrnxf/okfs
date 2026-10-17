@@ -32,10 +32,14 @@ function panesOf(strip: HTMLElement): HTMLElement[] {
   return [...strip.querySelectorAll<HTMLElement>("[data-pane]")].filter((pane) => pane.getClientRects().length > 0);
 }
 
-/** A copy of a pane that can be shown while the pane itself has gone. A preview's frames are left out. */
+/**
+ * A copy of a pane that can be shown while the pane itself has gone. A preview's frames are left out: of a file's
+ * preview only the bar is copied. A folder added up has no frames, and beside the columns no bar.
+ */
 function copyOf(pane: HTMLElement): HTMLElement {
-  const copy = pane.classList.contains("pane") ? (pane.cloneNode(false) as HTMLElement) : (pane.cloneNode(true) as HTMLElement);
-  const bar = pane.classList.contains("pane") ? pane.querySelector(".ph") : null;
+  const preview = pane.classList.contains("pane") && !pane.querySelector(".fp, .empty");
+  const copy = pane.cloneNode(!preview) as HTMLElement;
+  const bar = preview ? pane.querySelector(".ph") : null;
   if (bar) copy.append(bar.cloneNode(true));
   for (const el of copy.querySelectorAll("[id]")) el.removeAttribute("id");
   copy.removeAttribute("data-pane");

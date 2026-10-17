@@ -1,6 +1,6 @@
 // What is beside the main list. The file under the cursor as it is shown. For a folder under it: with the
-// preview closed, a column for it and for each folder its first entry leads to; with it open, the folder
-// added up.
+// preview closed, a column for it and for each folder its first entry leads to, and the folder added up in the
+// slots they leave; with it open, the folder added up across them all.
 
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
@@ -10,7 +10,7 @@ import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
-import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled } from "./preview";
+import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled, useStarted } from "./preview";
 import { columnsOf, startingAt } from "./slots";
 import { type Doomed, type Entry, store, toEntry, versionOf } from "./store";
 
@@ -66,11 +66,14 @@ function Column({
   level,
   hovered,
   onHover,
+  told,
 }: {
   folder: Entry;
   listing: Listing | undefined;
   followed: boolean;
   edge: boolean;
+  /** The slots beside it already say that the folder is empty. */
+  told: boolean;
   level: number;
   hovered: string | null;
   onHover: (at: Hover | null) => void;
@@ -121,7 +124,7 @@ function Column({
           );
         })}
         {more > 0 && <div class="col-note label">and {fmt.count(more)} more</div>}
-        {listing?.total === 0 && <div class="col-note label">This folder is empty.</div>}
+        {listing?.total === 0 && !told && <div class="col-note label">This folder is empty.</div>}
       </div>
     </section>
   );
@@ -130,12 +133,14 @@ function Column({
 const plural = (n: number, one: string, many: string): string => `${fmt.count(n)} ${n === 1 ? one : many}`;
 
 /**
- * The folder under the cursor while the preview is open: how much it holds, how large it is with everything in
- * it, what was written last, its notes, and the whole of it as a zip.
+ * The folder under the cursor, in the slots its columns leave or, with the preview open, in all of them: how
+ * much it holds, how large it is with everything in it, what was written last, its notes, and the whole of it
+ * as a zip. Adding it up walks the whole tree, so under a held key it waits as a frame does, and shows what the
+ * listing already says until then.
  */
 function Folder({ folder }: { folder: Entry }) {
   const url = urls.folder(folder.path);
-  const loaded = useLoaded<FolderSum>(url);
+  const loaded = useLoaded<FolderSum>(useStarted(folder.path, false) ? url : null);
   // Numbers are of this folder or they are not shown: the last folder's would be wrong under this one's name.
   const sum = loaded.data?.path === folder.path ? loaded.data : undefined;
   const failed = loaded.failed === true && loaded.url === url;
@@ -295,7 +300,8 @@ export function Side({ slots }: { slots: number }) {
   const columns = folder && !s.peek ? folder : null;
   const summed = folder && s.peek ? folder : null;
   const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path) : null);
-  const all = columns ? columnsOf(startingAt(data, columns.path), slots) : [];
+  const own = columns ? startingAt(data, columns.path) : undefined;
+  const all = columns ? columnsOf(own, slots) : [];
 
   // A file the pointer rests on in a column fills the space of the columns to the right of it.
   const [hover, setHover] = useState<(Hover & { root: string }) | null>(null);
@@ -310,6 +316,11 @@ export function Side({ slots }: { slots: number }) {
   const at = hoverList ? hoverList.entries.findIndex((item) => item.n === hover?.name && !item.d) : -1;
   const hoverFile = hoverList && at >= 0 ? toEntry(hoverList.entries[at]!, hoverList.path, at) : null;
   const levels = hoverFile && hover ? all.slice(0, hover.level + 1) : all;
+  // Columns that stop before the last slot, once they are this folder's own, leave the rest to it added up: an
+  // empty one says so across them.
+  const filled = columns && !hoverFile && own?.path === columns.path && all.length < slots - 1 ? columns : null;
+  const empty = filled && own?.total === 0 ? filled : null;
+  const added = summed ?? filled;
 
   const unpeek = s.peek && !s.open && (
     <button class="btn" aria-label="Close the preview" title="Close the preview (space)" onClick={() => store.setPeek(false)}>
@@ -396,14 +407,24 @@ export function Side({ slots }: { slots: number }) {
     <section class="right" onPointerLeave={() => onHover(null)}>
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
-      {(!columns || hoverFile) && (
+      {(!columns || hoverFile || filled) && (
         <div class="pane" key="pane" data-pane="">
-          <div class="ph" onMouseDown={keepFocus}>
-            {header}
-          </div>
+          {/* Beside the columns, the first of them already names the folder. */}
+          {!filled && (
+            <div class="ph" onMouseDown={keepFocus}>
+              {header}
+            </div>
+          )}
           <div class="pv">
             {shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}
-            {summed && <Folder folder={summed} />}
+            {empty ? (
+              <div class="empty">
+                <b>Nothing in here yet</b>
+                <span class="num">/{empty.path}</span>
+              </div>
+            ) : (
+              added && <Folder folder={added} />
+            )}
           </div>
           {s.open && shown && !hoverFile && <StepBar file={shown} />}
         </div>
@@ -422,6 +443,7 @@ export function Side({ slots }: { slots: number }) {
             level={level}
             hovered={hoverFile && hover?.level === level ? hoverFile.name : null}
             onHover={onHover}
+            told={empty !== null}
           />;
       })}
     </section>

@@ -505,7 +505,7 @@ function useUnhurried(): boolean {
  * The same for a component that goes from file to file: true once what is heavy for the file at `path` may
  * start. `eager` starts it with the move even under a held key. What has started stays started.
  */
-function useStarted(path: string, eager: boolean): boolean {
+export function useStarted(path: string, eager: boolean): boolean {
   const started = useRef("");
   const [released, setReleased] = useState("");
   if (!held || eager) started.current = path;
