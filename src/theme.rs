@@ -69,6 +69,8 @@ const DARK: &str = ":root[data-scheme=\"dark\"]";
 
 /// Text must stay readable: WCAG AA for body text.
 const MIN_TEXT_CONTRAST: f64 = 4.5;
+/// Tertiary text (placeholders, separators, icons) is not body text, but it must still be seen: WCAG AA for graphics.
+const MIN_FAINT_CONTRAST: f64 = 3.0;
 /// The accent carries short labels and the selection, not body text: WCAG AA for large text.
 const MIN_ACCENT_CONTRAST: f64 = 3.0;
 
@@ -190,6 +192,7 @@ fn contrast_problems(theme: &Theme) -> Vec<Problem> {
         let pairs = [
             ("--fg", "--bg", MIN_TEXT_CONTRAST),
             ("--fg", "--surface", MIN_TEXT_CONTRAST),
+            ("--faint", "--bg", MIN_FAINT_CONTRAST),
             ("--accent-fg", "--accent", MIN_ACCENT_CONTRAST),
         ];
         for (text, back, least) in pairs {
@@ -419,7 +422,7 @@ fn check_value(token: &str, value: &str) -> Result<(), String> {
         "--tracking" => within("em", -0.05, 0.15),
         "--icon-set" => one_of(&["line", "solid", "none"]),
         "--label-case" => one_of(&["none", "uppercase"]),
-        "--bg" | "--surface" | "--fg" | "--accent" | "--accent-fg" => match opaque_color(value) {
+        "--bg" | "--surface" | "--fg" | "--faint" | "--accent" | "--accent-fg" => match opaque_color(value) {
             Some(_) => Ok(()),
             None => Err(format!(
                 "{value} must be an opaque hex or rgb() color so its contrast can be checked"
@@ -681,6 +684,12 @@ mod tests {
         assert!(message.contains("light: --fg on --bg has contrast"), "{message}");
         // A light block alone does not reach dark mode: the default dark colors still apply there.
         assert!(!message.contains("dark:"), "{message}");
+    }
+
+    #[test]
+    fn refuses_tertiary_text_that_cannot_be_seen() {
+        let message = refused(&theme("  --faint: #e0e0e0;", ""));
+        assert!(message.contains("light: --faint on --bg has contrast"), "{message}");
     }
 
     #[test]

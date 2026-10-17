@@ -8,7 +8,7 @@
   --sunken: #f3f3f1;        /* wells: code, inputs, thumbnail backdrops */
   --fg: #191918;            /* primary text */
   --muted: #6b6b68;         /* secondary text */
-  --faint: #a3a39f;         /* tertiary text, placeholders */
+  --faint: #8a8a86;         /* tertiary text, placeholders */
   --line: #e7e7e3;          /* hairlines */
   --line-strong: #d0d0cb;   /* input and control borders */
   --accent: #e8501c;        /* the one brand color: cursor, focus, links */
@@ -58,7 +58,7 @@
   --sunken: #0a0a0b;
   --fg: #ededeb;
   --muted: #9a9a96;
-  --faint: #5f5f5c;
+  --faint: #76766f;
   --line: #232325;
   --line-strong: #343437;
   --accent: #ff6a36;

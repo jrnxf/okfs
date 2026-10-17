@@ -273,6 +273,56 @@ function film(src: string): void {
 /** The pictures of first pages that have arrived, by address: one of these is drawn in the frame it is asked for. */
 const sheets = new Set<string>();
 
+/** The pictures of first pages that the server could not draw because the PDF is damaged, by address. */
+const damaged = new Set<string>();
+const asked = new Set<string>();
+/** Told when a verdict on a first page comes in: see `Page`. */
+const verdicts = new Set<() => void>();
+
+/**
+ * Learns whether a first page that did not arrive is for a damaged PDF: the server says so in a header on its
+ * empty answer. A damaged PDF is shown as a card, and the browser's viewer is never started on it, since the
+ * viewer's own error dialog takes the focus and the keys with it.
+ */
+function learnDamaged(sheet: string): void {
+  if (!sheet || asked.has(sheet)) return;
+  asked.add(sheet);
+  fetch(sheet)
+    .then((response) => {
+      if (response.headers.get("x-okfs-pdf") !== "damaged") return;
+      damaged.add(sheet);
+      for (const heard of verdicts) heard();
+    })
+    .catch(() => undefined);
+}
+
+/**
+ * A frame never takes the focus from the list by itself. The viewer of a PDF can do it, when it shows an error,
+ * and every key then goes into the frame. Focus that moves into a frame without a click in it or a Tab is
+ * taken back. A touch screen has no keys to lose.
+ */
+let tabbed = 0;
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Tab") tabbed = event.timeStamp;
+  },
+  true,
+);
+if (typeof window !== "undefined") {
+  window.addEventListener("blur", () => {
+    const frame = document.activeElement;
+    if (!(frame instanceof HTMLIFrameElement) || !frame.classList.contains("pv-frame")) return;
+    if (frame.matches(":hover") || matchMedia("(pointer: coarse)").matches || performance.now() - tabbed < 500) return;
+    // Not within the blur itself: the focus is still on its way into the frame then.
+    setTimeout(() => {
+      if (document.activeElement !== frame) return;
+      frame.blur();
+      window.focus();
+    }, 0);
+  });
+}
+
 /**
  * Where the first page of a PDF is had as a picture, wide enough for the pane, or nothing when the server
  * draws none. The address moves when the file is rewritten, as a thumbnail's does.
@@ -324,7 +374,10 @@ export function lookAhead(
       let picture = pictures.find((kept) => kept.getAttribute("src") === src);
       if (!picture) {
         picture = new Image();
-        if (sheet) picture.onload = () => sheets.add(sheet);
+        if (sheet) {
+          picture.onload = () => sheets.add(sheet);
+          picture.onerror = () => learnDamaged(sheet);
+        }
         picture.src = src;
         pictures.push(picture);
         if (pictures.length > AHEAD_PICTURES * 2) pictures.shift();
@@ -559,22 +612,44 @@ function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
 const pictureSrc = (entry: Entry, stamp: string): string =>
   decodedByServer(entry) ? `${urls.picture(entry.path)}&v=${stamp}` : `${urls.raw(entry.path)}?v=${stamp}`;
 
+/** How long the picture of the last file stays up while the next one loads: a held key does not flash. */
+const PICTURE_KEEP = 150;
+/** The smallest thumbnail: a few KB, so it lands in one round trip. */
+const THUMB_WIDTH = 160;
+
 function Picture({ entry, stamp, report }: Shown) {
   const src = pictureSrc(entry, stamp);
   const [broken, setBroken] = useState("");
+  // The picture that has loaded last, and the one that has been waited for longer than `PICTURE_KEEP`.
+  const [ready, setReady] = useState("");
+  const [late, setLate] = useState("");
+  const [thumbless, setThumbless] = useState("");
+  useEffect(() => {
+    if (ready === src) return;
+    const timer = setTimeout(() => setLate(src), PICTURE_KEEP);
+    return () => clearTimeout(timer);
+  }, [src, ready]);
   if (broken === src) return <Card entry={entry} line="This image could not be shown" />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
+  // That is for a moment only. Past it the old picture would sit under the new name, so it is hidden, and the
+  // thumbnail of the right file stands in until the picture arrives.
+  const waiting = ready !== src && late === src;
+  const thumb = urls.thumb(entry.path, THUMB_WIDTH, entry.mtime, entry.size);
   return (
     <div class="pv-center">
       <img
+        class={waiting ? "pv-stale" : undefined}
         src={src}
         alt={entry.name}
         onLoad={(event) => {
+          if (event.currentTarget.getAttribute("src") !== src) return;
+          setReady(src);
           const { naturalWidth, naturalHeight } = event.currentTarget;
           if (naturalWidth) report(entry.path, [`${naturalWidth} × ${naturalHeight}`]);
         }}
         onError={() => setBroken(src)}
       />
+      {waiting && thumbless !== thumb && <img class="pv-thumb" src={thumb} alt="" aria-hidden="true" onError={() => setThumbless(thumb)} />}
     </div>
   );
 }
@@ -674,6 +749,23 @@ const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow
 const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind === "pdf" ? `${urls.raw(entry.path)}#navpanes=0&view=FitH` : urls.raw(entry.path));
 
 /**
+ * A PDF that the server found damaged is a card with a way to download it, and no frame: the browser's viewer
+ * would show its own error dialog and keep the keys. Anything else is `Frames`.
+ */
+function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
+  const [, heard] = useState(0);
+  useEffect(() => {
+    const again = () => heard((count) => count + 1);
+    verdicts.add(again);
+    return () => {
+      verdicts.delete(again);
+    };
+  }, []);
+  if (damaged.has(sheetOf(entry))) return <Card entry={entry} line="This PDF could not be read" />;
+  return <Frames entry={entry} stamp={stamp} />;
+}
+
+/**
  * An HTML page, live in a sandboxed frame, or a PDF in the browser's viewer.
  *
  * The frame on screen serves page after page: it is told to replace its page with the next, and the browser
@@ -691,7 +783,7 @@ const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind 
  * the picture of this one lies over the frames from the move itself until the viewer has drawn its own: it
  * is see-through until it has arrived, so nothing is shown later than it would be without it.
  */
-function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
+function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
   const pdf = entry.kind === "pdf";
   const address = frameUrl(entry);
   // A rewritten file is the same address with a new stamp: it is loaded again.
@@ -829,6 +921,7 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
         if ((next.kind !== "html" && next.kind !== "pdf") || next.size > AHEAD_PAGE_BYTES) continue;
         // A page that is shown as its source is no page to load.
         if (next.kind === "html" && here.source(next)) continue;
+        if (next.kind === "pdf" && damaged.has(sheetOf(next))) continue;
         if (next.kind === "pdf" && ++pdfs > AHEAD_PDFS) continue;
         if (bytes + next.size > AHEAD_PAGES_BYTES) break;
         bytes += next.size;
@@ -898,7 +991,10 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
               sheets.add(sheet);
               arrived(sheet);
             }}
-            onError={() => setTorn(sheet)}
+            onError={() => {
+              setTorn(sheet);
+              learnDamaged(sheet);
+            }}
           />
         </div>
       )}
@@ -1072,7 +1168,7 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
       return (
         <>
           <Scroll id={url}>
-            <pre class={wrap ? "code wrap" : "code"}>
+            <pre class={wrap ? "code wrap" : "code"} style={{ "--ln": `${Math.max(3, String(data.lines).length)}ch` }}>
               <code dangerouslySetInnerHTML={{ __html: data.html }} />
             </pre>
           </Scroll>

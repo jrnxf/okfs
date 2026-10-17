@@ -278,7 +278,7 @@ export function Palette() {
             }}
             onKeyDown={onKey}
           />
-          <kbd>esc</kbd>
+          <kbd class="pal-esc">esc</kbd>
         </div>
         <div class="pal-list" ref={list}>
           {rows.length === 0 && !waiting && <div class="pal-empty">Nothing matches “{query}”.</div>}
