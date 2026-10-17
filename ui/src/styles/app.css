@@ -137,8 +137,9 @@ body.open .ph .only-open { display: inline-flex; }
 /* A folder in the preview: three numbers side by side, what can be done with it, then its notes. */
 .fp-in { display: grid; gap: calc(var(--pad) * 1.5); padding: calc(var(--pad) * 2) calc(var(--pad) * 2.2) 48px; max-width: 60em; margin: 0 auto; }
 .fp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--pad); margin: 0; }
-.fp-stats > div { display: grid; gap: 4px; align-content: start; justify-items: start; min-width: 0; padding: calc(var(--pad) * 1.1) calc(var(--pad) * 1.25); border: var(--border); border-radius: var(--radius-lg); background: var(--bg); }
-.fp-stats dd { margin: 0; font-size: calc(var(--text) * 1.5); line-height: 1.25; color: var(--fg); white-space: nowrap; }
+.fp-stats > div { display: grid; gap: 4px; align-content: start; justify-items: start; min-width: 0; padding: calc(var(--pad) * 1.1) calc(var(--pad) * 1.25); border: var(--border); border-radius: var(--radius-lg); background: var(--bg); container-type: inline-size; }
+/* A date and a time are sixteen figures: in the slots beside the columns a card can be narrower than that, so the figures shrink with it. */
+.fp-stats dd { margin: 0; font-size: min(calc(var(--text) * 1.5), 10cqi); line-height: 1.25; color: var(--fg); white-space: nowrap; }
 .fp-stats span, .fp-stats button { color: var(--muted); font-size: var(--text-s); min-height: 1.45em; white-space: pre-wrap; text-align: left; }
 .fp-stats button { max-width: 100%; white-space: nowrap; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .fp-do { display: flex; flex-wrap: wrap; gap: 8px; }
