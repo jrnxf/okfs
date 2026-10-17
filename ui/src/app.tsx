@@ -392,7 +392,7 @@ export function App() {
         <Side slots={cut} />
       </div>
       <footer class={filtering || s.filter ? "status filtering" : "status"}>
-        <span class="mode">{s.open ? "view" : s.filter ? "filter" : "browse"}</span>
+        <span class={s.open || s.filter ? "mode loud" : "mode"}>{s.open ? "view" : s.filter ? "filter" : "browse"}</span>
         <span class="info num">{s.status === "ready" ? info : ""}</span>
         <label class="fil">
           /

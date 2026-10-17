@@ -497,11 +497,13 @@ impl Index {
         let (mut chars, mut path) = (Vec::new(), String::new());
 
         let mut scored: Vec<Scored> = Vec::new();
+        let mut idx = Vec::new();
         for (dir, nodes) in &tree.dirs {
             for (at, node) in nodes.iter().enumerate() {
                 let by_name = pattern.score(Utf32Str::new(&node.name, &mut chars), &mut matcher);
                 if let Some(score) = by_name {
-                    scored.push((score + NAME_BONUS, dir, at, true));
+                    let close = is_close(&pattern, &node.name, &mut idx, &mut chars, &mut matcher);
+                    scored.push((score + NAME_BONUS, dir, at, true, close));
                     continue;
                 }
                 if dir.is_empty() {
@@ -512,9 +514,14 @@ impl Index {
                 path.push('/');
                 path.push_str(&node.name);
                 if let Some(score) = pattern.score(Utf32Str::new(&path, &mut chars), &mut matcher) {
-                    scored.push((score, dir, at, false));
+                    let close = is_close(&pattern, &path, &mut idx, &mut chars, &mut matcher);
+                    scored.push((score, dir, at, false, close));
                 }
             }
+        }
+        // Letters spread over a whole path are a match of last resort: they only show when nothing is closer.
+        if scored.iter().any(|s| s.4) {
+            scored.retain(|s| s.4);
         }
         found.total = scored.len();
         // Best score first; ties go to the shorter path, then by name, so results never shuffle.
@@ -530,7 +537,7 @@ impl Index {
         }
         scored.sort_by(rank);
 
-        for (_, dir, at, by_name) in scored {
+        for (_, dir, at, by_name, _) in scored {
             let node = &tree.dirs[dir][at];
             let path = paths::join(dir, &node.name);
             let mut idx = Vec::new();
@@ -555,8 +562,27 @@ fn seconds(time: Option<SystemTime>) -> u32 {
         .map_or(0, |since| u32::try_from(since.as_secs()).unwrap_or(u32::MAX))
 }
 
-/// One match: score, folder, position in that folder, and whether the name itself matched.
-type Scored<'a> = (u32, &'a str, usize, bool);
+/// One match: score, folder, position in that folder, whether the name itself matched, and whether
+/// its letters sit close together (see `is_close`).
+type Scored<'a> = (u32, &'a str, usize, bool, bool);
+
+/// Whether every matched letter of `hay` either follows the one before it or starts a word. A query
+/// found as a run, or as the starts of words, is close; letters picked out of the middle of
+/// several words are not.
+fn is_close(pattern: &Pattern, hay: &str, idx: &mut Vec<u32>, chars: &mut Vec<char>, matcher: &mut Matcher) -> bool {
+    idx.clear();
+    pattern.indices(Utf32Str::new(hay, chars), matcher, idx);
+    idx.sort_unstable();
+    idx.dedup();
+    let letters: Vec<char> = hay.chars().collect();
+    let mut last = None;
+    idx.iter().all(|&i| {
+        let i = i as usize;
+        let ok = last.is_some_and(|l| i == l + 1) || i == 0 || letters.get(i - 1).is_some_and(|c| !c.is_alphanumeric());
+        last = Some(i);
+        ok
+    })
+}
 
 impl Tree {
     /// Drops a folder and everything under it.
@@ -794,6 +820,27 @@ mod tests {
         };
         assert_eq!(found("fresh"), ["sub/fresh.txt"]);
         assert_eq!(found("inner"), ["sub/deep/inner.txt"]);
+    }
+
+    #[test]
+    fn letters_spread_over_words_only_match_when_nothing_is_closer() {
+        let site = Watched::new(false);
+        fs::create_dir_all(site.served.join("Northwind Industries")).unwrap();
+        fs::write(site.served.join("Northwind Industries/the-report.txt"), "x").unwrap();
+        fs::write(site.served.join("Northwind Industries/tidewater.txt"), "x").unwrap();
+        site.index.build();
+        let found = |query: &str| -> Vec<String> {
+            site.index
+                .search(query, 10)
+                .hits
+                .into_iter()
+                .map(|hit| hit.path)
+                .collect()
+        };
+        // `t`, `i`, `d`, `e` can be picked out of the other file's path, but a file holds the run.
+        assert_eq!(found("tide"), ["Northwind Industries/tidewater.txt"]);
+        // Nothing holds it as a run or as word starts: the loose match stays.
+        assert!(!found("nwdtr").is_empty());
     }
 
     #[test]

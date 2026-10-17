@@ -36,12 +36,12 @@ const keepFocus = (event: MouseEvent) => event.preventDefault();
  * rows beside them.
  */
 export function FolderBar({ name, path, count, mtime, doomed }: { name: string; path: string; count: number | undefined; mtime: number | undefined; doomed: Doomed | null }) {
-  const facts = [...(count === undefined ? [] : [fmt.items(count)]), ...(mtime === undefined ? [] : [fmt.abs(mtime)])];
+  const facts = [...(count === undefined ? [] : [fmt.items(count)]), ...(mtime === undefined ? [] : [fmt.rel(mtime)])];
   return (
     <div class="ph" onMouseDown={keepFocus}>
       <KindIcon kind="folder" />
       <span class="nm trunc">{name}</span>
-      <span class="facts trunc num">{facts.join(" · ")}</span>
+      <span class="facts trunc num" title={mtime === undefined ? undefined : fmt.abs(mtime)}>{facts.join(" · ")}</span>
       <a class="btn" href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
         <Icon name="download" />
       </a>
@@ -302,7 +302,9 @@ export function Side({ slots }: { slots: number }) {
       <>
         <KindIcon kind="folder" />
         <span class="nm trunc">{summed.name}</span>
-        <span class="facts trunc num">{fmt.abs(summed.mtime)}</span>
+        <span class="facts trunc num" title={fmt.abs(summed.mtime)}>
+          {fmt.rel(summed.mtime)}
+        </span>
         {config.delete && (
           <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(summed)}>
             <Icon name="trash" />
