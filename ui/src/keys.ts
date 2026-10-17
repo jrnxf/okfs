@@ -67,6 +67,7 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     ...(modal ? {} : { " ": () => store.setPeek() }),
     // Only a file with two forms has the key: on any other it does nothing, and is not offered.
     ...(store.flippable() ? { r: () => store.flipRaw() } : {}),
+    ...(store.wrappable() ? { w: () => store.flipWrap() } : {}),
     Backspace: () => store.up(),
     "-": () => store.up(),
     Escape: () => {

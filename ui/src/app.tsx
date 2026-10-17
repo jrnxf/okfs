@@ -151,6 +151,7 @@ export function App() {
 
   const here = store.here();
   const flippable = store.flippable();
+  const wrappable = store.wrappable();
 
   // What lies past the cursor, the way it is moving, is asked for before the cursor gets there: the previews
   // of the files, and the columns of the folders while the preview is closed.
@@ -435,6 +436,11 @@ export function App() {
           {flippable && (
             <span>
               <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
+            </span>
+          )}
+          {wrappable && (
+            <span>
+              <kbd>w</kbd> {store.wraps(wrappable) ? "unwrap" : "wrap"}
             </span>
           )}
           <span>

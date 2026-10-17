@@ -107,6 +107,11 @@ export function sourceFirst(file: { kind: Kind; ext: string }): boolean {
   return hasSource(file) && file.kind !== "csv";
 }
 
+/** True for a file whose source is prose, which wraps by default: Markdown, a page, a text or a log. */
+export function isProse(file: { kind: Kind }): boolean {
+  return file.kind === "md" || file.kind === "html" || file.kind === "text";
+}
+
 /** True for a picture no browser is counted on to show as it is. The server sends it as a PNG or a JPEG. */
 export function decodedByServer(file: { ext: string }): boolean {
   return file.ext === "tif" || file.ext === "tiff";

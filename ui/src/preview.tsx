@@ -1032,7 +1032,7 @@ export function Prose({ html, class: extra }: { html: string; class?: string }) 
 }
 
 /** A text file as what is made from it, or with `source` as it is written: its text as source code. */
-function Text({ entry, report, source }: { entry: Entry; report: Report; source?: boolean }) {
+function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; source?: boolean; wrap?: boolean }) {
   // The start of the file comes first. The whole of it is asked for once the cursor has rested, and only
   // when the start says there is more: a short file, a table and a Markdown file are whole already.
   const whole = source ? urls.source(entry.path) : urls.preview(entry.path);
@@ -1072,7 +1072,7 @@ function Text({ entry, report, source }: { entry: Entry; report: Report; source?
       return (
         <>
           <Scroll id={url}>
-            <pre class="code">
+            <pre class={wrap ? "code wrap" : "code"}>
               <code dangerouslySetInnerHTML={{ __html: data.html }} />
             </pre>
           </Scroll>
@@ -1129,11 +1129,13 @@ interface Shown {
   report: Report;
   /** Show the file's source in place of what is made from it. Only a file with both has it: see `hasSource`. */
   raw?: boolean;
+  /** Wrap the lines of a source at the edge of the pane. */
+  wrap?: boolean;
 }
 
-function Kind({ entry, stamp, report, raw, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
+function Kind({ entry, stamp, report, raw, wrap, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
   // The bytes as they are, colored and never run: the same answer for a page, a drawing, a table.
-  if (raw && hasSource(entry)) return <Text entry={entry} report={report} source />;
+  if (raw && hasSource(entry)) return <Text entry={entry} report={report} source wrap={wrap} />;
   switch (entry.kind) {
     case "folder":
       // A folder has columns or a panel of its own beside the list: see `Side`.
@@ -1150,7 +1152,7 @@ function Kind({ entry, stamp, report, raw, waiting, left, onReady }: Shown & { w
       if (entry.ext === "zip") return <Zip entry={entry} report={report} />;
       return <Card entry={entry} line="No preview for this type" />;
     default:
-      return <Text entry={entry} report={report} />;
+      return <Text entry={entry} report={report} wrap={wrap} />;
   }
 }
 

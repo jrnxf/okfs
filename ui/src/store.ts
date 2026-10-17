@@ -2,7 +2,7 @@
 
 import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
 import { type Config, config, locate } from "./config";
-import { type Kind, extension, formOf, hasSource, kindOf, sourceFirst } from "./kinds";
+import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
 
@@ -61,6 +61,8 @@ export interface State {
    * It starts empty on every visit.
    */
   flipped: string[];
+  /** The kinds of prose the reader turned wrapping off for: see `isProse`. */
+  unwrapped: string[];
   sort: Sort;
   filter: string;
   /** The file given the full width, if any. */
@@ -126,6 +128,7 @@ export class Store {
     cursor: 0,
     peek: false,
     flipped: [],
+    unwrapped: [],
     sort: savedSort(),
     filter: "",
     open: null,
@@ -184,6 +187,17 @@ export class Store {
   flippable(): Entry | null {
     const file = this.shown();
     return file && hasSource(file) ? file : null;
+  }
+
+  /** Whether the source of `file` wraps at the edge of the pane: prose does until its kind is flipped, code never. */
+  wraps(file: Entry): boolean {
+    return isProse(file) && !this.s.unwrapped.includes(file.kind);
+  }
+
+  /** The file on show, when it is prose shown as its source, which has lines to wrap. */
+  wrappable(): Entry | null {
+    const file = this.shown();
+    return file && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
   }
 
   /** The files of the current list, in order: what next and previous step through. */
@@ -579,6 +593,15 @@ export class Store {
     if (!file || !hasSource(file)) return;
     const form = formOf(file);
     s.flipped = s.flipped.includes(form) ? s.flipped.filter((kept) => kept !== form) : [...s.flipped, form];
+    this.emit();
+  }
+
+  /** Turns wrapping on or off for the prose on show. The choice holds for the files of its kind that follow. */
+  flipWrap(): void {
+    const file = this.wrappable();
+    if (!file) return;
+    const { s } = this;
+    s.unwrapped = s.unwrapped.includes(file.kind) ? s.unwrapped.filter((kept) => kept !== file.kind) : [...s.unwrapped, file.kind];
     this.emit();
   }
 

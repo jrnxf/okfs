@@ -60,6 +60,7 @@ function commands(): Entry[] {
   const under = s.open ?? store.cur();
   const here = store.here();
   const flippable = store.flippable();
+  const wrappable = store.wrappable();
   // Both are missing when the server has deleting off.
   const deletes: Command[] = [];
   if (config.delete && under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
@@ -67,6 +68,7 @@ function commands(): Entry[] {
   return [
     ...(s.open ? [] : [{ title: s.peek ? "Close the preview" : "Open the preview", key: "space", run: () => store.setPeek() }]),
     ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
+    ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
     {
       title: isDark() ? "Use light scheme" : "Use dark scheme",
