@@ -211,6 +211,69 @@ function Folder({ folder }: { folder: Entry }) {
   );
 }
 
+/** What a phone keeps behind one button, as its file bar has no room for it: the wrap, the download and the delete. */
+function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    setOpen(false);
+  }, [file.path]);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!(event.target as Element).closest?.(".more")) setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [open]);
+  return (
+    <span class="more">
+      <button class="btn" aria-label="More" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div class="more-menu pop" role="menu" onClick={() => setOpen(false)}>
+          {wrappable && (
+            <button class="tm-row" role="menuitem" onClick={() => store.flipWrap()}>
+              <Icon name="wrap" />
+              <span class="nm">{store.wraps(file) ? "Stop wrapping lines" : "Wrap long lines"}</span>
+            </button>
+          )}
+          <a class="tm-row" role="menuitem" href={urls.raw(file.path)} download>
+            <Icon name="download" />
+            <span class="nm">Download</span>
+          </a>
+          {config.delete && (
+            <button class="tm-row" role="menuitem" onClick={() => store.askDelete(file)}>
+              <Icon name="trash" />
+              <span class="nm">Delete</span>
+            </button>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/** On a phone, the bar at the foot of an open file: previous and next in reach of a thumb, with the place in the folder. */
+function StepBar({ file }: { file: Entry }) {
+  const files = store.files();
+  return (
+    <nav class="stepbar" aria-label="Files in this folder">
+      <button class="btn" aria-label="Previous file" onClick={() => store.step(-1)}>
+        <Icon name="left" />
+        Previous
+      </button>
+      <span class="num">
+        {files.indexOf(file) + 1} / {files.length}
+      </span>
+      <button class="btn" aria-label="Next file" onClick={() => store.step(1)}>
+        Next
+        <Icon name="right" />
+      </button>
+    </nav>
+  );
+}
+
 /** A file under the pointer in a column: the level of the column and the file's name. */
 interface Hover {
   level: number;
@@ -260,6 +323,7 @@ export function Side({ slots }: { slots: number }) {
     const learned = facts.path === file.path ? facts.list : [];
     const files = s.open ? store.files() : [];
     const raw = store.isRaw(file);
+    const wrappable = store.wrappable();
     header = (
       <>
         <button class="btn only-open" aria-label="Back to the list" onClick={() => store.close()}>
@@ -271,10 +335,10 @@ export function Side({ slots }: { slots: number }) {
         <span class="pos num only-open">
           {files.indexOf(file) + 1} / {files.length}
         </span>
-        <button class="btn only-open" aria-label="Previous file" onClick={() => store.step(-1)}>
+        <button class="btn only-open step" aria-label="Previous file" onClick={() => store.step(-1)}>
           <Icon name="up" />
         </button>
-        <button class="btn only-open" aria-label="Next file" onClick={() => store.step(1)}>
+        <button class="btn only-open step" aria-label="Next file" onClick={() => store.step(1)}>
           <Icon name="down" />
         </button>
         {hasSource(file) && (
@@ -282,14 +346,20 @@ export function Side({ slots }: { slots: number }) {
             <Icon name="code" />
           </button>
         )}
-        <a class="btn" href={urls.raw(file.path)} download aria-label="Download" title="Download">
+        {wrappable === file && (
+          <button class="btn wide" aria-label="Wrap long lines" aria-pressed={store.wraps(file)} title={store.wraps(file) ? "Stop wrapping long lines (w)" : "Wrap long lines (w)"} onClick={() => store.flipWrap()}>
+            <Icon name="wrap" />
+          </button>
+        )}
+        <a class="btn wide" href={urls.raw(file.path)} download aria-label="Download" title="Download">
           <Icon name="download" />
         </a>
         {config.delete && (
-          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
+          <button class="btn wide" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
             <Icon name="trash" />
           </button>
         )}
+        <More file={file} wrappable={wrappable === file} />
         {!hoverFile && (
           <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
             <Icon name={s.open ? "pane" : "expand"} />
@@ -330,9 +400,10 @@ export function Side({ slots }: { slots: number }) {
             {header}
           </div>
           <div class="pv">
-            {shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} />}
+            {shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}
             {summed && <Folder folder={summed} />}
           </div>
+          {s.open && shown && !hoverFile && <StepBar file={shown} />}
         </div>
       )}
       {levels.map((listing, level) => {

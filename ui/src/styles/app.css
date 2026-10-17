@@ -58,7 +58,10 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .ph .btn { height: calc(24px * var(--density)); padding: 0 6px; }
 .ph .pos { color: var(--faint); font-size: var(--text-xs); padding: 0 4px; white-space: nowrap; }
 .ph .sp { flex: 1; }
-.ph .only-open { display: none; }
+.ph .only-open, .ph .more, .stepbar { display: none; }
+.ph .more { position: static; }
+.more-menu { top: 100%; right: 8px; width: 220px; }
+.more-menu a.tm-row { text-decoration: none; color: var(--fg); }
 #pv { flex: 1; min-height: 0; }
 body.open .main { grid-template-columns: minmax(0, 1fr); }
 body.open .right { grid-column: 1; }
@@ -99,6 +102,15 @@ body.open .ph .only-open { display: inline-flex; }
   /* the name needs the room more than the count of files does */
   .ph .facts, body.open .ph .pos { display: none; } .ph .nm { flex: 1; }
   .ph .btn { height: 34px; padding: 0 9px; }
+  /* previous and next move to the foot of the sheet, and the rest of the file's actions behind one button */
+  .ph { position: relative; }
+  body.open .ph .step, .ph .wide { display: none; }
+  .ph .more { display: inline-flex; }
+  .more-menu { position: absolute; z-index: 30; }
+  .more-menu .tm-row { height: 44px; }
+  .stepbar { display: none; }
+  body.open .stepbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; border-top: var(--border); background: var(--surface); padding: 6px var(--pad) calc(6px + env(safe-area-inset-bottom)); color: var(--muted); font-size: var(--text-s); }
+  .stepbar .btn { height: 44px; min-width: 112px; padding: 0 14px; gap: 6px; justify-content: center; color: var(--fg); }
   /* the back arrow already does this here, and the name needs the room */
   .ph .widen { display: none; }
   .status { height: calc(44px * var(--density)); padding-bottom: env(safe-area-inset-bottom); }

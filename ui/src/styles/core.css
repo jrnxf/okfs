@@ -192,6 +192,10 @@ kbd {
 .code { margin: 0; padding: var(--pad) 0 48px; font: calc(var(--text) * 0.92) / 1.6 var(--font-mono); letter-spacing: 0; counter-reset: ln; tab-size: 4; min-width: max-content; }
 .code .ln { display: block; padding: 0 var(--pad) 0 0; white-space: pre; }
 .code .ln::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 3.4em; padding-right: 1.2em; text-align: right; color: var(--faint); user-select: none; }
+/* Prose wraps at the edge of the pane, and a wrapped line hangs from the line number: the gutter is padding and the first line pulls back into it. */
+.code.wrap { min-width: 0; }
+.code.wrap .ln { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: var(--ln, 3.4em); text-indent: calc(-1 * var(--ln, 3.4em)); }
+.code.wrap .ln::before { text-indent: 0; }
 .tk-c { color: var(--syn-comment); font-style: italic; } .tk-k { color: var(--syn-keyword); } .tk-s { color: var(--syn-string); }
 .tk-n { color: var(--syn-number); } .tk-t { color: var(--syn-title); }
 

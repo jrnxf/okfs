@@ -26,6 +26,8 @@ const LINE: Record<string, string> = {
   left: '<path d="M10 3.5L5.5 8l4.5 4.5"/>',
   up: '<path d="M3.5 10L8 5.5l4.5 4.5"/>',
   down: '<path d="M3.5 6L8 10.5 12.5 6"/>',
+  wrap: '<path d="M2.5 4h11M2.5 12h4M2.5 8h8.5a2 2 0 010 4H9.5M11 10.5L9.5 12 11 13.5"/>',
+  more: '<circle cx="3.5" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12.5" cy="8" r="1"/>',
   download: '<path d="M8 2.25v8M4.75 7.25L8 10.5l3.25-3.25M2.75 13.25h10.5"/>',
   swatch:
     '<circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5"/><path d="M8 2.25a5.75 5.75 0 010 11.5z" fill="currentColor"/>',

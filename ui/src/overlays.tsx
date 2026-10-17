@@ -76,6 +76,7 @@ const keys = (): Key[] => [
   [["↵"], "Open the folder, or the file at full width"],
   [["space"], "Open or close the preview"],
   ...(store.flippable() ? [[["r"], "Rendered or source"] satisfies Key] : []),
+  ...(store.wrappable() ? [[["w"], "Wrap long lines or not"] satisfies Key] : []),
   [["⌫"], "Up one folder"],
   [["/"], "Filter this folder"],
   [[`${MOD} K`], "Find anything in the tree"],
