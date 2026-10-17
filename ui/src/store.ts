@@ -178,7 +178,7 @@ export class Store {
     return s.open ?? (cur && !cur.dir ? cur : null);
   }
 
-  /** Whether `file` is shown as its source: a page, Markdown, a drawing and JSON are until their kind is flipped. */
+  /** Whether `file` is shown as its source: Markdown, a drawing and JSON are until their kind is flipped. */
   isRaw(file: Entry): boolean {
     return hasSource(file) && sourceFirst(file) !== this.s.flipped.includes(formOf(file));
   }

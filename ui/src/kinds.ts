@@ -100,11 +100,11 @@ export function formOf(file: { kind: Kind; ext: string }): string {
 }
 
 /**
- * True for a file with a source that is shown as its source when it is opened: a page, Markdown, a drawing and
- * JSON. A table opens as what is made from it.
+ * True for a file with a source that is shown as its source when it is opened: Markdown, a drawing and JSON. A
+ * page and a table open as what is made from them.
  */
 export function sourceFirst(file: { kind: Kind; ext: string }): boolean {
-  return hasSource(file) && file.kind !== "csv";
+  return hasSource(file) && file.kind !== "csv" && file.kind !== "html";
 }
 
 /** True for a file whose source is prose, which wraps by default: Markdown, a page, a text or a log. */
