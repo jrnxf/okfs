@@ -66,7 +66,10 @@ body.open .left { display: none; }
 body.open .ph .only-open { display: inline-flex; }
 
 .status { display: flex; align-items: center; gap: 14px; height: calc(28px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-top: var(--border); color: var(--muted); font-size: var(--text-xs); min-width: 0; }
-.status .mode { font-family: var(--font-mono); letter-spacing: 0; color: var(--accent-fg); background: var(--accent); padding: 1px 7px; border-radius: min(var(--radius), 3px); text-transform: uppercase; font-size: calc(var(--text) * 0.72); font-weight: 500; flex: none; }
+.status .mode { font-family: var(--font-mono); letter-spacing: 0; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; text-transform: uppercase; font-size: calc(var(--text) * 0.72); font-weight: 500; flex: none; }
+.status .mode::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.status .mode.loud { color: var(--accent-fg); background: var(--accent); padding: 1px 7px; border-radius: min(var(--radius), 3px); gap: 0; }
+.status .mode.loud::before { display: none; }
 .status .info { white-space: nowrap; }
 .status .fil { display: none; align-items: center; gap: 4px; flex: 1; min-width: 0; color: var(--fg); font-family: var(--font-mono); letter-spacing: 0; }
 .status .fil input { flex: 1; min-width: 0; background: none; border: 0; padding: 0; font-size: var(--text-s); }
