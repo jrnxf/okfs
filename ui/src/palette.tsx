@@ -12,6 +12,8 @@ import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
 
 /** Typing pauses this long before the server is asked. */
 const SETTLE = 40;
+/** How often the search is asked again while the first walk of the folder goes on. */
+const WALKING = 1000;
 
 /** The modifier this platform uses for shortcuts, as it is written on the key. */
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
@@ -146,7 +148,8 @@ export function Palette() {
     const abort = new AbortController();
     getJson<Recent>(urls.recent, abort.signal).then((answer) => setRecent(answer.files), () => {});
     return () => abort.abort();
-  }, []);
+    // Asked again when the first walk ends: until then the newest files are those it has read so far.
+  }, [found?.ready]);
 
   // An empty query still asks once, for the count of indexed entries shown in the footer.
   useEffect(() => {
@@ -162,6 +165,19 @@ export function Palette() {
       abort.abort();
     };
   }, [asked]);
+
+  // The server searches what its first walk has found so far: ask again while it goes on, for the count and the matches.
+  useEffect(() => {
+    if (!found || found.ready) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      getJson<Found>(urls.search(asked), abort.signal).then(setFound, () => {});
+    }, WALKING);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [found, asked]);
 
   const matching = (entries: Entry[]): Row[] => {
     const matched = entries.flatMap((command) => {

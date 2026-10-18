@@ -1179,6 +1179,82 @@ async fn search_finds_names_across_the_tree_and_follows_changes() {
     wait_for("zebra", 0).await;
 }
 
+#[tokio::test]
+async fn a_folder_left_out_of_the_search_still_opens_and_lists_its_files() {
+    let site = Site::new();
+    for dir in ["dist/deep", "app/node_modules/pad"] {
+        fs::create_dir_all(site.served.join(dir)).unwrap();
+    }
+    for file in [
+        "dist/bundle.js",
+        "dist/deep/chunk.js",
+        "app/main.rs",
+        "app/node_modules/pad/index.js",
+    ] {
+        fs::write(site.served.join(file), "x").unwrap();
+    }
+    fs::write(site.served.join(".gitignore"), "dist\n").unwrap();
+    let root = Root::new(&site.served, false).unwrap();
+    let index = Index::spawn(root.clone());
+    let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
+    let wait_for = |query: &'static str, want: usize| {
+        let app = app.clone();
+        async move {
+            for _ in 0..200 {
+                let result = json(&app, &format!("/api/search?q={query}")).await;
+                if result["ready"] == true && result["total"] == want {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            panic!("the index never showed {want} matches for {query}");
+        }
+    };
+    let names = |listing: &Value| -> Vec<String> {
+        let entries = listing["entries"].as_array().unwrap();
+        let mut names: Vec<String> = entries
+            .iter()
+            .map(|entry| entry["n"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort();
+        names
+    };
+
+    wait_for("main.rs", 1).await;
+    wait_for("bundle", 0).await;
+    wait_for("chunk", 0).await;
+    wait_for("index.js", 0).await;
+
+    // Left out of the search, and open as ever: the same listing, counts and files as any folder.
+    let top = json(&app, "/api/list?path=").await;
+    let dist = top["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["n"] == "dist")
+        .unwrap();
+    assert_eq!((dist["d"].as_bool(), dist["c"].as_u64()), (Some(true), Some(2)));
+    assert_eq!(names(&json(&app, "/api/list?path=dist").await), ["bundle.js", "deep"]);
+    assert_eq!(names(&json(&app, "/api/list?path=dist/deep").await), ["chunk.js"]);
+    assert_eq!(
+        names(&json(&app, "/api/list?path=app/node_modules/pad").await),
+        ["index.js"]
+    );
+    assert_eq!(get(&app, "/raw/dist/deep/chunk.js").await.1, b"x");
+
+    // What changes in them is not taken into the index. Once a file beside them is, the watcher has read
+    // the change before it, so the one in the folder left out would be there by now if it were held.
+    fs::write(site.served.join("dist/late.js"), "late").unwrap();
+    fs::write(site.served.join("app/node_modules/pad/late.js"), "late").unwrap();
+    fs::write(site.served.join("app/after.rs"), "after").unwrap();
+    wait_for("after.rs", 1).await;
+    wait_for("late", 0).await;
+    assert_eq!(
+        names(&json(&app, "/api/list?path=dist").await),
+        ["bundle.js", "deep", "late.js"]
+    );
+}
+
 /// Sets when a file or folder was last written, in seconds since the epoch.
 fn written_at(path: impl AsRef<Path>, seconds: u64) {
     let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
