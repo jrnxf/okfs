@@ -2,9 +2,12 @@
 //! time each file was last written. One walk at start builds it; a file watcher keeps
 //! it fresh after that. The same watcher is what open pages follow: every change it
 //! reads is told to the feed.
+//!
+//! Some folders are left out (see `skip`): they are listed in their folder, but what is
+//! inside is not walked, not searched, and not kept up by the watcher.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +23,7 @@ use serde::Serialize;
 
 use crate::live::{Change, Feed};
 use crate::paths::{self, Resolved, Root};
+use crate::skip::{self, Rules, Skip};
 
 /// How long the tree must be quiet before changes are read.
 const SETTLE: Duration = Duration::from_millis(150);
@@ -31,6 +35,19 @@ const POLL: Duration = Duration::from_secs(30);
 const NAME_BONUS: u32 = 64;
 /// How many files are listed as the ones written last.
 const RECENT: usize = 8;
+/// How much the first walk gathers before the search can see it, and the longest it keeps it back.
+const FLUSH: Flush = Flush {
+    entries: 2000,
+    every: Duration::from_millis(200),
+};
+/// How many left-out folders a batch can name before the pages are told to read everything again.
+const QUIET: usize = 8;
+
+#[derive(Clone, Copy)]
+struct Flush {
+    entries: usize,
+    every: Duration,
+}
 
 struct Node {
     name: Box<str>,
@@ -58,6 +75,7 @@ struct Tree {
 
 pub struct Index {
     root: Root,
+    skip: Skip,
     tree: RwLock<Tree>,
     ready: AtomicBool,
     feed: Feed,
@@ -99,8 +117,14 @@ pub struct Recent {
 impl Index {
     /// An empty index. Call `build` to fill it.
     pub fn new(root: Root) -> Arc<Self> {
+        let skip = Skip::new(root.dir());
+        Self::with_skip(root, skip)
+    }
+
+    fn with_skip(root: Root, skip: Skip) -> Arc<Self> {
         Arc::new(Self {
             root,
+            skip,
             tree: RwLock::default(),
             ready: AtomicBool::new(false),
             feed: Feed::default(),
@@ -120,13 +144,23 @@ impl Index {
 
     fn run(&self) {
         let (send, events) = mpsc::channel();
-        // The watcher goes where the walk goes: into real folders, and through no link.
-        let config = notify::Config::default().with_follow_symlinks(false);
-        let watcher = notify::RecommendedWatcher::new(send, config).and_then(|mut watcher| {
-            watcher.watch(self.root.dir(), RecursiveMode::Recursive)?;
-            Ok(watcher)
-        });
+        // The watcher reads the whole tree to set itself up, left-out folders too, which on Linux
+        // takes about as long as the first walk. They go at once, so the count climbs from the start.
+        let began = SystemTime::now();
+        let top = self.root.dir().to_path_buf();
+        let setup = std::thread::Builder::new()
+            .name("okfs-watch".to_owned())
+            .spawn(move || {
+                // The watcher goes where the walk goes: into real folders, and through no link.
+                let config = notify::Config::default().with_follow_symlinks(false);
+                notify::RecommendedWatcher::new(send, config).and_then(|mut watcher| {
+                    watcher.watch(&top, RecursiveMode::Recursive)?;
+                    Ok(watcher)
+                })
+            })
+            .expect("the watcher thread starts");
         self.build();
+        let watcher = setup.join().expect("the watcher thread ends");
         let _watcher = match watcher {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -140,6 +174,8 @@ impl Index {
                 }
             }
         };
+
+        self.catch_up(began);
 
         while let Ok(first) = events.recv() {
             let started = Instant::now();
@@ -155,32 +191,104 @@ impl Index {
         }
     }
 
+    /// Reads again each folder that changed since `since`. The first walk and the watcher
+    /// start together, so a folder can change after it was read and before it was watched:
+    /// no event tells of that, and its time does. A write to a file that was already read is
+    /// not caught, and the file's time here stays as it was until the next write.
+    fn catch_up(&self, since: SystemTime) {
+        // A file system may keep times to the second or two.
+        let since = since.checked_sub(Duration::from_secs(2)).unwrap_or(since);
+        let held: Vec<String> = self.tree.read().expect("the index lock").dirs.keys().cloned().collect();
+        for dir in held {
+            let written = fs::metadata(self.root.dir().join(&dir)).and_then(|meta| meta.modified());
+            if written.is_ok_and(|written| written < since) {
+                continue;
+            }
+            self.reread(&dir);
+        }
+    }
+
     /// The changes to the served folder, for the pages that are open.
     pub fn feed(&self) -> &Feed {
         &self.feed
     }
 
-    /// Walks the whole served folder and replaces the index with what it finds.
+    /// Walks the whole served folder. The first time, what is found is put in the index
+    /// as it is found, so the search works on a part of the tree while the rest is read.
+    /// Later it replaces the index with what it finds.
     pub fn build(&self) {
-        let fresh = self.walk("");
-        *self.tree.write().expect("the index lock") = fresh;
+        self.fill(FLUSH, || {});
+    }
+
+    /// `build`, with `flushed` called each time the first walk has handed the search more.
+    fn fill(&self, flush: Flush, mut flushed: impl FnMut()) {
+        if self.ready() {
+            let fresh = self.walk("");
+            *self.tree.write().expect("the index lock") = fresh;
+            return;
+        }
+        let mut gathered = Tree::default();
+        let mut last = Instant::now();
+        let mut hand_over = |gathered: &mut Tree| {
+            let more = std::mem::take(gathered);
+            let mut tree = self.tree.write().expect("the index lock");
+            tree.count += more.count;
+            tree.dirs.extend(more.dirs);
+            drop(tree);
+            flushed();
+        };
+        self.walk_with("", |dir, nodes| {
+            gathered.count += nodes.len();
+            gathered.dirs.insert(dir, nodes);
+            if gathered.count >= flush.entries || last.elapsed() >= flush.every {
+                hand_over(&mut gathered);
+                last = Instant::now();
+            }
+        });
+        hand_over(&mut gathered);
         self.ready.store(true, Ordering::Release);
     }
 
     fn walk(&self, from: &str) -> Tree {
         let mut tree = Tree::default();
-        let mut todo = vec![from.to_owned()];
-        while let Some(dir) = todo.pop() {
-            let Some(nodes) = self.read(&dir) else { continue };
-            todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
+        self.walk_with(from, |dir, nodes| {
             tree.count += nodes.len();
             tree.dirs.insert(dir, nodes);
-        }
+        });
         tree
     }
 
-    /// The names in one folder, each file with the time the disk has for it now.
-    fn read(&self, dir: &str) -> Option<Vec<Node>> {
+    /// Reads `from` and every folder under it that is not left out, the nearest first, and
+    /// hands each folder's names to `take`. Nothing is read of a folder that is left out.
+    fn walk_with(&self, from: &str, mut take: impl FnMut(String, Vec<Node>)) {
+        let Some(rules) = self.skip.rules_for(self.root.dir(), from) else {
+            return;
+        };
+        let mut todo = VecDeque::from([(from.to_owned(), rules)]);
+        while let Some((dir, rules)) = todo.pop_front() {
+            let Some(nodes) = self.read(&dir, &rules) else { continue };
+            for node in nodes.iter().filter(|n| n.walk) {
+                let inside = paths::join(&dir, &node.name);
+                let rules = self.skip.enter(&self.root.dir().join(&inside), false, &rules);
+                todo.push_back((inside, rules));
+            }
+            take(dir, nodes);
+        }
+    }
+
+    /// The names in the folder `dir`, when it is not left out.
+    fn open(&self, dir: &str) -> Option<Vec<Node>> {
+        self.read(dir, &self.skip.rules_for(self.root.dir(), dir)?)
+    }
+
+    /// Whether the folder `dir`, or one above it, is left out of the index.
+    fn left_out(&self, dir: &str) -> bool {
+        self.skip.rules_for(self.root.dir(), dir).is_none()
+    }
+
+    /// The names in one folder, each file with the time the disk has for it now. `rules` are
+    /// those inside the folder: a folder they leave out is listed, and is not walked.
+    fn read(&self, dir: &str, rules: &Rules) -> Option<Vec<Node>> {
         let at = self.root.dir().join(dir);
         let seen = self.root.scan(&at).ok()?;
         Some(
@@ -192,9 +300,9 @@ impl Index {
                         seconds(self.root.modified(&at, &s.name))
                     };
                     Node {
-                        name: s.name.into_boxed_str(),
                         dir: s.dir,
-                        walk: s.dir && !s.link,
+                        walk: s.dir && !s.link && !self.skip.skips(rules, &at, dir.is_empty(), &s.name),
+                        name: s.name.into_boxed_str(),
                         modified,
                     }
                 })
@@ -216,6 +324,8 @@ impl Index {
         let mut written = HashSet::new();
         // A folder that came into place brought what it holds with it, and no event names that.
         let mut arrived = BTreeSet::new();
+        // Folders that are left out, and so not in the index, that something changed in.
+        let mut quiet = BTreeSet::new();
         for event in batch {
             let Ok(event) = event else {
                 return self.rebuild();
@@ -237,9 +347,22 @@ impl Index {
                 EventKind::Any | EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
             );
             for path in event.paths {
+                let dir = self.dir_of(&path);
+                // Nothing in a folder that is left out is kept: the pages are told, the index is not.
+                if let Some(dir) = dir.as_ref().filter(|dir| self.left_out(dir)) {
+                    quiet.insert(dir.clone());
+                    touched.insert(path);
+                    continue;
+                }
+                // A rule changed: what the folder holds is read again under the new rules.
+                if let Some(dir) = dir.as_ref()
+                    && is_rule_file(dir, &path)
+                {
+                    arrived.insert(dir.clone());
+                }
                 if wrote {
                     written.insert(path.clone());
-                } else if let Some(dir) = self.dir_of(&path) {
+                } else if let Some(dir) = dir {
                     dirty.insert(dir);
                 }
                 if placed {
@@ -275,10 +398,21 @@ impl Index {
         }
         // The index is whole before a page is told: what it asks next is answered from it.
         self.restamp(written);
+        // A page open on a folder that is left out hears of it like any other, unless a great
+        // many changed at once: then it is told to read again, as it is for a folder that came.
+        let mut sync = !arrived.is_empty();
+        if quiet.len() > QUIET {
+            told.retain(|dir, _| !quiet.contains(dir));
+            sync = true;
+        } else {
+            for dir in quiet {
+                told.entry(dir).or_default();
+            }
+        }
         for (dir, files) in told {
             self.feed.tell(Change::Folder { dir, files });
         }
-        if !arrived.is_empty() {
+        if sync {
             self.feed.tell(Change::Sync);
         }
     }
@@ -343,7 +477,8 @@ impl Index {
     /// The watcher does this by itself a moment later; a delete calls it so the entry
     /// is gone at once.
     pub fn reread(&self, dir: &str) {
-        if self.refresh(dir) {
+        // A folder that is left out is not in the index, and its pages still want to know.
+        if self.refresh(dir) || self.left_out(dir) {
             self.feed.tell(Change::Folder {
                 dir: dir.to_owned(),
                 files: Vec::new(),
@@ -354,7 +489,7 @@ impl Index {
     /// Reads one folder again and folds what changed into the index. True when the
     /// folder does not list what it listed before.
     fn refresh(&self, dir: &str) -> bool {
-        let Some(nodes) = self.read(dir) else {
+        let Some(nodes) = self.open(dir) else {
             return self.forget(dir);
         };
         let known: HashSet<String> = {
@@ -401,7 +536,7 @@ impl Index {
     /// depth: `reread` looks at one folder only.
     pub fn rewalk(&self, dir: &str) {
         // It changed at depths no single folder names.
-        if self.walk_again(dir) {
+        if self.walk_again(dir) || self.left_out(dir) {
             self.feed.tell(Change::Sync);
         }
     }
@@ -413,6 +548,7 @@ impl Index {
         if self.child_count(dir).is_none() {
             return false;
         }
+        // Walking a folder that is now left out finds nothing, and so drops what was held of it.
         let fresh = self.walk(dir);
         let mut tree = self.tree.write().expect("the index lock");
         if !tree.dirs.contains_key(dir) {
@@ -556,6 +692,15 @@ impl Index {
     }
 }
 
+/// Whether `path`, in the folder `dir`, is a file of rules for what the index leaves out.
+fn is_rule_file(dir: &str, path: &Path) -> bool {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some(".gitignore") => true,
+        Some(skip::OWN) => dir.is_empty(),
+        _ => false,
+    }
+}
+
 /// A time as the index keeps it: whole seconds, with zero for one that is not known.
 fn seconds(time: Option<SystemTime>) -> u32 {
     time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
@@ -623,6 +768,11 @@ mod tests {
 
     impl Watched {
         fn new(hidden: bool) -> Self {
+            Self::with(hidden, |_| {})
+        }
+
+        /// A served folder as `new` makes it, with what `setup` adds to it before the first walk.
+        fn with(hidden: bool, setup: impl FnOnce(&Path)) -> Self {
             let tmp = tempfile::TempDir::new().unwrap();
             let top = tmp.path().canonicalize().unwrap();
             let (served, outside) = (top.join("served"), top.join("outside"));
@@ -631,6 +781,7 @@ mod tests {
             fs::write(served.join("a.txt"), "a").unwrap();
             fs::write(served.join("sub/b.txt"), "b").unwrap();
             fs::write(outside.join("secret.txt"), "secret").unwrap();
+            setup(&served);
             let index = Index::new(Root::new(&served, hidden).unwrap());
             index.build();
             let page = Box::pin(index.feed().follow());
@@ -668,6 +819,190 @@ mod tests {
             dir: dir.to_owned(),
             files: files.iter().map(|name| (*name).to_owned()).collect(),
         }
+    }
+
+    /// A served folder that leaves some folders out: a project with a `.gitignore`, one with
+    /// `node_modules` and no rules at all, and a folder named in the `.okfsignore`.
+    fn with_folders_left_out() -> Watched {
+        Watched::with(false, |served| {
+            for dir in ["dist/deep", "app/node_modules/left-pad", "photos/raw", "photos/edited"] {
+                fs::create_dir_all(served.join(dir)).unwrap();
+            }
+            for file in [
+                "dist/bundle.js",
+                "dist/deep/chunk.js",
+                "app/main.rs",
+                "app/node_modules/left-pad/index.js",
+                "photos/raw/frame.cr3",
+                "photos/edited/frame.jpg",
+            ] {
+                fs::write(served.join(file), "x").unwrap();
+            }
+            fs::write(served.join(".gitignore"), "dist\n").unwrap();
+            fs::write(served.join(".okfsignore"), "photos/raw\n").unwrap();
+        })
+    }
+
+    fn sorted(mut told: Vec<Change>) -> Vec<String> {
+        told.sort_by_key(|change| format!("{change:?}"));
+        told.iter().map(|change| format!("{change:?}")).collect()
+    }
+
+    fn found(index: &Index, query: &str) -> Vec<String> {
+        index.search(query, 20).hits.into_iter().map(|hit| hit.path).collect()
+    }
+
+    #[test]
+    fn what_a_gitignore_names_is_not_searched_and_its_folder_is_still_listed() {
+        let site = with_folders_left_out();
+        assert!(found(&site.index, "bundle").is_empty());
+        assert!(found(&site.index, "chunk").is_empty());
+        assert_eq!(found(&site.index, "main"), ["app/main.rs"]);
+        // The folder keeps its name in the search and in its folder's listing; what is in it is not held.
+        assert_eq!(found(&site.index, "dist"), ["dist"]);
+        assert_eq!(site.index.child_count(""), Some(5));
+        assert_eq!(site.index.child_count("dist"), None);
+        assert_eq!(site.index.child_count("dist/deep"), None);
+        // What is outside it is held in full.
+        assert_eq!(site.index.child_count("photos/edited"), Some(1));
+    }
+
+    #[test]
+    fn the_built_in_names_and_the_okfs_ignore_file_leave_folders_out() {
+        let site = with_folders_left_out();
+        assert!(found(&site.index, "left-pad").is_empty());
+        assert!(found(&site.index, "frame.cr3").is_empty());
+        assert_eq!(found(&site.index, "frame.jpg"), ["photos/edited/frame.jpg"]);
+        assert_eq!(site.index.child_count("app/node_modules"), None);
+        assert_eq!(site.index.child_count("photos/raw"), None);
+        // 5 at the top, 1 in sub, 2 in app, 2 in photos and 1 in photos/edited.
+        assert_eq!(site.index.len(), 5 + 1 + 2 + 2 + 1);
+    }
+
+    #[test]
+    fn the_first_walk_hands_the_search_what_it_has_found_while_it_goes_on() {
+        let site = Watched::with(false, |served| {
+            for at in 0..6 {
+                fs::create_dir_all(served.join(format!("dir-{at}"))).unwrap();
+                for file in 0..4 {
+                    fs::write(served.join(format!("dir-{at}/file-{file}.txt")), "x").unwrap();
+                }
+            }
+        });
+        let fresh = Index::new(Root::new(&site.served, false).unwrap());
+        let (mut counts, mut heard) = (Vec::new(), Vec::new());
+        let flush = Flush {
+            entries: 5,
+            every: Duration::MAX,
+        };
+        fresh.fill(flush, || {
+            counts.push(fresh.len());
+            heard.push((fresh.ready(), fresh.search("file-0", 100).total));
+        });
+        assert!(counts.len() > 2, "the walk was handed over in parts: {counts:?}");
+        assert!(counts.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(
+            counts[0] > 0 && counts[0] < fresh.len(),
+            "a part is held while the walk goes on: {counts:?}"
+        );
+        assert_eq!(counts.last(), Some(&fresh.len()));
+        // Every part but the last is handed over before the index says it is whole, and is searched as it is.
+        let (last, parts) = heard.split_last().unwrap();
+        assert!(parts.iter().all(|(ready, _)| !ready));
+        assert!(parts.iter().any(|(_, total)| *total > 0), "{heard:?}");
+        assert!(parts.iter().all(|(_, total)| *total < 6));
+        assert!(fresh.ready());
+        assert_eq!(last.1, 6);
+        assert_eq!(fresh.search("file-0", 100).total, 6);
+    }
+
+    #[test]
+    fn a_change_in_a_folder_left_out_is_told_to_the_pages_and_never_held() {
+        let mut site = with_folders_left_out();
+        fs::write(site.served.join("dist/new.js"), "new").unwrap();
+        fs::create_dir_all(site.served.join("dist/fresh")).unwrap();
+        fs::write(site.served.join("dist/fresh/more.js"), "more").unwrap();
+        let made = EventKind::Create(CreateKind::Folder);
+        let told = site.see(&[
+            (CREATE, "dist/new.js"),
+            (WRITE, "dist/new.js"),
+            (made, "dist/fresh"),
+            (CREATE, "dist/fresh/more.js"),
+        ]);
+        assert_eq!(
+            sorted(told),
+            sorted(vec![folder("dist", &["new.js"]), folder("dist/fresh", &["more.js"])])
+        );
+        assert_eq!(site.index.child_count("dist"), None);
+        assert!(found(&site.index, "more").is_empty());
+        assert!(found(&site.index, "new").is_empty());
+
+        // A folder that comes into place already left out is listed in its folder and not walked.
+        fs::create_dir_all(site.served.join("app/node_modules/other")).unwrap();
+        fs::write(site.served.join("app/node_modules/other/index.js"), "x").unwrap();
+        let told = site.see(&[
+            (made, "app/node_modules/other"),
+            (CREATE, "app/node_modules/other/index.js"),
+        ]);
+        let expected = vec![
+            folder("app/node_modules", &[]),
+            folder("app/node_modules/other", &["index.js"]),
+        ];
+        assert_eq!(sorted(told), sorted(expected));
+        // It was listed already: the folder reads as it did, and the pages are told to catch up.
+        let told = site.see(&[(made, "app/node_modules")]);
+        assert_eq!(told, [Change::Sync]);
+        assert_eq!(site.index.child_count("app/node_modules"), None);
+        assert!(found(&site.index, "other").is_empty());
+        assert_eq!(site.index.child_count("app"), Some(2));
+    }
+
+    #[test]
+    fn a_change_to_a_rule_file_reads_the_folder_again_under_the_new_rules() {
+        let mut site = with_folders_left_out();
+        assert!(found(&site.index, "frame.jpg").len() == 1);
+
+        // `photos` is now left out whole, and `dist` is let back in.
+        fs::write(site.served.join(".gitignore"), "photos\n").unwrap();
+        fs::write(site.served.join(".okfsignore"), "").unwrap();
+        let told = site.see(&[(WRITE, ".gitignore"), (WRITE, ".okfsignore")]);
+        assert_eq!(told, [Change::Sync]);
+        assert!(found(&site.index, "frame.jpg").is_empty());
+        assert_eq!(site.index.child_count("photos/edited"), None);
+        assert_eq!(found(&site.index, "bundle"), ["dist/bundle.js"]);
+        assert_eq!(found(&site.index, "chunk"), ["dist/deep/chunk.js"]);
+    }
+
+    #[test]
+    fn a_folder_that_becomes_left_out_is_dropped_by_the_change_that_says_so() {
+        let mut site = with_folders_left_out();
+        fs::write(site.served.join("app/.gitignore"), "node_modules\nsrc\n").unwrap();
+        fs::create_dir_all(site.served.join("app/src")).unwrap();
+        fs::write(site.served.join("app/src/lib.rs"), "x").unwrap();
+        site.index.build();
+        assert!(found(&site.index, "lib.rs").is_empty());
+        fs::write(site.served.join("app/.gitignore"), "node_modules\n").unwrap();
+        site.see(&[(WRITE, "app/.gitignore")]);
+        assert_eq!(found(&site.index, "lib.rs"), ["app/src/lib.rs"]);
+    }
+
+    #[test]
+    fn a_folder_that_changed_while_the_watcher_was_being_set_up_is_read_again_by_its_time() {
+        let mut site = Watched::new(false);
+        fs::write(site.served.join("sub/missed.txt"), "x").unwrap();
+        fs::create_dir_all(site.served.join("sub/new/deep")).unwrap();
+        fs::write(site.served.join("sub/new/deep/also.txt"), "x").unwrap();
+        let hour = Duration::from_secs(3600);
+
+        // A folder not written since the walk began is left as it was.
+        site.index.catch_up(SystemTime::now() + hour);
+        assert!(found(&site.index, "missed").is_empty());
+        assert_eq!(site.told(), []);
+
+        site.index.catch_up(SystemTime::now() - hour);
+        assert_eq!(found(&site.index, "missed"), ["sub/missed.txt"]);
+        assert_eq!(found(&site.index, "also"), ["sub/new/deep/also.txt"]);
+        assert_eq!(site.told(), [folder("sub", &[])]);
     }
 
     #[test]

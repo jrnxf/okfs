@@ -122,6 +122,26 @@ okfs --index index.html
 
 The page is shown the way any HTML file is: full width under the thin bar, sandboxed. A link in it to another folder opens that folder's index page too. Closing it shows the folder's listing with the page under the cursor. A folder of that name is not an index page. Neither is a file okfs does not serve: a dotfile without `--hidden`, or a link that leaves the served folder.
 
+### A big folder
+
+`Ctrl K` searches an index of every name in the tree, kept in memory. okfs reads the tree once when it starts, and the search works on what it has found so far while that goes on: the count in its footer climbs until it says the tree is indexed.
+
+Some folders are left out of that index, so that a home folder does not spend minutes and hundreds of megabytes on `node_modules` and caches. A folder that is left out is still listed where it is, and opens like any other when you click it. Only what is inside it is not searched, not held in memory, and not followed by the watcher beyond telling an open page that something in it changed. These are left out:
+
+- Folders named `node_modules`, `.git`, `.cache`, `.npm` or `.Trash`, wherever they are.
+- `Library`, in the served folder, when it is a Mac's home folder.
+- What the `.gitignore` files inside the served folder name, each for its own folder and below. A folder is left out when a rule names it as a folder (`build/`, `dist`); files that are named are searched as before. okfs reads only the files in the served folder and below, not those above it, `.git/info/exclude`, or your global ignore file.
+- What the file `.okfsignore` in the served folder names. It is written the way a `.gitignore` is, with paths from the served folder, and is read after the `.gitignore` there, so a `!` line in it can let a folder back in.
+
+```gitignore
+# .okfsignore in the served folder
+photos/raw
+backups/
+!dist
+```
+
+A change to any of these files is read when it happens. The built-in names are always left out. The watcher still looks at the whole tree on Linux: it takes one inotify watch per folder, left out or not, so a very large tree can reach `fs.inotify.max_user_watches`. okfs then reads the folder again every 30 seconds, as described above.
+
 ### Behind a proxy or a tunnel
 
 While okfs listens on a loopback address it answers only to `localhost` and to plain addresses. This stops a hostile web page from reaching it by pointing a host name at your machine. If you put a proxy or a tunnel in front, name the host it uses:
