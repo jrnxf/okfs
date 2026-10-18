@@ -910,7 +910,10 @@ mod tests {
         let (last, parts) = heard.split_last().unwrap();
         assert!(parts.iter().all(|(ready, _)| !ready));
         assert!(parts.iter().any(|(_, total)| *total > 0), "{heard:?}");
-        assert!(parts.iter().all(|(_, total)| *total < 6));
+        // The walk is breadth first, so the first part is the served folder alone, with none of the files in it.
+        // Which folders follow depends on the order the disk lists them, so only that the matches never fall is held.
+        assert_eq!(parts[0].1, 0);
+        assert!(heard.windows(2).all(|pair| pair[0].1 <= pair[1].1), "{heard:?}");
         assert!(fresh.ready());
         assert_eq!(last.1, 6);
         assert_eq!(fresh.search("file-0", 100).total, 6);
