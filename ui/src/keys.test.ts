@@ -62,7 +62,7 @@ test("a file under the cursor is shown, and asked for ahead, with the columns of
   const stamp = (entry: import("./store").Entry) => store.stamp(entry);
   const source = (entry: import("./store").Entry) => store.isRaw(entry);
   expect(store.shown()?.name).toBe("photo.jpg");
-  preview.lookAhead(store.s.entries, 0, 1, stamp, true, source);
+  preview.lookAhead(store.s.entries, 0, 1, stamp, (path) => store.leftIn(path), source);
   expect(asked.some((url) => url === preview.columnsUrl("inner"))).toBe(true);
   expect(asked.some((url) => url.startsWith("/api/previews?"))).toBe(true);
   expect(asked.some((url) => url.startsWith("/api/archive?"))).toBe(true);
@@ -70,7 +70,7 @@ test("a file under the cursor is shown, and asked for ahead, with the columns of
   // With a file at full width, no column is shown, and none is asked for.
   asked.length = 0;
   preview.forgetAnswers();
-  preview.lookAhead(store.s.entries, 0, 1, stamp, false, source);
+  preview.lookAhead(store.s.entries, 0, 1, stamp, null, source);
   expect(asked.some((url) => url.startsWith("/api/previews?"))).toBe(true);
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
 });
@@ -85,7 +85,7 @@ test("Markdown, a drawing and JSON open as their source, and the flip holds for 
   // The source is the form asked for ahead, and the flip is the page's: its request is the rendered one.
   asked.length = 0;
   preview.forgetAnswers();
-  preview.lookAhead(store.s.entries, 0, 1, (entry) => store.stamp(entry), false, (entry) => store.isRaw(entry));
+  preview.lookAhead(store.s.entries, 0, 1, (entry) => store.stamp(entry), null, (entry) => store.isRaw(entry));
   expect(asked.some((url) => url.startsWith("/api/previews?") && url.includes("raw=1"))).toBe(true);
 
   keys.keyFor(store, host, press("r"))?.();

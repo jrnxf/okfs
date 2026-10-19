@@ -1,9 +1,10 @@
 // What is beside the main list. The file under the cursor as it is shown. For a folder under it, a column for it
 // and for each folder its focused entry leads to, and the file that leads to after the last column. A column's
-// focused entry is the one the pointer was last on, or else its first.
+// focused entry is the one the pointer was last on, or else the one the cursor was on when the folder was left,
+// or else its first: going into the folder lands on it.
 
 import type { ComponentChildren, RefObject } from "preact";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { type Item, type Listing, urls } from "./api";
 import { Aim, AIM_RECHECK } from "./aim";
 import { config } from "./config";
@@ -12,13 +13,14 @@ import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
-import { type Chain, columnsOf, startingAt } from "./slots";
+import { type Chain, type Left, columnsOf, focusOf, startingAt } from "./slots";
 import { type Doomed, type Entry, store, toEntry } from "./store";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
 function visit(listing: Listing, item: Item, open: boolean): void {
   const path = listing.path ? `${listing.path}/${item.n}` : item.n;
-  if (item.d) void store.showDir(path);
+  // The pointer is on the row: its folder's column, the next one, leads on to no pick of its own.
+  if (item.d) void store.showDir(path, { enter: [] });
   else if (open) void store.go(path, false);
   else void store.showDir(listing.path, { select: item.n });
 }
@@ -161,23 +163,16 @@ function StepBar({ file }: { file: Entry }) {
   );
 }
 
-/** The entries the pointer picked in the columns of the folder `root`, a name for each level from the first. */
-interface Picks {
-  root: string;
-  names: string[];
-}
-
-const NO_PICKS: Picks = { root: "", names: [] };
+/** Where the cursor was in each folder it left, as the columns lead on to it. */
+const left: Left = (path) => store.leftIn(path);
 
 /**
  * The columns follow the pointer: the entry it is on leads on to the next column, or to its file after the last,
  * at once. A pointer on its way to the next column is let past the rows between, as it is in the main list: see
- * `aim.ts`. A key that moves the cursor takes over, and the pointer has it back once it moves.
+ * `aim.ts`. A key that moves the cursor takes over, and the pointer has it back once it moves. The picks are the
+ * store's, as going into the folder lands where they lead: see `Store.pick`.
  */
 function usePicks(root: string | null, drawn: RefObject<Chain>) {
-  const [picks, setPicks] = useState<Picks>(NO_PICKS);
-  // A move of the cursor starts the columns of the folder it lands on afresh, even one the pointer picked in before.
-  useLayoutEffect(() => setPicks(NO_PICKS), [root]);
   const here = useRef(root);
   here.current = root;
   const pointer = useRef({ aim: new Aim(), at: { x: -1, y: -1 }, held: "", timer: 0 });
@@ -189,9 +184,13 @@ function usePicks(root: string | null, drawn: RefObject<Chain>) {
     if (root === null || !chain) return;
     // Each column before this one leads on to the next: the pick keeps those and follows this one.
     const names = [...chain.led.slice(0, level), name];
-    // A level that goes into its first entry needs no name: the columns are the ones asked for ahead of the cursor.
-    while (names.length && names[names.length - 1] === chain.levels[names.length - 1]?.entries[0]?.n) names.pop();
-    setPicks((old) => (old.root === root && old.names.join("/") === names.join("/") ? old : { root, names }));
+    // A level that goes where it would with no pick needs no name: the columns are the ones asked for ahead of the cursor.
+    const unpicked = (level: number): string | undefined => {
+      const listing = chain.levels[level];
+      return listing && focusOf(listing, undefined, left)?.n;
+    };
+    while (names.length && names[names.length - 1] === unpicked(names.length - 1)) names.pop();
+    store.pick(root, names);
   }, []);
 
   const onMove = (event: PointerEvent) => {
@@ -234,7 +233,7 @@ function usePicks(root: string | null, drawn: RefObject<Chain>) {
     clearTimeout(pointer.current.timer);
     pointer.current.held = "";
   };
-  return { names: root !== null && picks.root === root ? picks.names : [], onMove, onLeave };
+  return { names: store.picked(root), onMove, onLeave };
 }
 
 export function Side({ slots }: { slots: number }) {
@@ -251,9 +250,9 @@ export function Side({ slots }: { slots: number }) {
   // The chain is drawn from the last answer while the one for the newest picks is on its way: see `columnsOf`.
   const chainRef = useRef<Chain>({ levels: [], led: [], file: null });
   const { names, onMove, onLeave } = usePicks(columns?.path ?? null, chainRef);
-  const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path, names) : null);
+  const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path, names, left) : null);
   const own = columns ? startingAt(data, columns.path) : undefined;
-  const chain = columns ? columnsOf(own, slots, names) : { levels: [], led: [], file: null };
+  const chain = columns ? columnsOf(own, slots, names, left) : { levels: [], led: [], file: null };
   chainRef.current = chain;
   const { levels } = chain;
   const ledFile = chain.file ? toEntry(chain.file.item, chain.file.listing.path, chain.file.at) : null;

@@ -162,7 +162,7 @@ export function App() {
     cursorWas.current = s.cursor;
     if (s.status !== "ready") return;
     const source = (entry: Entry) => store.isRaw(entry);
-    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), columns, source);
+    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), columns ? (path) => store.leftIn(path) : null, source);
     pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), source);
   }, [s.cursor, s.entries, s.status, columns, cut, s.hidden]);
 

@@ -6,6 +6,7 @@ import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
+import { COLUMN_ROWS } from "./slots";
 
 export interface Entry {
   name: string;
@@ -92,6 +93,14 @@ interface Mark {
 
 const mark = (): Mark => (history.state as Mark | null) ?? {};
 
+/** The entries the pointer picked in the columns of the folder `root`, a name for each level from the first. */
+interface Picks {
+  root: string;
+  names: string[];
+}
+
+const NO_PICKS: Picks = { root: "", names: [] };
+
 export function toEntry(item: Item, dir: string, rank: number): Entry {
   const isDir = item.d === true;
   return {
@@ -147,8 +156,13 @@ export class Store {
   private readonly listeners = new Set<() => void>();
   /** Counts navigations, so a slow answer for a folder we already left is dropped. */
   private turn = 0;
-  /** Where the cursor was in each folder visited, by name. */
-  private readonly remembered = new Map<string, string>();
+  /**
+   * Where the cursor was in each folder visited, by name. `drawn`: the entry is among the rows a column of the
+   * folder draws, so the column can lead on to it. See `leftIn`.
+   */
+  private readonly remembered = new Map<string, { name: string; drawn: boolean }>();
+  /** What the pointer picked in the columns beside the list. See `pick`. */
+  private picks: Picks = NO_PICKS;
   /** Where the folder being shown really is: the path its changes on disk are told by. */
   private real = "";
   /** Counts what the server told, so a folder that was on its way while something came in is read once more. */
@@ -168,6 +182,8 @@ export class Store {
   }
 
   private emit(): void {
+    // A move of the cursor starts the columns of the folder it lands on afresh, even one the pointer picked in before.
+    if (this.picks !== NO_PICKS && this.picks.root !== this.columnsRoot()) this.picks = NO_PICKS;
     for (const listener of this.listeners) listener();
   }
 
@@ -202,6 +218,42 @@ export class Store {
   wrappable(): Entry | null {
     const file = this.shown();
     return file && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
+  }
+
+  /** The folder whose columns are beside the list: the one under the cursor, while no file has the full width. */
+  columnsRoot(): string | null {
+    const cur = this.cur();
+    return !this.s.open && cur?.dir ? cur.path : null;
+  }
+
+  /** What the pointer picked in the columns of the folder `root`, a name for each level from the first. */
+  picked(root: string | null): string[] {
+    return root !== null && this.picks.root === root ? this.picks.names : [];
+  }
+
+  /**
+   * The pointer picked entries in the columns of the folder `root`, a name for each level from the first. They
+   * hold until the cursor moves, and going into the folder lands on the first of them: see `activate`.
+   */
+  pick(root: string, names: string[]): void {
+    if (this.picks.root === root && this.picks.names.join("/") === names.join("/")) return;
+    this.picks = { root, names };
+    this.emit();
+  }
+
+  /**
+   * The entry the cursor was on when the folder at `path` was left, while a column of the folder draws it. A
+   * column of the folder leads on to it, and going into the folder lands on it: see `focusOf`.
+   */
+  leftIn(path: string): string | undefined {
+    const left = this.remembered.get(path);
+    return left?.drawn ? left.name : undefined;
+  }
+
+  /** The folder being shown as a column of it draws it: its first entries, folders first, in name order. */
+  private column(): Entry[] {
+    const { all } = this.s;
+    return [...all.filter((entry) => entry.dir), ...all.filter((entry) => !entry.dir)].slice(0, COLUMN_ROWS);
   }
 
   /** The files of the current list, in order: what next and previous step through. */
@@ -267,17 +319,19 @@ export class Store {
   /**
    * Shows a folder. `select` puts the cursor on a name; `open` also gives that file the full width.
    * A folder holding the `--index` file opens that file, under the folder's own address, unless
-   * a name was asked for or `listing` is set.
+   * a name was asked for or `listing` is set. `enter`: the folder is gone into from its column beside
+   * the list, with what the pointer picked in the columns: the cursor lands on the entry the column
+   * led on to, and the columns of that entry go on with the rest of the picks. See `focusOf`.
    */
   async showDir(
     path: string,
-    opts: { select?: string; open?: string; listing?: boolean; history?: HistoryMode } = {},
+    opts: { select?: string; open?: string; listing?: boolean; history?: HistoryMode; enter?: string[] } = {},
   ): Promise<void> {
     const { s } = this;
     const turn = ++this.turn;
     const heard = this.heard;
     const leaving = this.cur();
-    if (leaving && s.status === "ready") this.remembered.set(s.path, leaving.name);
+    if (leaving && s.status === "ready") this.remembered.set(s.path, { name: leaving.name, drawn: this.column().includes(leaving) });
 
     let listing: Listing;
     try {
@@ -299,7 +353,11 @@ export class Store {
     const asked = opts.open !== undefined || opts.select !== undefined || opts.listing === true;
     const index = this.hasIndex() && !asked ? config.index : undefined;
     const open = opts.open ?? index;
-    const wanted = open ?? opts.select ?? (changed ? this.remembered.get(listing.path) : this.cur()?.name);
+    // The entry the folder's column led on to, found the way the column found it.
+    const column = this.column();
+    const focus = opts.enter?.[0] ?? this.leftIn(listing.path);
+    const led = opts.enter && (column.find((entry) => entry.name === focus) ?? column[0])?.name;
+    const wanted = open ?? opts.select ?? led ?? (changed ? this.remembered.get(listing.path)?.name : this.cur()?.name);
     if (open !== undefined && !s.entries.some((entry) => entry.name === open)) {
       // The file may be hidden by a filter that outlived a reload of the same folder.
       s.filter = "";
@@ -308,6 +366,8 @@ export class Store {
     this.select(wanted);
     const opened = open === undefined ? null : this.cur();
     s.open = opened && !opened.dir && opened.name === open ? opened : null;
+    const landed = this.cur();
+    if (landed && opts.enter?.length && landed.name === opts.enter[0]) this.picks = { root: landed.path, names: opts.enter.slice(1) };
     const mode = opts.history ?? "push";
     // An index page keeps its folder's address, so a link to the folder means the page.
     const paged = s.open !== null && index !== undefined;
@@ -532,7 +592,10 @@ export class Store {
     this.moveTo(this.s.cursor + delta);
   }
 
-  /** Enters the folder under the cursor, or gives the file under it the full width. */
+  /**
+   * Enters the folder under the cursor, or gives the file under it the full width. The cursor lands on the
+   * entry the folder's column beside the list leads on to.
+   */
   activate(index?: number): void {
     const { s } = this;
     // A file already at full width stays as it is: opening it again would only rewrite its history entry.
@@ -540,7 +603,7 @@ export class Store {
     if (index !== undefined) s.cursor = index;
     const entry = this.cur();
     if (!entry) return;
-    if (entry.dir) void this.showDir(entry.path);
+    if (entry.dir) void this.showDir(entry.path, { enter: this.picked(entry.path) });
     else this.openEntry(entry, "push");
   }
 

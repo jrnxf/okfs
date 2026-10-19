@@ -8,7 +8,7 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, decodedByServer, hasSource } from "./kinds";
-import { slots } from "./slots";
+import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
 import type { Entry } from "./store";
 
 /**
@@ -70,8 +70,6 @@ const STILL_WAIT = 5000;
 const STILL_WIDTH = 1920;
 /** Children of one JSON object or array shown before "show more". */
 const JSON_PAGE = 200;
-/** Entries listed in the column of a folder: more than a tall window has rows for. */
-const COLUMN_ROWS = 40;
 /**
  * Lines of a source file asked for first: a screen or two of them. Coloring costs by the line, and so does
  * drawing, so the start of a file can be on screen in the frame the cursor reaches it.
@@ -186,10 +184,14 @@ function unpack(picture: HTMLImageElement): void {
 
 /**
  * Where the columns of the folder at `path` are had: its listing, and in the same answer the listing of each
- * folder its first entry leads to, or the entry `follow` names for that level, for the slots past its own. One
- * answer, so every column is drawn together. It holds names, sizes and times, and nothing read from a file.
+ * folder its focused entry leads to, for the slots past its own: the entry `picks` names for that level, or the
+ * one `left` names for its folder, or its first. See `focusOf`. One answer, so every column is drawn together.
+ * It holds names, sizes and times, and nothing read from a file.
  */
-export const columnsUrl = (path: string, follow: string[] = []): string => urls.list(path, COLUMN_ROWS, slots() - 2, follow);
+export const columnsUrl = (path: string, picks: string[] = [], left?: Left): string => {
+  const depth = slots() - 2;
+  return urls.list(path, COLUMN_ROWS, depth, followOf(path, picks, depth, left));
+};
 
 /** The JSON the pane asks for when it shows the file `entry`, if it asks for any. `source`: as its source. */
 function addressOf(entry: Entry, source: boolean): string | null {
@@ -336,14 +338,15 @@ function sheetOf(entry: Entry): string {
 /**
  * Asks for what lies past the cursor in the direction it moves, so that it is here before the cursor is: the
  * preview of each file, in the form `source` says it is shown in. With `columns` it is also the columns of each
- * folder. `stamp` gives the stamp a picture is loaded under.
+ * folder, as `columns` says where the cursor was in the folders it left. `stamp` gives the stamp a picture is
+ * loaded under.
  */
 export function lookAhead(
   entries: Entry[],
   cursor: number,
   step: 1 | -1,
   stamp: (entry: Entry) => string,
-  columns: boolean,
+  columns: Left | null,
   source: (entry: Entry) => boolean,
 ): void {
   // Text files whose start is not known and not on its way, nearest first.
@@ -353,7 +356,7 @@ export function lookAhead(
     const entry = entries[cursor + step * i];
     if (!entry) break;
     if (entry.dir) {
-      if (columns && flights.size < FLIGHTS) ask(columnsUrl(entry.path)).catch(() => undefined);
+      if (columns && flights.size < FLIGHTS) ask(columnsUrl(entry.path, [], columns)).catch(() => undefined);
       continue;
     }
     const raw = source(entry);
