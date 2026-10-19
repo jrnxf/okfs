@@ -1,44 +1,93 @@
 name: release
 
-# A tag `v<version>` builds the Linux binary and publishes it as a release, so
-# a machine without nix or a Rust toolchain can download okfs and run it. A pull
-# request that changes this file builds the binary without publishing, to prove
-# the build before a tag depends on it. A tag with a hyphen, such as
-# `v0.1.0-dev.1`, publishes a pre-release, so a dev build never shows as Latest.
+# Builds the Linux binary and publishes it as a release, so a machine without
+# nix or a Rust toolchain can download okfs and run it. The version the binary
+# reports comes from the tag: the build writes it into Cargo.toml, so a release
+# needs no version-bump commit.
+#
+# - A tag `v<version>` pushed by hand publishes that release. A tag with a
+#   hyphen, such as `v0.1.0-dev.1`, publishes a pre-release, so a dev build
+#   never shows as Latest.
+# - Dev release: every push to main whose ci run passes publishes the next
+#   `v<DEV_RELEASE_BASE>-dev.N` pre-release, N being one more than the highest
+#   dev tag so far. To switch it off at launch, delete the `workflow_run`
+#   trigger below.
+# - A pull request that changes this file builds the binary without
+#   publishing, to prove the build before a release depends on it.
 on:
   push:
     tags: ["v*"]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
   pull_request:
     paths: [.github/workflows/release.yml]
 
 permissions:
   contents: read
 
+env:
+  DEV_RELEASE_BASE: 0.1.0
+
 jobs:
   linux:
+    # A dev release only follows a passing ci run on a push to main, not one on
+    # a pull request. The tag a dev release creates is made with the workflow's
+    # own token, which GitHub never lets start another run; the actor check
+    # keeps that true if the token ever changes.
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push')
+      || (github.event_name == 'push' && github.actor != 'github-actions[bot]')
+      || github.event_name == 'pull_request'
     # Not ubuntu-latest: the binary needs the glibc it was built against or
     # newer, so the runner's release sets the oldest system it runs on. 24.04
     # has glibc 2.39, which Debian 13 (2.41) and Ubuntu 24.04 both meet.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Two dev releases at once would both pick the same N.
+    concurrency:
+      group: release-${{ github.event_name == 'workflow_run' && 'dev' || github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
       ASSET: okfs-x86_64-unknown-linux-gnu
+      GH_TOKEN: ${{ github.token }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
 
-      # The tag names the version the binary reports, so the two have to agree.
-      - name: Check the tag matches Cargo.toml
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Choose the version
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
-            exit 1
+          case "$GITHUB_EVENT_NAME" in
+            push)
+              tag=$GITHUB_REF_NAME
+              ;;
+            workflow_run)
+              last=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$DEV_RELEASE_BASE-dev." --jq '.[].ref' |
+                sed -n "s|^refs/tags/v$DEV_RELEASE_BASE-dev\.\([0-9][0-9]*\)$|\1|p" | sort -n | tail -n1)
+              tag=v$DEV_RELEASE_BASE-dev.$(( ${last:-0} + 1 ))
+              ;;
+            *)
+              tag=
+              ;;
+          esac
+          if [ -n "$tag" ]; then
+            version=${tag#v}
+            sed -i "0,/^version = /s/^version = .*/version = \"$version\"/" Cargo.toml
+            sed -i "/^name = \"okfs\"$/{n;s/^version = .*/version = \"$version\"/}" Cargo.lock
+          else
+            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
           fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version $version${tag:+, tag $tag}"
 
       # Not the nix build: that binary links against /nix/store and runs only
       # where the same store paths exist.
@@ -53,7 +102,13 @@ jobs:
         run: cargo build --release --locked
 
       - name: Run
-        run: ./target/release/okfs --version
+        run: |
+          reported=$(./target/release/okfs --version)
+          echo "$reported"
+          if [ "$reported" != "okfs $VERSION" ]; then
+            echo "expected okfs $VERSION" >&2
+            exit 1
+          fi
 
       - name: Package
         run: |
@@ -61,11 +116,16 @@ jobs:
           sha256sum "$ASSET" > "$ASSET.sha256"
           cat "$ASSET.sha256"
 
+      # A hand-pushed tag already exists; a dev release creates its tag on the
+      # commit ci passed.
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: env.TAG != ''
         run: |
-          prerelease=()
-          case "$GITHUB_REF_NAME" in *-*) prerelease=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes "${prerelease[@]}" "$ASSET" "$ASSET.sha256"
+          flags=(--generate-notes)
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            flags+=(--target "$HEAD_SHA")
+          else
+            flags+=(--verify-tag)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" "$ASSET" "$ASSET.sha256"
