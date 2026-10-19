@@ -1,23 +1,19 @@
-// What is beside the main list. The file under the cursor as it is shown. For a folder under it: with the
-// preview closed, a column for it and for each folder its first entry leads to, and the folder added up in the
-// slots they leave; with it open, the folder added up across them all.
+// What is beside the main list. The file under the cursor as it is shown. For a folder under it, a column for it
+// and for each folder its focused entry leads to, and the file that leads to after the last column. A column's
+// focused entry is the one the pointer was last on, or else its first.
 
-import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
-import { type FolderSum, type Item, type Listing, nameOf, parentOf, urls } from "./api";
+import type { ComponentChildren, RefObject } from "preact";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { type Item, type Listing, urls } from "./api";
+import { Aim, AIM_RECHECK } from "./aim";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
-import { Preview, Prose, columnsUrl, lookAhead, useLoaded, useSettled, useStarted } from "./preview";
-import { columnsOf, startingAt } from "./slots";
-import { type Doomed, type Entry, store, toEntry, versionOf } from "./store";
-
-/** Once the preview has rested on a folder this long, its first files are asked for: it may be entered next. */
-const FOLDER_REST = 150;
-/** How many of them. */
-const FOLDER_WARM = 10;
+import { Preview, columnsUrl, useLoaded } from "./preview";
+import { type Chain, columnsOf, startingAt } from "./slots";
+import { type Doomed, type Entry, store, toEntry } from "./store";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
 function visit(listing: Listing, item: Item, open: boolean): void {
@@ -56,47 +52,19 @@ export function FolderBar({ name, path, count, mtime, doomed }: { name: string; 
 
 /**
  * One folder as a column: its own bar, then its first entries as the main list draws them, in name order.
- * `followed` marks the first entry: the next column is the inside of it.
+ * `led` names the entry the next column, or the file after the last, is the inside of.
  */
-function Column({
-  folder,
-  listing,
-  followed,
-  edge,
-  level,
-  hovered,
-  onHover,
-  told,
-}: {
-  folder: Entry;
-  listing: Listing | undefined;
-  followed: boolean;
-  edge: boolean;
-  /** The slots beside it already say that the folder is empty. */
-  told: boolean;
-  level: number;
-  hovered: string | null;
-  onHover: (at: Hover | null) => void;
-}) {
+function Column({ folder, listing, led, edge, level }: { folder: Entry; listing: Listing | undefined; led: string | undefined; edge: boolean; level: number }) {
   // The listing on screen is the last one's until this folder's has come.
   const own = listing?.path === folder.path ? listing : undefined;
   const more = listing ? listing.total - listing.entries.length : 0;
-  const itemOf = (event: MouseEvent): Item | undefined => {
-    const row = (event.target as Element).closest<HTMLElement>("[data-i]");
-    return row ? listing?.entries[Number(row.dataset.i)] : undefined;
-  };
   const go = (open: boolean) => (event: MouseEvent) => {
-    const item = itemOf(event);
+    const row = (event.target as Element).closest<HTMLElement>("[data-i]");
+    const item = row ? listing?.entries[Number(row.dataset.i)] : undefined;
     if (listing && item) visit(listing, item, open);
   };
-  // The pointer resting on a file shows it in place of the columns to the right; on a folder, they come back.
-  const look = (event: PointerEvent) => {
-    if (event.pointerType === "touch") return;
-    const item = itemOf(event);
-    if (item) onHover(item.d ? null : { level, name: item.n });
-  };
   return (
-    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path} onPointerMove={look}>
+    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path} data-level={level}>
       <FolderBar name={folder.name} path={folder.path} count={own?.total ?? folder.count} mtime={folder.mtime} doomed={config.delete ? folder : null} />
       <div class="cols label">
         <span />
@@ -111,7 +79,7 @@ function Column({
         {listing?.entries.map((item, at) => {
           const entry = toEntry(item, listing.path, at);
           return (
-            <div class={(followed && at === 0) || item.n === hovered ? "row at" : "row"} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
+            <div class={item.n === led ? "row at" : "row"} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
               <KindIcon kind={entry.kind} />
               <span class="nm trunc">
                 <b>{entry.name}</b>
@@ -124,95 +92,9 @@ function Column({
           );
         })}
         {more > 0 && <div class="col-note label">and {fmt.count(more)} more</div>}
-        {listing?.total === 0 && !told && <div class="col-note label">This folder is empty.</div>}
+        {listing?.total === 0 && <div class="col-note label">This folder is empty.</div>}
       </div>
     </section>
-  );
-}
-
-const plural = (n: number, one: string, many: string): string => `${fmt.count(n)} ${n === 1 ? one : many}`;
-
-/**
- * The folder under the cursor, in the slots its columns leave or, with the preview open, in all of them: how
- * much it holds, how large it is with everything in it, what was written last, its notes, and the whole of it
- * as a zip. Adding it up walks the whole tree, so under a held key it waits as a frame does, and shows what the
- * listing already says until then.
- */
-function Folder({ folder }: { folder: Entry }) {
-  const url = urls.folder(folder.path);
-  const loaded = useLoaded<FolderSum>(useStarted(folder.path, false) ? url : null);
-  // Numbers are of this folder or they are not shown: the last folder's would be wrong under this one's name.
-  const sum = loaded.data?.path === folder.path ? loaded.data : undefined;
-  const failed = loaded.failed === true && loaded.url === url;
-
-  // The first move into a folder is the one move nothing was loaded ahead for. A folder the preview rests on
-  // is likely to be entered, so its first previews are asked for now, as they would be on the way in.
-  const rested = useSettled(folder.path, FOLDER_REST);
-  const warm = rested ? urls.list(folder.path, FOLDER_WARM) : null;
-  const first = useLoaded<Listing>(warm);
-  useEffect(() => {
-    if (!warm || first.url !== warm || first.data?.path !== folder.path) return;
-    const files = first.data.entries.map((item, rank) => toEntry(item, folder.path, rank));
-    lookAhead(files, -1, 1, versionOf, false, (file) => store.isRaw(file));
-  }, [warm, first.url, first.data, folder.path]);
-
-  const items = sum?.items ?? folder.count;
-  const newest = sum?.newest ?? null;
-  const within = (path: string): string => path.slice(folder.path.length + 1);
-  return (
-    <div class="pv-scroll fp" key={folder.path} data-name={folder.name} data-ready={sum ? "1" : undefined}>
-      <div class="fp-in">
-        <dl class="fp-stats" onMouseDown={keepFocus}>
-          <div>
-            <dt class="label">Items</dt>
-            <dd class="num">{items === undefined ? "–" : fmt.count(items)}</dd>
-            <span>
-              {!sum
-                ? " "
-                : sum.items === 0
-                  ? "This folder is empty"
-                  : `${[plural(sum.files, "file", "files"), ...(sum.folders ? [plural(sum.folders, "folder", "folders")] : [])].join(" and ")} in all${sum.cut ? ", and more" : ""}`}
-            </span>
-          </div>
-          <div>
-            <dt class="label">Total size</dt>
-            <dd class="num">{sum ? `${sum.cut ? "over " : ""}${fmt.size(sum.bytes)}` : "–"}</dd>
-            <span>{!sum ? " " : sum.cut ? `Counted in the first ${fmt.count(sum.files + sum.folders)} entries` : "With everything in it"}</span>
-          </div>
-          <div>
-            <dt class="label">Newest change</dt>
-            <dd class="num">{sum ? (newest ? fmt.abs(newest.m) : "–") : "–"}</dd>
-            {newest ? (
-              <button class="trunc" title={`/${newest.path}`} onClick={() => void store.showDir(parentOf(newest.path), { select: nameOf(newest.path) })}>
-                {within(newest.path)}
-              </button>
-            ) : (
-              <span>{sum ? "No files in it" : " "}</span>
-            )}
-          </div>
-        </dl>
-        <div class="fp-do" onMouseDown={keepFocus}>
-          <a class="btn btn-line" href={urls.zip(folder.path)} download>
-            <Icon name="download" />
-            Download as zip
-          </a>
-          <button class="btn btn-line" onClick={() => void store.showDir(folder.path)}>
-            Open
-            <kbd>↵</kbd>
-          </button>
-        </div>
-        {failed && <p class="fp-note">This folder could not be read.</p>}
-        {sum?.readme && (
-          <section class="fp-readme">
-            <div class="readme-hd label">
-              <KindIcon kind="md" />
-              {sum.readme.name}
-            </div>
-            <Prose html={sum.readme.html} />
-          </section>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -279,55 +161,104 @@ function StepBar({ file }: { file: Entry }) {
   );
 }
 
-/** A file under the pointer in a column: the level of the column and the file's name. */
-interface Hover {
-  level: number;
-  name: string;
+/** The entries the pointer picked in the columns of the folder `root`, a name for each level from the first. */
+interface Picks {
+  root: string;
+  names: string[];
+}
+
+const NO_PICKS: Picks = { root: "", names: [] };
+
+/**
+ * The columns follow the pointer: the entry it is on leads on to the next column, or to its file after the last,
+ * at once. A pointer on its way to the next column is let past the rows between, as it is in the main list: see
+ * `aim.ts`. A key that moves the cursor takes over, and the pointer has it back once it moves.
+ */
+function usePicks(root: string | null, drawn: RefObject<Chain>) {
+  const [picks, setPicks] = useState<Picks>(NO_PICKS);
+  // A move of the cursor starts the columns of the folder it lands on afresh, even one the pointer picked in before.
+  useLayoutEffect(() => setPicks(NO_PICKS), [root]);
+  const here = useRef(root);
+  here.current = root;
+  const pointer = useRef({ aim: new Aim(), at: { x: -1, y: -1 }, held: "", timer: 0 });
+  useEffect(() => () => clearTimeout(pointer.current.timer), []);
+
+  const pick = useCallback((level: number, name: string) => {
+    const root = here.current;
+    const chain = drawn.current;
+    if (root === null || !chain) return;
+    // Each column before this one leads on to the next: the pick keeps those and follows this one.
+    const names = [...chain.led.slice(0, level), name];
+    // A level that goes into its first entry needs no name: the columns are the ones asked for ahead of the cursor.
+    while (names.length && names[names.length - 1] === chain.levels[names.length - 1]?.entries[0]?.n) names.pop();
+    setPicks((old) => (old.root === root && old.names.join("/") === names.join("/") ? old : { root, names }));
+  }, []);
+
+  const onMove = (event: PointerEvent) => {
+    if (event.pointerType === "touch") return;
+    const p = pointer.current;
+    // A row that slid under a still pointer, as the keys move the cursor, is not the pointer moving.
+    if (event.clientX === p.at.x && event.clientY === p.at.y) return;
+    p.at = { x: event.clientX, y: event.clientY };
+    p.aim.track(p.at);
+    const target = event.target as Element;
+    const column = target.closest<HTMLElement>(".col[data-level]");
+    const row = target.closest<HTMLElement>(".col-rows [data-i]");
+    const level = Number(column?.dataset.level);
+    const item: Item | undefined = row ? drawn.current?.levels[level]?.entries[Number(row.dataset.i)] : undefined;
+    if (!column || !item) return;
+    const key = `${level}/${item.n}`;
+    if (p.held === key) return;
+    clearTimeout(p.timer);
+    p.held = "";
+    const aimed = (): boolean => {
+      const strip = column.parentElement?.getBoundingClientRect();
+      const box = column.getBoundingClientRect();
+      if (!strip) return false;
+      return p.aim.aiming(box, { left: box.right, top: strip.top, right: strip.right, bottom: strip.bottom });
+    };
+    if (!aimed()) return pick(level, item.n);
+    // On its way to the next column: the row under the pointer waits, and is taken if the pointer stops.
+    p.held = key;
+    const look = () => {
+      if (p.held !== key) return;
+      if (aimed()) p.timer = window.setTimeout(look, AIM_RECHECK);
+      else {
+        p.held = "";
+        pick(level, item.n);
+      }
+    };
+    p.timer = window.setTimeout(look, AIM_RECHECK);
+  };
+  const onLeave = () => {
+    clearTimeout(pointer.current.timer);
+    pointer.current.held = "";
+  };
+  return { names: root !== null && picks.root === root ? picks.names : [], onMove, onLeave };
 }
 
 export function Side({ slots }: { slots: number }) {
   const { s } = store;
   const cur = store.cur();
   const file = s.open ?? (cur && !cur.dir ? cur : null);
-  const folder = !s.open && cur?.dir ? cur : null;
+  const columns = !s.open && cur?.dir ? cur : null;
 
   const [facts, setFacts] = useState<{ path: string; list: string[] }>({ path: "", list: [] });
   const report = useCallback((path: string, list: string[]) => {
     setFacts((old) => (old.path === path && old.list.join() === list.join() ? old : { path, list }));
   }, []);
 
-  // A folder has its columns while the preview is closed, and is added up in the pane while it is open.
-  const columns = folder && !s.peek ? folder : null;
-  const summed = folder && s.peek ? folder : null;
-  const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path) : null);
+  // The chain is drawn from the last answer while the one for the newest picks is on its way: see `columnsOf`.
+  const chainRef = useRef<Chain>({ levels: [], led: [], file: null });
+  const { names, onMove, onLeave } = usePicks(columns?.path ?? null, chainRef);
+  const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path, names) : null);
   const own = columns ? startingAt(data, columns.path) : undefined;
-  const all = columns ? columnsOf(own, slots) : [];
+  const chain = columns ? columnsOf(own, slots, names) : { levels: [], led: [], file: null };
+  chainRef.current = chain;
+  const { levels } = chain;
+  const ledFile = chain.file ? toEntry(chain.file.item, chain.file.listing.path, chain.file.at) : null;
 
-  // A file the pointer rests on in a column fills the space of the columns to the right of it.
-  const [hover, setHover] = useState<(Hover & { root: string }) | null>(null);
-  const onHover = useCallback(
-    (at: Hover | null) => {
-      const root = columns?.path ?? "";
-      setHover((old) => (old?.level === at?.level && old?.name === at?.name && old?.root === root ? old : at && { ...at, root }));
-    },
-    [columns?.path],
-  );
-  const hoverList = hover && columns && hover.root === columns.path ? all[hover.level] : undefined;
-  const at = hoverList ? hoverList.entries.findIndex((item) => item.n === hover?.name && !item.d) : -1;
-  const hoverFile = hoverList && at >= 0 ? toEntry(hoverList.entries[at]!, hoverList.path, at) : null;
-  const levels = hoverFile && hover ? all.slice(0, hover.level + 1) : all;
-  // Columns that stop before the last slot, once they are this folder's own, leave the rest to it added up: an
-  // empty one says so across them.
-  const filled = columns && !hoverFile && own?.path === columns.path && all.length < slots - 1 ? columns : null;
-  const empty = filled && own?.total === 0 ? filled : null;
-  const added = summed ?? filled;
-
-  const unpeek = s.peek && !s.open && (
-    <button class="btn" aria-label="Close the preview" title="Close the preview (space)" onClick={() => store.setPeek(false)}>
-      <Icon name="close" />
-    </button>
-  );
-  const shown = file ?? hoverFile;
+  const shown = file ?? ledFile;
   let header: ComponentChildren = null;
   if (shown) {
     const file = shown;
@@ -371,80 +302,37 @@ export function Side({ slots }: { slots: number }) {
           </button>
         )}
         <More file={file} wrappable={wrappable === file} />
-        {!hoverFile && (
+        {!ledFile && (
           <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
             <Icon name={s.open ? "pane" : "expand"} />
           </button>
         )}
       </>
     );
-  } else if (summed) {
-    header = (
-      <>
-        <KindIcon kind="folder" />
-        <span class="nm trunc">{summed.name}</span>
-        <span class="facts trunc num" title={fmt.abs(summed.mtime)}>
-          {fmt.rel(summed.mtime)}
-        </span>
-        {config.delete && (
-          <button class="btn" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(summed)}>
-            <Icon name="trash" />
-          </button>
-        )}
-        {unpeek}
-      </>
-    );
   } else if (!cur) {
-    header = (
-      <>
-        <span class="sp" />
-        {unpeek}
-      </>
-    );
+    header = <span class="sp" />;
   }
 
   return (
-    <section class="right" onPointerLeave={() => onHover(null)}>
+    <section class="right" onPointerMove={onMove} onPointerLeave={onLeave}>
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
-      {(!columns || hoverFile || filled) && (
+      {(!columns || ledFile) && (
         <div class="pane" key="pane" data-pane="">
-          {/* Beside the columns, the first of them already names the folder. */}
-          {!filled && (
-            <div class="ph" onMouseDown={keepFocus}>
-              {header}
-            </div>
-          )}
-          <div class="pv">
-            {shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}
-            {empty ? (
-              <div class="empty">
-                <b>Nothing in here yet</b>
-                <span class="num">/{empty.path}</span>
-              </div>
-            ) : (
-              added && <Folder folder={added} />
-            )}
+          <div class="ph" onMouseDown={keepFocus}>
+            {header}
           </div>
-          {s.open && shown && !hoverFile && <StepBar file={shown} />}
+          <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}</div>
+          {s.open && shown && !ledFile && <StepBar file={shown} />}
         </div>
       )}
       {levels.map((listing, level) => {
         const above = levels[level - 1];
-        const first = above?.entries[0];
-        // The folder under the cursor heads the first column. Each one after is the first entry of the one before.
-        const head = level === 0 ? columns : above && first ? toEntry(first, above.path, 0) : null;
-        return head && <Column
-            key={level}
-            folder={head}
-            listing={listing}
-            followed={level + 1 < levels.length && !hoverFile}
-            edge={level === slots - 2}
-            level={level}
-            hovered={hoverFile && hover?.level === level ? hoverFile.name : null}
-            onHover={onHover}
-            told={empty !== null}
-          />;
+        const at = above ? above.entries.findIndex((item) => item.n === chain.led[level - 1]) : -1;
+        const into = above && at >= 0 ? above.entries[at] : undefined;
+        // The folder under the cursor heads the first column. Each one after is the entry the one before leads on to.
+        const head = level === 0 ? columns : above && into ? toEntry(into, above.path, at) : null;
+        return head && <Column key={level} folder={head} listing={listing} led={chain.led[level]} edge={level === slots - 2} level={level} />;
       })}
     </section>
   );

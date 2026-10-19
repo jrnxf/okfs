@@ -5,10 +5,10 @@ import type { Listing } from "./api";
 import { columnsOf, slotsFor, startingAt } from "./slots";
 
 /** A folder holding one folder under another, `depth` deep, the last one holding `last`. */
-function nest(depth: number, last: Listing["entries"] = []): Listing {
-  const under = depth > 1 ? nest(depth - 1, last) : undefined;
+function nest(depth: number, last: Listing["entries"] = [], path = "top"): Listing {
+  const under = depth > 1 ? nest(depth - 1, last, `${path}/in`) : undefined;
   const entries = under ? [{ n: "in", d: true, s: 0, m: 0 }] : last;
-  return { path: "", m: 0, entries, total: entries.length, readme: null, under };
+  return { path, m: 0, entries, total: entries.length, readme: null, under };
 }
 
 test("a window has four slots from 1,200 px, three from 900 px and two under that", () => {
@@ -19,27 +19,62 @@ test("a window has four slots from 1,200 px, three from 900 px and two under tha
 
 test("each folder down the first entries takes a slot, while there are slots", () => {
   const deep = nest(6);
-  expect(columnsOf(deep, 4).length).toBe(3);
-  expect(columnsOf(deep, 3).length).toBe(2);
-  expect(columnsOf(deep, 2).length).toBe(1);
-  expect(columnsOf(nest(2), 4).length).toBe(2);
+  expect(columnsOf(deep, 4).levels.length).toBe(3);
+  expect(columnsOf(deep, 3).levels.length).toBe(2);
+  expect(columnsOf(deep, 2).levels.length).toBe(1);
+  expect(columnsOf(nest(2), 4).levels.length).toBe(2);
 });
 
-test("the columns stop at a file, at an empty folder and at a level that did not come", () => {
-  expect(columnsOf(nest(1, [{ n: "a.txt", s: 1, m: 0 }]), 4).length).toBe(1);
-  expect(columnsOf(nest(1), 4).length).toBe(1);
+test("the columns stop at a file, which is shown after them, at an empty folder and at a level that did not come", () => {
+  const files = columnsOf(nest(1, [{ n: "a.txt", s: 1, m: 0 }, { n: "b.txt", s: 1, m: 0 }]), 4);
+  expect(files.levels.length).toBe(1);
+  expect(files.file?.item.n).toBe("a.txt");
+  expect(files.led).toEqual(["a.txt"]);
+  // A file the pointer picked is the one shown.
+  expect(columnsOf(nest(1, [{ n: "a.txt", s: 1, m: 0 }, { n: "b.txt", s: 1, m: 0 }]), 4, ["b.txt"]).file?.item.n).toBe("b.txt");
+  // With no slot left after the columns, no file is shown.
+  expect(columnsOf(nest(3, [{ n: "a.txt", s: 1, m: 0 }]), 4).file).toBeNull();
+  expect(columnsOf(nest(2, [{ n: "a.txt", s: 1, m: 0 }]), 4).file?.item.n).toBe("a.txt");
+  const empty = columnsOf(nest(1), 4);
+  expect([empty.levels.length, empty.file, empty.led]).toEqual([1, null, []]);
   const cut = nest(3);
   delete cut.under?.under;
-  expect(columnsOf(cut, 4).length).toBe(2);
+  expect(columnsOf(cut, 4).levels.length).toBe(2);
   // A folder whose answer is on its way has its column already.
-  expect(columnsOf(undefined, 4)).toEqual([undefined]);
+  expect(columnsOf(undefined, 4).levels).toEqual([undefined]);
+});
+
+test("a column leads on to the entry the pointer picked in it, and an answer for other picks stops at the pick", () => {
+  const level = (path: string, names: string[], under?: Listing): Listing => ({
+    path,
+    m: 0,
+    entries: names.map((n) => ({ n, d: !n.includes("."), s: 0, m: 0 })),
+    total: names.length,
+    readme: null,
+    under,
+  });
+  const first = level("p", ["node_modules", "src", "a.json"], level("p/node_modules", ["@babel"], level("p/node_modules/@babel", ["core"])));
+  expect(columnsOf(first, 4).levels.map((it) => it?.path)).toEqual(["p", "p/node_modules", "p/node_modules/@babel"]);
+  expect(columnsOf(first, 4).led).toEqual(["node_modules", "@babel"]);
+  // The answer on screen is still the one for the first entries: the columns stop at the pick until its own comes.
+  const waiting = columnsOf(first, 4, ["src"]);
+  expect([waiting.levels.length, waiting.led, waiting.file]).toEqual([1, [], null]);
+  const picked = level("p", ["node_modules", "src", "a.json"], level("p/src", ["components", "index.tsx"], level("p/src/components", ["Button.tsx"])));
+  const src = columnsOf(picked, 4, ["src"]);
+  expect(src.levels.map((it) => it?.path)).toEqual(["p", "p/src", "p/src/components"]);
+  expect(src.led).toEqual(["src", "components"]);
+  // A file picked in the first column is shown after it, in place of the columns past it.
+  const file = columnsOf(picked, 4, ["a.json"]);
+  expect([file.levels.length, file.file?.item.n, file.file?.at]).toEqual([1, "a.json", 2]);
+  // A name that is not there leads on to the first entry.
+  expect(columnsOf(first, 4, ["gone"]).led).toEqual(["node_modules", "@babel"]);
 });
 
 test("a step into a folder starts its columns from the answer of the folder above, until its own comes", () => {
   const level = (path: string, under?: Listing): Listing => ({ path, m: 0, entries: [{ n: "in", d: true, s: 0, m: 0 }], total: 1, readme: null, under });
   const above = level("a", level("a/in", level("a/in/in")));
   expect(startingAt(above, "a/in")).toBe(above.under);
-  expect(columnsOf(startingAt(above, "a/in"), 4).map((it) => it?.path)).toEqual(["a/in", "a/in/in"]);
+  expect(columnsOf(startingAt(above, "a/in"), 4).levels.map((it) => it?.path)).toEqual(["a/in", "a/in/in"]);
   // An answer that does not reach the folder stays on screen as it is, until the folder's own replaces it.
   expect(startingAt(above, "b")).toBe(above);
   expect(startingAt(undefined, "a")).toBeUndefined();

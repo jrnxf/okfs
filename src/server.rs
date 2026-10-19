@@ -202,7 +202,6 @@ pub fn read_theme(path: &std::path::Path) -> Result<(SystemTime, Theme), String>
 pub fn router(app: Arc<App>) -> Router {
     let packed = Router::new()
         .route("/api/list", get(list))
-        .route("/api/folder", get(folder_sum))
         .route("/api/entry", delete(delete_entry))
         .route("/api/preview", get(preview_file))
         .route("/api/previews", get(preview_many))
@@ -313,16 +312,19 @@ struct ListQuery {
     /// and they all come in this one answer.
     #[serde(default)]
     depth: usize,
+    /// With `depth`: the entry each level goes into in place of its first, by name, one
+    /// level after another, joined by `/`. The pointer picks them in the columns. A
+    /// name that is not there, and a level past the last, goes into the first entry.
+    #[serde(default)]
+    follow: String,
+    /// Send hidden entries too: see `Index::hides`.
+    all: Option<u8>,
 }
 
 /// Levels sent under a listing, at most.
 const MAX_DEPTH: usize = 3;
 /// Entries sent for each level when levels under it are asked for, at most.
 const MAX_COLUMN: usize = 200;
-/// Entries read to add a folder up, at most. Each costs one look at the disk, so a
-/// folder of any size is answered in the time this many take. Past it the page says
-/// that the folder holds more than was counted.
-const MAX_SUMMED: usize = 50_000;
 
 #[derive(Serialize)]
 struct Item {
@@ -336,9 +338,12 @@ struct Item {
     s: u64,
     /// Modified time, in seconds.
     m: i64,
-    /// For a folder, how many entries it holds.
+    /// For a folder, how many entries it holds, hidden ones only when they were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     c: Option<usize>,
+    /// For a folder, how many hidden entries it holds, when they were not asked for.
+    #[serde(skip_serializing_if = "is_zero")]
+    h: usize,
 }
 
 #[derive(Serialize)]
@@ -362,11 +367,19 @@ struct Listing {
     m: i64,
     /// In name order. The page sorts and filters from here.
     entries: Vec<Item>,
+    /// The entries in the folder, past those sent, and none of those hidden.
     total: usize,
+    /// The entries hidden from this listing: see `Index::hides`.
+    #[serde(skip_serializing_if = "is_zero")]
+    hidden: usize,
     readme: Option<Readme>,
     /// The listing of the first entry, when it is a folder and levels were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     under: Option<Box<Listing>>,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 /// The notes of the folder at `found`, when one of the names in it is a readme small
@@ -385,14 +398,39 @@ fn read_readme<'a>(found: &Resolved, names: impl IntoIterator<Item = &'a paths::
 }
 
 /// Lists the folder at `path`. With `limit`, only its first entries, and then the folder
-/// the first of them is, `depth` levels down: see `ListQuery`.
-fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Option<Listing> {
+/// the first of them is, or the one `follow` names, `depth` levels down: see `ListQuery`.
+/// Without `all`, what the folder hides is left out, and so is it from each count.
+fn list_folder(
+    app: &App,
+    path: &str,
+    limit: Option<usize>,
+    depth: usize,
+    follow: &[&str],
+    all: bool,
+) -> Option<Listing> {
     let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
     let mut seen = app.root.scan(&found.abs).ok()?;
+    let rules = app.index.rules_in(&found.rel);
+    let before = seen.len();
+    if !all {
+        seen.retain(|entry| !app.index.hides(&rules, &found.rel, &entry.name, entry.dir));
+    }
+    let hidden = before - seen.len();
     let total = seen.len();
     seen.sort_by(|a, b| paths::natural_cmp(&a.name, &b.name));
-    if let Some(limit) = limit {
+    if limit.is_some() {
         seen.sort_by_key(|entry| !entry.dir);
+    }
+    // The level below goes into the entry the page follows, even past the entries sent.
+    let (followed, rest) = follow
+        .split_first()
+        .map_or((None, &[][..]), |(name, rest)| (Some(*name), rest));
+    let into = followed
+        .and_then(|name| seen.iter().find(|entry| entry.name == name))
+        .or(seen.first())
+        .filter(|entry| limit.is_some() && depth > 0 && entry.dir)
+        .map(|entry| paths::join(&found.rel, &entry.name));
+    if let Some(limit) = limit {
         seen.truncate(limit);
     }
 
@@ -404,28 +442,31 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
             let at = found.abs.join(&entry.name);
             let meta = fs::metadata(&at).ok()?;
             let modified = meta.modified().ok().and_then(|at| at.duration_since(UNIX_EPOCH).ok());
-            let count = entry.dir.then(|| {
-                app.index
-                    .child_count(&paths::join(&found.rel, &entry.name))
-                    .or_else(|| app.root.scan(&at).ok().map(|inside| inside.len()))
-            });
+            let counts = entry
+                .dir
+                .then(|| app.index.counts(&paths::join(&found.rel, &entry.name), &rules))
+                .flatten();
+            let (shown, hidden) = match counts {
+                Some((shown, hidden)) if all => (Some(shown + hidden), 0),
+                Some((shown, hidden)) => (Some(shown), hidden),
+                None => (None, 0),
+            };
             Some(Item {
                 n: entry.name,
                 d: entry.dir,
                 l: entry.link,
                 s: if entry.dir { 0 } else { meta.len() },
                 m: modified.map_or(0, |since| since.as_secs() as i64),
-                c: count.flatten(),
+                c: shown,
+                h: hidden,
             })
         })
         .collect();
 
     // Each level is found by its own path, as a request for it would be: what a
     // request may not read, a level may not either.
-    let under = entries
-        .first()
-        .filter(|first| limit.is_some() && depth > 0 && first.d)
-        .and_then(|first| list_folder(app, &paths::join(&found.rel, &first.n), limit, depth - 1))
+    let under = into
+        .and_then(|into| list_folder(app, &into, limit, depth - 1, rest, all))
         .map(Box::new);
 
     let real = app
@@ -444,6 +485,7 @@ fn list_folder(app: &App, path: &str, limit: Option<usize>, depth: usize) -> Opt
         path: found.rel,
         entries,
         total,
+        hidden,
         readme,
         under,
     })
@@ -456,65 +498,12 @@ async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Re
     let limit = query
         .limit
         .map(|limit| if depth > 0 { limit.min(MAX_COLUMN) } else { limit });
-    match tokio::task::spawn_blocking(move || list_folder(&worker, &query.path, limit, depth)).await {
+    let work = move || {
+        let follow: Vec<&str> = query.follow.split('/').filter(|name| !name.is_empty()).collect();
+        list_folder(&worker, &query.path, limit, depth, &follow, query.all.is_some())
+    };
+    match tokio::task::spawn_blocking(work).await {
         Ok(Some(listing)) => Json(listing).into_response(),
-        _ => not_found(),
-    }
-}
-
-/// A file by its path under the served folder, and when it was written, in seconds.
-#[derive(Serialize)]
-struct Written {
-    path: String,
-    m: i64,
-}
-
-/// A folder added up: what the page shows when a folder is previewed.
-#[derive(Serialize)]
-struct FolderSum {
-    path: String,
-    /// The entries right in the folder.
-    items: usize,
-    /// The files and folders in it at every depth, and the bytes in those files.
-    files: usize,
-    folders: usize,
-    bytes: u64,
-    /// The file written last, at any depth.
-    newest: Option<Written>,
-    /// Only the first `MAX_SUMMED` entries were counted: the folder holds more.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    cut: bool,
-    readme: Option<Readme>,
-}
-
-/// Adds up the folder at `path`. `gone` turns true when the reader has left.
-fn sum_folder(app: &App, path: &str, gone: &AtomicBool) -> Option<FolderSum> {
-    let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
-    let seen = app.root.scan(&found.abs).ok()?;
-    let sum = app.root.sum(&found.abs, MAX_SUMMED, gone);
-    Some(FolderSum {
-        items: seen.len(),
-        files: sum.files,
-        folders: sum.folders,
-        bytes: sum.bytes,
-        newest: sum.newest.map(|(under, written)| Written {
-            path: paths::join(&found.rel, &under),
-            m: written
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |since| since.as_secs() as i64),
-        }),
-        cut: sum.cut,
-        readme: read_readme(&found, &seen),
-        path: found.rel,
-    })
-}
-
-async fn folder_sum(State(app): State<Arc<App>>, Query(query): Query<PathQuery>) -> Response {
-    let worker = Arc::clone(&app);
-    let gone = Gone(Arc::new(AtomicBool::new(false)));
-    let flag = Arc::clone(&gone.0);
-    match heavy(&app, move || sum_folder(&worker, &query.path, &flag)).await {
-        Some(Some(sum)) => Json(sum).into_response(),
         _ => not_found(),
     }
 }
@@ -726,12 +715,20 @@ struct SearchQuery {
     #[serde(default)]
     q: String,
     limit: Option<usize>,
+    /// Search hidden entries too: see `Index::hides`.
+    all: Option<u8>,
+}
+
+#[derive(Deserialize)]
+struct RecentQuery {
+    /// Hidden files too: see `Index::hides`.
+    all: Option<u8>,
 }
 
 async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -> Response {
     let limit = query.limit.unwrap_or(60).min(200);
     let index = Arc::clone(&app.index);
-    match tokio::task::spawn_blocking(move || index.search(&query.q, limit)).await {
+    match tokio::task::spawn_blocking(move || index.search(&query.q, limit, query.all.is_some())).await {
         Ok(found) => Json(found).into_response(),
         Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the search failed"),
     }
@@ -739,9 +736,9 @@ async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -
 
 /// The files written last anywhere in the tree. Answered from the index, which holds
 /// only what the search route may show and decides how many there are.
-async fn recent(State(app): State<Arc<App>>) -> Response {
+async fn recent(State(app): State<Arc<App>>, Query(query): Query<RecentQuery>) -> Response {
     let index = Arc::clone(&app.index);
-    match tokio::task::spawn_blocking(move || index.recent()).await {
+    match tokio::task::spawn_blocking(move || index.recent(query.all.is_some())).await {
         Ok(recent) => Json(recent).into_response(),
         Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the list could not be made"),
     }
@@ -1070,6 +1067,8 @@ struct Config {
     delete: bool,
     /// True when the first page of a PDF can be had as a picture from `/api/thumb`.
     pdf: bool,
+    /// True with `--hidden`: dotfiles are served, and a new visitor starts with hidden entries shown.
+    hidden: bool,
 }
 
 fn theme_infos(app: &App) -> Vec<ThemeInfo> {
@@ -1147,6 +1146,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
         target,
         delete: app.options.allow_delete,
         pdf: app.drawer.is_some(),
+        hidden: app.root.hidden(),
     };
     // Inside a script element, only "<" could end the block early.
     let config = serde_json::to_string(&config)

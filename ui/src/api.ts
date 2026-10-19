@@ -1,5 +1,7 @@
 // The server's endpoints, as the page sees them.
 
+import { showsHidden } from "./hidden";
+
 export interface Item {
   n: string;
   d?: boolean;
@@ -7,7 +9,10 @@ export interface Item {
   l?: boolean;
   s: number;
   m: number;
+  /** For a folder, how many entries it holds, hidden ones only while they are shown. */
   c?: number;
+  /** For a folder, how many hidden entries it holds, while they are not shown. */
+  h?: number;
 }
 
 export interface Readme {
@@ -24,26 +29,13 @@ export interface Listing {
   /** The folder's own modified time, in seconds. */
   m: number;
   entries: Item[];
+  /** The entries in the folder, past those sent, and none of those hidden. */
   total: number;
+  /** The entries hidden from it: see `showsHidden`. */
+  hidden?: number;
   readme: Readme | null;
-  /** The listing of the first entry, when levels were asked for and it is a folder. */
+  /** The listing of the entry followed, the first unless another was named, when levels were asked for and it is a folder. */
   under?: Listing;
-}
-
-/** A folder added up, for its preview. */
-export interface FolderSum {
-  path: string;
-  /** The entries right in the folder. */
-  items: number;
-  /** The files and folders in it at every depth, and the bytes in those files. */
-  files: number;
-  folders: number;
-  bytes: number;
-  /** The file written last, at any depth, with its time in seconds. */
-  newest: Changed | null;
-  /** The server stopped counting at its limit: the folder holds more than this says. */
-  cut?: boolean;
-  readme: Readme | null;
 }
 
 export type TextPreview =
@@ -89,12 +81,17 @@ const RESERVED = new Set(["api", "raw", "zip", "assets", "theme.css", "-"]);
 
 const encode = (path: string): string => path.split("/").map(encodeURIComponent).join("/");
 
+/** Hidden entries are asked for too while they are shown. Every answer that lists names says which it holds. */
+const all = (): string => (showsHidden() ? "&all=1" : "");
+
 export const urls = {
-  /** With `limit`, the first entries only; with `depth`, also the folders the first entry leads to, that many levels down. */
-  list: (path: string, limit?: number, depth?: number) =>
-    `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}${depth ? `&depth=${depth}` : ""}`,
-  /** A folder added up: what its preview shows. */
-  folder: (path: string) => `/api/folder?path=${encodeURIComponent(path)}`,
+  /**
+   * With `limit`, the first entries only; with `depth`, also the folders the first entry leads to, that many levels
+   * down. `follow` names the entry to go into in place of the first, a level after another.
+   */
+  list: (path: string, limit?: number, depth?: number, follow: string[] = []) =>
+    `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}${depth ? `&depth=${depth}` : ""}` +
+    `${follow.length ? `&follow=${encodeURIComponent(follow.join("/"))}` : ""}${all()}`,
   preview: (path: string) => `/api/preview?path=${encodeURIComponent(path)}`,
   /** The text of a file as it is written, as source code, whatever the file is. */
   source: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&raw=1`,
@@ -102,8 +99,8 @@ export const urls = {
   previews: (paths: string[], lines: number, source = false) =>
     `/api/previews?lines=${lines}${source ? "&raw=1" : ""}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
-  search: (query: string) => `/api/search?q=${encodeURIComponent(query)}`,
-  recent: "/api/recent",
+  search: (query: string) => `/api/search?q=${encodeURIComponent(query)}${all()}`,
+  recent: () => `/api/recent${showsHidden() ? "?all=1" : ""}`,
   /** The time and size make a rewritten picture a new address: the browser keeps a thumbnail by its address. */
   thumb: (path: string, width: number, modified: number, size: number) =>
     `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}&s=${size}`,

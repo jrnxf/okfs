@@ -154,8 +154,8 @@ export function App() {
   const wrappable = store.wrappable();
 
   // What lies past the cursor, the way it is moving, is asked for before the cursor gets there: the previews
-  // of the files, and the columns of the folders while the preview is closed.
-  const columns = !s.peek && s.open === null;
+  // of the files, and the columns of the folders while no file has the full width.
+  const columns = s.open === null;
   const cursorWas = useRef(s.cursor);
   useLayoutEffect(() => {
     const step = s.cursor >= cursorWas.current ? 1 : -1;
@@ -164,7 +164,7 @@ export function App() {
     const source = (entry: Entry) => store.isRaw(entry);
     lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), columns, source);
     pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), source);
-  }, [s.cursor, s.entries, s.status, columns, cut]);
+  }, [s.cursor, s.entries, s.status, columns, cut, s.hidden]);
 
   // A name cut short by an ellipsis is shown in full under the pointer. A name that fits has no tip to repeat it.
   useEffect(() => {
@@ -187,10 +187,6 @@ export function App() {
   useEffect(() => {
     document.body.classList.toggle("open", s.open !== null);
   }, [s.open]);
-
-  useEffect(() => {
-    document.body.classList.toggle("peek", s.peek);
-  }, [s.peek]);
 
   useEffect(() => {
     const name = s.open?.name ?? (s.path ? s.path.slice(s.path.lastIndexOf("/") + 1) : "");
@@ -221,7 +217,7 @@ export function App() {
         closeMenu: () => setMenu(null),
         flipScheme: () => setScheme(isDark() ? "light" : "dark"),
       };
-      // A key the list takes does only what the list does with it: space opens the preview and scrolls nothing.
+      // A key the list takes does only what the list does with it: an arrow moves the cursor and scrolls nothing.
       const action = keyFor(store, host, pressOf(event));
       if (action) {
         // From here the keys drive the cursor: the pointer does not until it moves again.
@@ -330,6 +326,7 @@ export function App() {
   const total = s.all.length;
   const info =
     (s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
+    (s.unlisted ? ` · ${fmt.count(s.unlisted)} hidden` : "") +
     // The size is of the files right here; a folder of folders has none to add up.
     `${s.all.some((entry) => !entry.dir) ? ` · ${fmt.size(s.bytes)}` : ""} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
 
@@ -354,6 +351,15 @@ export function App() {
               <Icon name="trash" />
             </button>
           )}
+          <button
+            class="btn"
+            aria-label="Show hidden files"
+            aria-pressed={s.hidden}
+            title={s.hidden ? "Hide hidden files (.)" : "Show hidden files (.)"}
+            onClick={() => store.setHidden()}
+          >
+            <Icon name={s.hidden ? "eye" : "eye-off"} />
+          </button>
           <button class="btn" aria-label="Theme" onClick={(event) => setMenu(menu ? null : event.currentTarget)}>
             <Icon name="swatch" />
           </button>
@@ -428,11 +434,6 @@ export function App() {
           <span>
             <kbd>↵</kbd> open
           </span>
-          {!s.open && (
-            <span>
-              <kbd>space</kbd> preview
-            </span>
-          )}
           {flippable && (
             <span>
               <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
@@ -448,6 +449,9 @@ export function App() {
           </span>
           <span>
             <kbd>s</kbd> sort
+          </span>
+          <span>
+            <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
           </span>
           <span>
             <kbd>?</kbd> keys

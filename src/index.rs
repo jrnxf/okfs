@@ -54,6 +54,8 @@ struct Node {
     dir: bool,
     /// A real folder, not a link to one: the walk goes in.
     walk: bool,
+    /// A listing hides it until hidden entries are asked for: see `Index::hides`.
+    hidden: bool,
     /// When a file was last written, in seconds. Zero for a folder, for a link, and for
     /// a time that could not be read. Kept as 32 bits so a node stays as small as it was.
     modified: u32,
@@ -61,8 +63,8 @@ struct Node {
 
 impl Node {
     /// All that a listing tells of an entry.
-    fn shape(&self) -> (&str, bool, bool) {
-        (&self.name, self.dir, self.walk)
+    fn shape(&self) -> (&str, bool, bool, bool) {
+        (&self.name, self.dir, self.walk, self.hidden)
     }
 }
 
@@ -299,9 +301,11 @@ impl Index {
                     } else {
                         seconds(self.root.modified(&at, &s.name))
                     };
+                    let left_out = s.dir && self.skip.skips(rules, &at, dir.is_empty(), &s.name);
                     Node {
                         dir: s.dir,
-                        walk: s.dir && !s.link && !self.skip.skips(rules, &at, dir.is_empty(), &s.name),
+                        walk: s.dir && !s.link && !left_out,
+                        hidden: left_out || s.name.starts_with('.'),
                         name: s.name.into_boxed_str(),
                         modified,
                     }
@@ -527,7 +531,7 @@ impl Index {
         };
         tree.count -= old.len();
         let now = &tree.dirs[dir];
-        let before: HashSet<(&str, bool, bool)> = old.iter().map(Node::shape).collect();
+        let before: HashSet<(&str, bool, bool, bool)> = old.iter().map(Node::shape).collect();
         old.len() != now.len() || now.iter().any(|node| !before.contains(&node.shape()))
     }
 
@@ -586,16 +590,47 @@ impl Index {
         tree.dirs.get(dir).map(Vec::len)
     }
 
+    /// The rules inside the folder `dir`, as `hides` takes them.
+    pub fn rules_in(&self, dir: &str) -> Rules {
+        self.skip.rules_in(self.root.dir(), dir)
+    }
+
+    /// Whether a listing of the folder `dir` hides its entry `name` until hidden entries
+    /// are asked for: a dotfile, which is there at all only with `--hidden`, or a folder
+    /// that is left out, such as `node_modules`. `rules` are those inside `dir`.
+    pub fn hides(&self, rules: &Rules, dir: &str, name: &str, is_dir: bool) -> bool {
+        name.starts_with('.') || is_dir && self.skip.skips(rules, &self.root.dir().join(dir), dir.is_empty(), name)
+    }
+
+    /// How many entries the folder `dir` holds that a listing shows without hidden
+    /// entries, and how many it hides: see `hides`. `up` are the rules inside the folder
+    /// that holds it. Counted in memory when the index holds the folder, and on the disk
+    /// when not.
+    pub fn counts(&self, dir: &str, up: &Rules) -> Option<(usize, usize)> {
+        let split = |hidden: usize, all: usize| Some((all - hidden, hidden));
+        if let Some(nodes) = self.tree.read().expect("the index lock").dirs.get(dir) {
+            return split(nodes.iter().filter(|n| n.hidden).count(), nodes.len());
+        }
+        let abs = self.root.dir().join(dir);
+        let seen = self.root.scan(&abs).ok()?;
+        let rules = self.skip.enter(&abs, false, up);
+        split(
+            seen.iter().filter(|s| self.hides(&rules, dir, &s.name, s.dir)).count(),
+            seen.len(),
+        )
+    }
+
     /// The files written last, newest first. Read from memory: the disk is not looked
     /// at. Folders and links never appear, and neither does a file whose time is unknown.
-    pub fn recent(&self) -> Recent {
+    /// Without `all`, neither does a hidden one: see `hides`.
+    pub fn recent(&self, all: bool) -> Recent {
         let tree = self.tree.read().expect("the index lock");
         // Newer is greater, and of two with the same time the earlier folder, then the
         // earlier name, is greater.
         // The heap keeps the `RECENT` greatest, its least on top.
         let mut best = BinaryHeap::with_capacity(RECENT + 1);
-        for (dir, nodes) in &tree.dirs {
-            for node in nodes.iter().filter(|n| !n.dir && n.modified != 0) {
+        for (dir, nodes) in tree.dirs.iter().filter(|(dir, _)| all || !in_hidden(dir)) {
+            for node in nodes.iter().filter(|n| !n.dir && n.modified != 0 && (all || !n.hidden)) {
                 best.push(Reverse((node.modified, Reverse(dir.as_str()), Reverse(&*node.name))));
                 if best.len() > RECENT {
                     best.pop();
@@ -615,8 +650,9 @@ impl Index {
         }
     }
 
-    /// Fuzzy search over every path. Returns the best `limit` matches.
-    pub fn search(&self, query: &str, limit: usize) -> Found {
+    /// Fuzzy search over every path. Returns the best `limit` matches. Without `all`,
+    /// what a listing hides is not searched: see `hides`.
+    pub fn search(&self, query: &str, limit: usize, all: bool) -> Found {
         let tree = self.tree.read().expect("the index lock");
         let mut found = Found {
             hits: Vec::new(),
@@ -634,8 +670,8 @@ impl Index {
 
         let mut scored: Vec<Scored> = Vec::new();
         let mut idx = Vec::new();
-        for (dir, nodes) in &tree.dirs {
-            for (at, node) in nodes.iter().enumerate() {
+        for (dir, nodes) in tree.dirs.iter().filter(|(dir, _)| all || !in_hidden(dir)) {
+            for (at, node) in nodes.iter().enumerate().filter(|(_, n)| all || !n.hidden) {
                 let by_name = pattern.score(Utf32Str::new(&node.name, &mut chars), &mut matcher);
                 if let Some(score) = by_name {
                     let close = is_close(&pattern, &node.name, &mut idx, &mut chars, &mut matcher);
@@ -699,6 +735,12 @@ fn is_rule_file(dir: &str, path: &Path) -> bool {
         Some(skip::OWN) => dir.is_empty(),
         _ => false,
     }
+}
+
+/// Whether the folder `dir` is inside a hidden one. The index walks into a dotfile's
+/// folder with `--hidden`, and never into one that is left out.
+fn in_hidden(dir: &str) -> bool {
+    dir.split('/').any(|name| name.starts_with('.'))
 }
 
 /// A time as the index keeps it: whole seconds, with zero for one that is not known.
@@ -849,7 +891,12 @@ mod tests {
     }
 
     fn found(index: &Index, query: &str) -> Vec<String> {
-        index.search(query, 20).hits.into_iter().map(|hit| hit.path).collect()
+        index
+            .search(query, 20, true)
+            .hits
+            .into_iter()
+            .map(|hit| hit.path)
+            .collect()
     }
 
     #[test]
@@ -860,6 +907,9 @@ mod tests {
         assert_eq!(found(&site.index, "main"), ["app/main.rs"]);
         // The folder keeps its name in the search and in its folder's listing; what is in it is not held.
         assert_eq!(found(&site.index, "dist"), ["dist"]);
+        // Unless hidden entries are asked for, the search hides the folder as a listing does.
+        assert!(site.index.search("dist", 20, false).hits.is_empty());
+        assert_eq!(site.index.search("main", 20, false).hits.len(), 1);
         assert_eq!(site.index.child_count(""), Some(5));
         assert_eq!(site.index.child_count("dist"), None);
         assert_eq!(site.index.child_count("dist/deep"), None);
@@ -897,7 +947,7 @@ mod tests {
         };
         fresh.fill(flush, || {
             counts.push(fresh.len());
-            heard.push((fresh.ready(), fresh.search("file-0", 100).total));
+            heard.push((fresh.ready(), fresh.search("file-0", 100, true).total));
         });
         assert!(counts.len() > 2, "the walk was handed over in parts: {counts:?}");
         assert!(counts.windows(2).all(|pair| pair[0] <= pair[1]));
@@ -916,7 +966,7 @@ mod tests {
         assert!(heard.windows(2).all(|pair| pair[0].1 <= pair[1].1), "{heard:?}");
         assert!(fresh.ready());
         assert_eq!(last.1, 6);
-        assert_eq!(fresh.search("file-0", 100).total, 6);
+        assert_eq!(fresh.search("file-0", 100, true).total, 6);
     }
 
     #[test]
@@ -1153,11 +1203,44 @@ mod tests {
         assert_eq!(site.index.child_count("sub.old"), Some(1));
         assert_eq!(site.index.child_count("build"), None);
         let found = |query: &str| -> Vec<String> {
-            let hits = site.index.search(query, 10).hits;
+            let hits = site.index.search(query, 10, true).hits;
             hits.into_iter().map(|hit| hit.path).collect()
         };
         assert_eq!(found("fresh"), ["sub/fresh.txt"]);
         assert_eq!(found("inner"), ["sub/deep/inner.txt"]);
+    }
+
+    #[test]
+    fn with_hidden_served_what_is_in_a_dotfile_folder_is_searched_only_when_asked_for() {
+        let site = Watched::with(true, |served| {
+            fs::create_dir_all(served.join(".config/app")).unwrap();
+            fs::write(served.join(".config/app/settings.toml"), "x").unwrap();
+            fs::write(served.join(".profile"), "x").unwrap();
+        });
+        let paths = |query: &str, all: bool| -> Vec<String> {
+            site.index
+                .search(query, 10, all)
+                .hits
+                .into_iter()
+                .map(|hit| hit.path)
+                .collect()
+        };
+        assert!(paths("settings", false).is_empty());
+        assert!(paths("profile", false).is_empty());
+        assert_eq!(paths("settings", true), [".config/app/settings.toml"]);
+        assert_eq!(paths("profile", true), [".profile"]);
+        assert!(
+            site.index
+                .recent(false)
+                .files
+                .iter()
+                .all(|file| !file.path.starts_with('.'))
+        );
+        assert!(site.index.recent(true).files.iter().any(|file| file.path == ".profile"));
+        // A folder's count tells what a listing hides apart from the rest.
+        let rules = site.index.rules_in("");
+        let all = site.index.child_count("").unwrap();
+        assert_eq!(site.index.counts("", &rules), Some((all - 2, 2)));
     }
 
     #[test]
@@ -1169,7 +1252,7 @@ mod tests {
         site.index.build();
         let found = |query: &str| -> Vec<String> {
             site.index
-                .search(query, 10)
+                .search(query, 10, true)
                 .hits
                 .into_iter()
                 .map(|hit| hit.path)
@@ -1203,7 +1286,7 @@ mod tests {
         assert_eq!(site.see(&[(made, "tree/a"), (made, "tree/a/b")]), [Change::Sync]);
         assert_eq!(site.index.child_count("tree/a"), Some(1));
         assert_eq!(site.index.child_count("tree/a/b"), Some(2));
-        let hits = site.index.search("more", 10).hits;
+        let hits = site.index.search("more", 10, true).hits;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "tree/a/b/more.txt");
     }

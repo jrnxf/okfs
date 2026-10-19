@@ -1,5 +1,6 @@
-//! Which folders the index leaves out. A folder left out is still listed and still opens
-//! when it is clicked: only what is inside it is kept out of the search and out of memory.
+//! Which folders the index leaves out. What is inside a folder left out is kept out of
+//! the search and out of memory. The folder itself is hidden from listings, as a dotfile
+//! is, until the page asks for hidden entries, and it still opens at its address.
 //!
 //! Three things leave a folder out, checked in this order:
 //! - a short built-in list of names (`NAMES`), and `Library` in a Mac's home folder;
@@ -90,11 +91,23 @@ impl Skip {
     /// The rules inside the folder `dir`, a path under the served folder `served`. `None` when
     /// the folder is left out, or one above it is: nothing under it is kept.
     pub fn rules_for(&self, served: &Path, dir: &str) -> Option<Rules> {
+        self.climb(served, dir, true)
+    }
+
+    /// The rules inside the folder `dir`, whether or not it is left out: what a listing
+    /// of it asks about the folders in it.
+    pub fn rules_in(&self, served: &Path, dir: &str) -> Rules {
+        self.climb(served, dir, false).unwrap_or_default()
+    }
+
+    /// The rules inside `dir`, read down from the served folder. `stop`: `None` when a
+    /// folder on the way is left out.
+    fn climb(&self, served: &Path, dir: &str, stop: bool) -> Option<Rules> {
         let mut abs = served.to_path_buf();
         let mut rules = self.enter(&abs, true, &Rules::default());
         let mut top = true;
         for name in dir.split('/').filter(|name| !name.is_empty()) {
-            if self.skips(&rules, &abs, top, name) {
+            if stop && self.skips(&rules, &abs, top, name) {
                 return None;
             }
             abs.push(name);
@@ -197,6 +210,20 @@ mod tests {
         fs::create_dir_all(served.join("sub")).unwrap();
         fs::write(served.join("sub").join(OWN), "inner\n").unwrap();
         assert!(!left_out(&served, &skip, "sub/inner"));
+    }
+
+    #[test]
+    fn the_rules_inside_a_folder_that_is_left_out_still_hold() {
+        let tmp = tempfile::tempdir().unwrap();
+        let served = tmp.path().canonicalize().unwrap();
+        fs::create_dir_all(served.join("node_modules/pkg")).unwrap();
+        fs::write(served.join(GIT), "dist\n").unwrap();
+        let skip = Skip::new(&served);
+        let rules = skip.rules_in(&served, "node_modules/pkg");
+        let abs = served.join("node_modules/pkg");
+        assert!(skip.skips(&rules, &abs, false, "dist"));
+        assert!(skip.skips(&rules, &abs, false, "node_modules"));
+        assert!(!skip.skips(&rules, &abs, false, "lib"));
     }
 
     #[test]

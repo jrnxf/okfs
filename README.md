@@ -8,11 +8,11 @@
 
 `okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
 
-- A dense list on the left, and beside it what is under the cursor: a file is shown as soon as the cursor is on it, in the same pane, whether or not the preview is open. Hold `j` to flip through a folder: every file shows as the cursor passes it.
+- A dense list on the left, and beside it what is under the cursor: a file is shown as soon as the cursor is on it, in the same pane. Hold `j` to flip through a folder: every file shows as the cursor passes it.
 - A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too. A phone has no space bar: there a tap opens the file over the list, with previous and next in a bar at its foot and download and delete behind a `...` button.
 - Markdown, an SVG drawing and JSON open as their source, as it is written, colored and never run. `r` flips them to what is made from them, and the choice holds for the files of that kind that follow, until you flip it back or leave the page. An HTML page opens as the page, and a CSV table opens as a table; `r` flips either to its source. Pictures, PDFs, video and audio have no source and are always shown as themselves. There is a button for it beside the file's name. The source of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
-- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the list of its first folder in the next, as far down as the window has room. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out.
-- A folder also gets a summary that adds it up: how many items it holds, its size with everything in it, its newest change, its `README.md`, and the whole of it as a zip. It fills the slots its columns leave, so a folder of files, or an empty one, does not leave half the window blank. It walks the whole tree, so under a held key it waits until the key is let go. `Space` on a folder gives the summary the full width in place of the columns. A folder of more than 50,000 entries is counted that far and says so.
+- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the inside of its first entry in the next, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file. The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file, and a key that moves the cursor takes over until the pointer moves again. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out.
+- Hidden files stay out of the way: dotfiles, and the folders left out of the search, such as `node_modules` and what a `.gitignore` names (see [A big folder](#a-big-folder)). `.`, or the eye button at the top, shows them and hides them again, and the browser remembers the choice. The counts beside each folder are of what is shown, so a folder says how many entries you will find in it, and the bar at the foot says how many are hidden. The search hides the same ones.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
@@ -86,7 +86,7 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `--header <FILE.md>` | A Markdown note shown above every folder. |
 | `--title <TEXT>` | Name shown in the corner and the browser tab. Default `okfs`. |
 | `--accent <COLOR>` | Accent color in every theme, as hex: `"#2d6a4f"`. |
-| `-H`, `--hidden` | Show and serve dotfiles. They are left out by default. |
+| `-H`, `--hidden` | Serve dotfiles, and show hidden files to a browser that has made no choice with `.`. Without it, dotfiles are never sent, and `.` shows only the folders left out of the search. |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
 | `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
 
@@ -98,7 +98,6 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | --- | --- |
 | `j` `k`, arrows | Move down and up |
 | `Enter` | Open the folder, or give the file the full width |
-| `Space` | Add up the folder under the cursor, or go back to its columns |
 | `r` | Rendered or source, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
 | `w` | Wrap long lines or not, for prose shown as its source: Markdown, HTML, text, logs |
 | `Backspace`, `-` | Up one folder |
@@ -108,7 +107,8 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `Ctrl K`, `Cmd K` | Find anything in the tree. Start with `>` for commands. |
 | `s` | Change the sort |
 | `t` | Light or dark |
-| `Esc` | Close the open file, the preview or the filter |
+| `.` | Show hidden files, or hide them again |
+| `Esc` | Close the open file or the filter |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 
@@ -126,7 +126,7 @@ The page is shown the way any HTML file is: full width under the thin bar, sandb
 
 `Ctrl K` searches an index of every name in the tree, kept in memory. okfs reads the tree once when it starts, and the search works on what it has found so far while that goes on: the count in its footer climbs until it says the tree is indexed.
 
-Some folders are left out of that index, so that a home folder does not spend minutes and hundreds of megabytes on `node_modules` and caches. A folder that is left out is still listed where it is, and opens like any other when you click it. Only what is inside it is not searched, not held in memory, and not followed by the watcher beyond telling an open page that something in it changed. These are left out:
+Some folders are left out of that index, so that a home folder does not spend minutes and hundreds of megabytes on `node_modules` and caches. A folder that is left out is a hidden file in its folder's listing, as a dotfile is: `.` shows it there, and it opens like any other at its address. What is inside it is not searched, not held in memory, and not followed by the watcher beyond telling an open page that something in it changed. These are left out:
 
 - Folders named `node_modules`, `.git`, `.cache`, `.npm` or `.Trash`, wherever they are.
 - `Library`, in the served folder, when it is a Mac's home folder.

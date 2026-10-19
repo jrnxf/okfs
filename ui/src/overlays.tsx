@@ -74,7 +74,6 @@ type Key = [string[], string];
 const keys = (): Key[] => [
   [["j", "k"], "Move down and up (arrows work too)"],
   [["↵"], "Open the folder, or the file at full width"],
-  [["space"], "Open or close the preview"],
   ...(store.flippable() ? [[["r"], "Rendered or source"] satisfies Key] : []),
   ...(store.wrappable() ? [[["w"], "Wrap long lines or not"] satisfies Key] : []),
   [["⌫", "-"], "Up one folder"],
@@ -85,7 +84,8 @@ const keys = (): Key[] => [
   [[`${MOD} K`], "Find anything in the tree"],
   [["s"], "Change the sort"],
   [["t"], "Light or dark"],
-  [["esc"], "Close the file, the preview or the filter"],
+  [["."], store.s.hidden ? "Hide hidden files" : "Show hidden files"],
+  [["esc"], "Close the file or the filter"],
   ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies Key] : []),
   [["?"], "This list"],
 ];
@@ -157,9 +157,11 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
   if (doomed.link) {
     what = `This is a link to a ${doomed.dir ? "folder" : "file"}. Only the link will be removed: what it points at stays as it is.`;
   } else if (doomed.dir) {
-    if (doomed.count === 0) what = "This empty folder will be removed.";
-    else if (doomed.count === undefined) what = "This folder will be removed with everything in it.";
-    else what = `This folder holds ${fmt.items(doomed.count)}. It will be removed with everything in it.`;
+    // Hidden entries go with it whether or not they are shown, so they are counted.
+    const hidden = doomed.unlisted ? `, and ${fmt.count(doomed.unlisted)} hidden` : "";
+    if (doomed.count === undefined) what = "This folder will be removed with everything in it.";
+    else if (doomed.count === 0 && !hidden) what = "This empty folder will be removed.";
+    else what = `This folder holds ${fmt.items(doomed.count)}${hidden}. It will be removed with everything in it.`;
   }
   return (
     <div class="scrim scrim-ask" onPointerDown={(event) => event.target === event.currentTarget && close()}>

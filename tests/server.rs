@@ -1221,12 +1221,22 @@ async fn a_folder_left_out_of_the_search_still_opens_and_lists_its_files() {
     };
 
     wait_for("main.rs", 1).await;
+    // The folders left out are hidden from the search as they are from a listing, until hidden entries are asked for.
+    assert_eq!(json(&app, "/api/search?q=dist").await["total"], 0);
+    assert_eq!(json(&app, "/api/search?q=dist&all=1").await["hits"][0]["path"], "dist");
     wait_for("bundle", 0).await;
     wait_for("chunk", 0).await;
     wait_for("index.js", 0).await;
 
-    // Left out of the search, and open as ever: the same listing, counts and files as any folder.
+    // Left out of the search, hidden from its folder's listing until hidden entries are asked for, and open as
+    // ever: the same listing, counts and files as any folder.
     let top = json(&app, "/api/list?path=").await;
+    assert!(!names(&top).contains(&"dist".to_owned()));
+    assert_eq!(top["hidden"], 1);
+    let app_folder = json(&app, "/api/list?path=app").await;
+    assert_eq!(names(&app_folder), ["main.rs"]);
+    let top = json(&app, "/api/list?path=&all=1").await;
+    assert!(top.get("hidden").is_none());
     let dist = top["entries"]
         .as_array()
         .unwrap()
@@ -1304,9 +1314,11 @@ async fn recent_lists_the_newest_files_across_folders_and_only_files_that_are_sh
         assert_eq!(recent_paths(&json(&app, "/api/recent").await), want);
     }
 
-    // With --hidden the dotfile shows. A file behind a link that leaves the folder still does not.
+    // With --hidden the dotfile shows once hidden entries are asked for. A file behind a link that leaves the
+    // folder still does not.
     let app = site.serving(true, Options::default());
-    let answer = json(&app, "/api/recent").await;
+    assert_eq!(recent_paths(&json(&app, "/api/recent").await), want);
+    let answer = json(&app, "/api/recent?all=1").await;
     let shown = recent_paths(&answer);
     assert_eq!(shown[0], ".hidden");
     assert!(
@@ -1314,7 +1326,7 @@ async fn recent_lists_the_newest_files_across_folders_and_only_files_that_are_sh
             .iter()
             .all(|path| !path.contains("link-out") && !path.contains("secret"))
     );
-    assert!(!String::from_utf8_lossy(&get(&app, "/api/recent").await.1).contains("TOP SECRET"));
+    assert!(!String::from_utf8_lossy(&get(&app, "/api/recent?all=1").await.1).contains("TOP SECRET"));
 }
 
 #[tokio::test]
@@ -2256,39 +2268,100 @@ fn strip_tags(html: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_folder_is_added_up_with_its_notes_and_nothing_outside_it() {
+async fn a_listing_with_levels_follows_the_entries_named_and_falls_back_to_the_first() {
     let site = Site::new();
-    fs::write(site.served.join("sub/README.md"), "# Sub\n").unwrap();
-    fs::create_dir_all(site.served.join("empty")).unwrap();
-    let app = site.router();
-
-    let sub = json(&app, "/api/folder?path=sub").await;
-    // b.txt, README.md and deep/ right in it; c.rs one folder down.
-    assert_eq!((sub["path"].as_str(), sub["items"].as_u64()), (Some("sub"), Some(3)));
-    assert_eq!((sub["files"].as_u64(), sub["folders"].as_u64()), (Some(3), Some(1)));
-    assert_eq!(
-        sub["bytes"].as_u64(),
-        Some(("inside".len() + "fn main() {}\n".len() + "# Sub\n".len()) as u64)
-    );
-    assert!(sub["newest"]["path"].as_str().unwrap().starts_with("sub/"));
-    assert!(sub["newest"]["m"].as_i64().unwrap() > 0);
-    assert_eq!(sub["readme"]["name"], "README.md");
-    assert!(sub["readme"]["html"].as_str().unwrap().contains("<h1>Sub</h1>"));
-    assert!(sub.get("cut").is_none());
-
-    let empty = json(&app, "/api/folder?path=empty").await;
-    assert_eq!((empty["items"].as_u64(), empty["bytes"].as_u64()), (Some(0), Some(0)));
-    assert!(empty["newest"].is_null() && empty["readme"].is_null());
-
-    // The served folder itself: the links out of it and the dotfile are not counted.
-    let (response, body) = get(&app, "/api/folder?path=").await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = String::from_utf8(body).unwrap();
-    assert!(!body.contains("secret") && !body.contains(".hidden"), "{body}");
-    for path in ["../outside", "..", "link-out-dir", "a.txt", "missing", "/etc"] {
-        let uri = format!("/api/folder?path={path}");
-        assert_eq!(get(&app, &uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
+    for dir in ["p/node_modules/@babel", "p/src/components", "p/zeta"] {
+        fs::create_dir_all(site.served.join(dir)).unwrap();
     }
+    fs::write(site.served.join("p/src/components/Button.tsx"), "x").unwrap();
+    fs::write(site.served.join("p/src/index.tsx"), "x").unwrap();
+    let app = site.router();
+    let path = |listing: &Value| listing["path"].as_str().unwrap().to_owned();
+
+    // node_modules is hidden, so the first entry is src.
+    let first = json(&app, "/api/list?path=p&limit=40&depth=2").await;
+    assert_eq!(names(&first), ["src", "zeta"]);
+    assert_eq!(
+        (path(&first["under"]), path(&first["under"]["under"])),
+        ("p/src".into(), "p/src/components".into())
+    );
+    // Named levels are followed in place of the first entry, and a level past them goes into its first.
+    let zeta = json(&app, "/api/list?path=p&limit=40&depth=2&follow=zeta").await;
+    assert_eq!(path(&zeta["under"]), "p/zeta");
+    assert!(zeta["under"].get("under").is_none());
+    // A file named, or a name that is not there, has no level of its own; the second goes into the first.
+    let file = json(&app, "/api/list?path=p&limit=40&depth=2&follow=src/index.tsx").await;
+    assert_eq!(path(&file["under"]), "p/src");
+    assert!(file["under"].get("under").is_none());
+    let missing = json(&app, "/api/list?path=p&limit=40&depth=2&follow=nothing").await;
+    assert_eq!(path(&missing["under"]), "p/src");
+    // A hidden folder is followed only when hidden entries are asked for, and is then the first entry.
+    let hidden = json(&app, "/api/list?path=p&limit=40&depth=2&follow=node_modules").await;
+    assert_eq!(path(&hidden["under"]), "p/src");
+    let all = json(&app, "/api/list?path=p&limit=40&depth=2&all=1").await;
+    assert_eq!(names(&all), ["node_modules", "src", "zeta"]);
+    assert_eq!(path(&all["under"]["under"]), "p/node_modules/@babel");
+}
+
+#[tokio::test]
+async fn hidden_entries_are_left_out_of_listings_and_counts_until_asked_for() {
+    let site = Site::new();
+    for dir in ["app/node_modules/pad", "app/dist", "app/.git", "app/src"] {
+        fs::create_dir_all(site.served.join(dir)).unwrap();
+    }
+    for file in ["app/src/main.rs", "app/.env", "app/README.md"] {
+        fs::write(site.served.join(file), "x").unwrap();
+    }
+    fs::write(
+        site.served.join("app/.gitignore"),
+        "dist
+",
+    )
+    .unwrap();
+    let count = |listing: &Value, name: &str| -> Option<u64> {
+        let entries = listing["entries"].as_array().unwrap();
+        entries
+            .iter()
+            .find(|entry| entry["n"] == name)
+            .and_then(|entry| entry["c"].as_u64())
+    };
+
+    // Without --hidden, dotfiles are never sent. The folders left out are, when asked for.
+    let app = site.router();
+    let app_folder = json(&app, "/api/list?path=app").await;
+    assert_eq!(names(&app_folder), ["README.md", "src"]);
+    assert_eq!(
+        (app_folder["total"].as_u64(), app_folder["hidden"].as_u64()),
+        (Some(2), Some(2))
+    );
+    let top = json(&app, "/api/list?path=").await;
+    assert_eq!(count(&top, "app"), Some(2));
+    let app_entry = top["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["n"] == "app")
+        .unwrap();
+    assert_eq!(app_entry["h"], 2);
+    let all = json(&app, "/api/list?path=app&all=1").await;
+    assert_eq!(names(&all), ["dist", "node_modules", "README.md", "src"]);
+    assert_eq!(count(&json(&app, "/api/list?path=&all=1").await, "app"), Some(4));
+    assert!(!String::from_utf8_lossy(&get(&app, "/api/list?path=app&all=1").await.1).contains(".env"));
+
+    // With --hidden, dotfiles are hidden the same way, and sent once asked for.
+    let app = site.serving(true, Options::default());
+    let app_folder = json(&app, "/api/list?path=app").await;
+    assert_eq!(names(&app_folder), ["README.md", "src"]);
+    assert_eq!(app_folder["hidden"], 5);
+    let all = json(&app, "/api/list?path=app&all=1").await;
+    assert_eq!(
+        names(&all),
+        [".env", ".git", ".gitignore", "dist", "node_modules", "README.md", "src"]
+    );
+    assert_eq!(count(&json(&app, "/api/list?path=").await, "app"), Some(2));
+    assert_eq!(count(&json(&app, "/api/list?path=&all=1").await, "app"), Some(7));
+    // A folder inside one that is hidden still lists what it holds, by its address.
+    assert_eq!(names(&json(&app, "/api/list?path=app/node_modules").await), ["pad"]);
 }
 
 #[cfg(unix)]

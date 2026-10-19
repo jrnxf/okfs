@@ -63,8 +63,7 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     l: right,
     ArrowRight: right,
     Enter: () => store.activate(),
-    // A file at full width keeps space for itself: it pages through a long text.
-    ...(modal ? {} : { " ": () => store.setPeek() }),
+    ".": () => store.setHidden(),
     // Only a file with two forms has the key: on any other it does nothing, and is not offered.
     ...(store.flippable() ? { r: () => store.flipRaw() } : {}),
     ...(store.wrappable() ? { w: () => store.flipWrap() } : {}),
@@ -72,7 +71,6 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     "-": () => store.up(),
     Escape: () => {
       if (s.open) store.close();
-      else if (s.peek) store.setPeek(false);
       else if (s.filter) store.setFilter("");
       host.closeMenu();
     },

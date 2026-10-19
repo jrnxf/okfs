@@ -2,6 +2,7 @@
 
 import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
 import { type Config, config, locate } from "./config";
+import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
 import { forgetAnswers } from "./preview";
@@ -15,8 +16,10 @@ export interface Entry {
   size: number;
   /** Modified time, in seconds. */
   mtime: number;
-  /** For a folder, how many entries it holds. */
+  /** For a folder, how many entries it holds, hidden ones only while they are shown. */
   count?: number;
+  /** For a folder, how many hidden entries it holds while they are not shown. */
+  unlisted?: number;
   ext: string;
   kind: Kind;
   /** Position in name order, as the server sent it. Sorting by name is sorting by this. */
@@ -25,7 +28,7 @@ export interface Entry {
 }
 
 /** What a delete is asked for: an entry of the list, or the folder being shown. */
-export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count">;
+export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count" | "unlisted">;
 
 export type SortKey = "name" | "time" | "size" | "kind";
 export interface Sort {
@@ -51,11 +54,8 @@ export interface State {
   /** `all` after the filter and the sort: what the list shows. */
   entries: Entry[];
   cursor: number;
-  /**
-   * The preview is open: a folder under the cursor is added up beside the list, where closed it has its
-   * columns. A file under the cursor is shown either way. It starts closed on every visit.
-   */
-  peek: boolean;
+  /** Hidden entries are listed: see `showsHidden`. */
+  hidden: boolean;
   /**
    * The kinds of file the reader flipped away from the form they open in: see `formOf` and `sourceFirst`.
    * It starts empty on every visit.
@@ -70,6 +70,8 @@ export interface State {
   readme: Readme | null;
   /** Bytes in the files directly in this folder. */
   bytes: number;
+  /** Entries of this folder left out of `all` while hidden entries are not shown. */
+  unlisted: number;
   palette: boolean;
   help: boolean;
   /** What the delete dialog is asking about, while it is up. */
@@ -100,6 +102,7 @@ export function toEntry(item: Item, dir: string, rank: number): Entry {
     size: item.s,
     mtime: item.m,
     count: item.c,
+    unlisted: item.h,
     ext: isDir ? "" : extension(item.n),
     kind: kindOf(item.n, isDir),
     rank,
@@ -126,7 +129,7 @@ export class Store {
     all: [],
     entries: [],
     cursor: 0,
-    peek: false,
+    hidden: showsHidden(),
     flipped: [],
     unwrapped: [],
     sort: savedSort(),
@@ -134,6 +137,7 @@ export class Store {
     open: null,
     readme: null,
     bytes: 0,
+    unlisted: 0,
     palette: false,
     help: false,
     doomed: null,
@@ -250,13 +254,14 @@ export class Store {
     s.mtime = listing.m;
     s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
+    s.unlisted = listing.hidden ?? 0;
     s.readme = listing.readme;
   }
 
   /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
-    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, filter: "" });
+    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, filter: "" });
   }
 
   /**
@@ -576,10 +581,15 @@ export class Store {
     }
   }
 
-  /** Opens or closes the preview. The choice is for this visit: nothing is kept. */
-  setPeek(peek = !this.s.peek): void {
-    this.s.peek = peek;
+  /**
+   * Shows or hides the hidden entries, and lists the folder again with or without them. The cursor stays on its
+   * entry, or goes to the nearest one left. The choice is kept for this browser.
+   */
+  setHidden(on = !this.s.hidden): void {
+    setShowsHidden(on);
+    this.s.hidden = on;
     this.emit();
+    this.catchUp();
   }
 
   /**
@@ -643,7 +653,7 @@ export class Store {
   here(): Doomed | null {
     const { s } = this;
     if (!config.delete || s.status !== "ready" || !s.path) return null;
-    return { name: nameOf(s.path), path: s.path, dir: true, link: s.link, kind: "folder", count: s.all.length };
+    return { name: nameOf(s.path), path: s.path, dir: true, link: s.link, kind: "folder", count: s.all.length, unlisted: s.unlisted };
   }
 
   /** Puts up the delete dialog, for the open file or the entry under the cursor unless one is given. */

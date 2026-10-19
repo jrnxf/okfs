@@ -89,7 +89,7 @@ body.open .ph .only-open { display: inline-flex; }
   .main { grid-template-columns: minmax(0, 1fr); }
   .right { display: none; position: fixed; inset: 0; z-index: 20; grid-column: 1; }
   /* A file that is opened, or the preview a keyboard opened, is a sheet over the list. */
-  body.open .right, body.peek .right { display: flex; }
+  body.open .right { display: flex; }
   .left { border-right: 0; }
   /* the top bar already names the folder, and the delete button there does what this one's would */
   .left > .ph { display: none; }
@@ -134,19 +134,6 @@ body.open .ph .only-open { display: inline-flex; }
   .pal-esc { display: none; }
 }
 
-/* A folder in the preview: three numbers side by side, what can be done with it, then its notes. */
-.fp-in { display: grid; gap: calc(var(--pad) * 1.5); padding: calc(var(--pad) * 2) calc(var(--pad) * 2.2) 48px; max-width: 60em; margin: 0 auto; }
-.fp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--pad); margin: 0; }
-.fp-stats > div { display: grid; gap: 4px; align-content: start; justify-items: start; min-width: 0; padding: calc(var(--pad) * 1.1) calc(var(--pad) * 1.25); border: var(--border); border-radius: var(--radius-lg); background: var(--bg); container-type: inline-size; }
-/* A date and a time are sixteen figures: in the slots beside the columns a card can be narrower than that, so the figures shrink with it. */
-.fp-stats dd { margin: 0; font-size: min(calc(var(--text) * 1.5), 10cqi); line-height: 1.25; color: var(--fg); white-space: nowrap; }
-.fp-stats span, .fp-stats button { color: var(--muted); font-size: var(--text-s); min-height: 1.45em; white-space: pre-wrap; text-align: left; }
-.fp-stats button { max-width: 100%; white-space: nowrap; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.fp-do { display: flex; flex-wrap: wrap; gap: 8px; }
-.fp-do .btn { height: calc(32px * var(--density)); padding: 0 calc(12px * var(--density)); text-decoration: none; }
-.fp-note { margin: 0; color: var(--muted); }
-.fp-readme { border: var(--border); border-radius: var(--radius-lg); overflow: hidden; }
-.fp-readme .md { max-width: none; margin: 0; padding: calc(var(--pad) * 1.6) calc(var(--pad) * 1.6) calc(var(--pad) * 2); font-size: var(--text); }
 .pv-card kbd { margin-left: 2px; }
 
 .sprite { position: absolute; }

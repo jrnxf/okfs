@@ -1,5 +1,5 @@
-// The preview that space opens: what is asked of the server while it is closed, which presses the list
-// takes, which files have a source to flip to, and the choice that is no longer kept.
+// What is asked of the server ahead of the cursor, which presses the list takes, which files have a source to flip
+// to, the choices that are no longer kept, and the key that shows hidden entries.
 
 import { beforeAll, beforeEach, expect, test } from "bun:test";
 import type { KeyHost, Press } from "./keys";
@@ -29,7 +29,9 @@ Object.assign(globalThis, {
 let keys: typeof import("./keys");
 let stores: typeof import("./store");
 let preview: typeof import("./preview");
+let api: typeof import("./api");
 beforeAll(async () => {
+  api = await import("./api");
   keys = await import("./keys");
   stores = await import("./store");
   preview = await import("./preview");
@@ -55,25 +57,21 @@ function press(key: string, ...matching: string[]): Press {
   return keys.pressOf({ key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, target: { closest } as unknown as EventTarget });
 }
 
-test("a file under the cursor is shown, and asked for ahead, with the preview closed or open", () => {
+test("a file under the cursor is shown, and asked for ahead, with the columns of a folder ahead", () => {
   const store = showing("photo.jpg", "notes.md", "main.rs", "data.json", "inner/", "page.html", "paper.pdf", "pack.zip");
   const stamp = (entry: import("./store").Entry) => store.stamp(entry);
   const source = (entry: import("./store").Entry) => store.isRaw(entry);
-  expect(store.s.peek).toBe(false);
   expect(store.shown()?.name).toBe("photo.jpg");
   preview.lookAhead(store.s.entries, 0, 1, stamp, true, source);
-  // Closed, the columns of the folder ahead are had as well.
   expect(asked.some((url) => url === preview.columnsUrl("inner"))).toBe(true);
   expect(asked.some((url) => url.startsWith("/api/previews?"))).toBe(true);
   expect(asked.some((url) => url.startsWith("/api/archive?"))).toBe(true);
 
+  // With a file at full width, no column is shown, and none is asked for.
   asked.length = 0;
   preview.forgetAnswers();
-  store.setPeek(true);
-  expect(store.shown()?.name).toBe("photo.jpg");
   preview.lookAhead(store.s.entries, 0, 1, stamp, false, source);
   expect(asked.some((url) => url.startsWith("/api/previews?"))).toBe(true);
-  // Open, a folder ahead is not added up before the cursor stops on it.
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
 });
 
@@ -109,12 +107,11 @@ test("Markdown, a drawing and JSON open as their source, and the flip holds for 
   expect(store.isRaw(json!)).toBe(false);
 });
 
-test("space opens and closes the preview, and is left alone where it types or presses", () => {
-  const store = showing("notes.md");
-  keys.keyFor(store, host, press(" "))?.();
-  expect(store.s.peek).toBe(true);
-  keys.keyFor(store, host, press(" "))?.();
-  expect(store.s.peek).toBe(false);
+test("space does nothing on the list, and is left alone where it types or presses", () => {
+  const store = showing("notes.md", "inner/");
+  expect(keys.keyFor(store, host, press(" "))).toBeUndefined();
+  store.moveTo(1);
+  expect(keys.keyFor(store, host, press(" "))).toBeUndefined();
 
   // In the filter, the palette or any text box it is a space; on a button or a player it presses that.
   for (const focused of ["input", "textarea", "select", "[contenteditable]", "button", "summary", "video", "audio", "a[href]"]) {
@@ -123,15 +120,31 @@ test("space opens and closes the preview, and is left alone where it types or pr
   // Letters are typed too, and are the list's again on a button.
   expect(keys.keyFor(store, host, press("s", "input"))).toBeUndefined();
   expect(keys.keyFor(store, host, press("s", "button"))).toBeDefined();
-  expect(store.s.peek).toBe(false);
 
-  // A file at full width keeps space, and Esc closes one thing at a time.
-  store.setPeek(true);
+  // Esc closes one thing at a time: the file at full width, then the filter.
+  store.moveTo(0);
   store.activate();
-  expect(keys.keyFor(store, host, press(" "))).toBeUndefined();
-  store.s.open = null;
+  store.setFilter("no");
   keys.keyFor(store, host, press("Escape"))?.();
-  expect(store.s.peek).toBe(false);
+  expect(store.s.open).toBeNull();
+  expect(store.s.filter).toBe("no");
+  keys.keyFor(store, host, press("Escape"))?.();
+  expect(store.s.filter).toBe("");
+});
+
+test("the dot key shows hidden entries and hides them again, remembered, and the lists asked for say so", () => {
+  const store = showing("notes.md");
+  expect(store.s.hidden).toBe(false);
+  expect(api.urls.list("inner")).toBe("/api/list?path=inner");
+  keys.keyFor(store, host, press("."))?.();
+  expect(store.s.hidden).toBe(true);
+  expect(saved.get("okfs.hidden")).toBe("1");
+  expect(api.urls.list("inner")).toBe("/api/list?path=inner&all=1");
+  expect(preview.columnsUrl("inner", ["src"])).toContain("&follow=src&all=1");
+  keys.keyFor(store, host, press("."))?.();
+  expect(store.s.hidden).toBe(false);
+  expect(saved.get("okfs.hidden")).toBe("0");
+  expect(preview.columnsUrl("inner")).not.toContain("all=1");
 });
 
 test("r flips only a file that has two forms", () => {
@@ -165,13 +178,8 @@ test("the choice the one-folder view kept is ignored, and its key does nothing",
   for (const kept of ["off", "on", "nonsense"]) {
     saved.set("okfs.pane", kept);
     const store = showing("notes.md");
-    // Every visit starts with the list and the columns, and the preview closed.
-    expect(store.s.peek).toBe(false);
     expect(keys.keyFor(store, host, press("p"))).toBeUndefined();
-    keys.keyFor(store, host, press(" "))?.();
-    expect(store.s.peek).toBe(true);
-    // Nothing is written back, and opening the preview is not kept either.
+    // Nothing is written back.
     expect([...saved]).toEqual([["okfs.pane", kept]]);
-    expect(showing("notes.md").s.peek).toBe(false);
   }
 });

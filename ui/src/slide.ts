@@ -34,10 +34,10 @@ function panesOf(strip: HTMLElement): HTMLElement[] {
 
 /**
  * A copy of a pane that can be shown while the pane itself has gone. A preview's frames are left out: of a file's
- * preview only the bar is copied. A folder added up has no frames, and beside the columns no bar.
+ * preview only the bar is copied.
  */
 function copyOf(pane: HTMLElement): HTMLElement {
-  const preview = pane.classList.contains("pane") && !pane.querySelector(".fp, .empty");
+  const preview = pane.classList.contains("pane");
   const copy = pane.cloneNode(!preview) as HTMLElement;
   const bar = preview ? pane.querySelector(".ph") : null;
   if (bar) copy.append(bar.cloneNode(true));

@@ -68,7 +68,6 @@ function commands(): Entry[] {
   if (config.delete && under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
   if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
   return [
-    ...(s.open ? [] : [{ title: s.peek ? "Close the preview" : "Open the preview", key: "space", run: () => store.setPeek() }]),
     ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
     ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
@@ -77,6 +76,7 @@ function commands(): Entry[] {
       key: "t",
       run: () => setScheme(isDark() ? "light" : "dark"),
     },
+    { title: s.hidden ? "Hide hidden files" : "Show hidden files", key: ".", run: () => store.setHidden() },
     { title: "Theme", menu: themeMenu },
     { title: "Go to the top folder", run: () => void store.showDir("") },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
@@ -146,7 +146,7 @@ export function Palette() {
 
   useEffect(() => {
     const abort = new AbortController();
-    getJson<Recent>(urls.recent, abort.signal).then((answer) => setRecent(answer.files), () => {});
+    getJson<Recent>(urls.recent(), abort.signal).then((answer) => setRecent(answer.files), () => {});
     return () => abort.abort();
     // Asked again when the first walk ends: until then the newest files are those it has read so far.
   }, [found?.ready]);

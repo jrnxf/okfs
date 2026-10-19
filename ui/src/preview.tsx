@@ -186,10 +186,10 @@ function unpack(picture: HTMLImageElement): void {
 
 /**
  * Where the columns of the folder at `path` are had: its listing, and in the same answer the listing of each
- * folder its first entry leads to, for the slots past its own. One answer, so every column is drawn together.
- * It holds names, sizes and times, and nothing read from a file.
+ * folder its first entry leads to, or the entry `follow` names for that level, for the slots past its own. One
+ * answer, so every column is drawn together. It holds names, sizes and times, and nothing read from a file.
  */
-export const columnsUrl = (path: string): string => urls.list(path, COLUMN_ROWS, slots() - 2);
+export const columnsUrl = (path: string, follow: string[] = []): string => urls.list(path, COLUMN_ROWS, slots() - 2, follow);
 
 /** The JSON the pane asks for when it shows the file `entry`, if it asks for any. `source`: as its source. */
 function addressOf(entry: Entry, source: boolean): string | null {
@@ -335,8 +335,8 @@ function sheetOf(entry: Entry): string {
 
 /**
  * Asks for what lies past the cursor in the direction it moves, so that it is here before the cursor is: the
- * preview of each file, in the form `source` says it is shown in. With the preview closed (`columns`) it is
- * also the columns of each folder. `stamp` gives the stamp a picture is loaded under.
+ * preview of each file, in the form `source` says it is shown in. With `columns` it is also the columns of each
+ * folder. `stamp` gives the stamp a picture is loaded under.
  */
 export function lookAhead(
   entries: Entry[],
@@ -353,7 +353,6 @@ export function lookAhead(
     const entry = entries[cursor + step * i];
     if (!entry) break;
     if (entry.dir) {
-      // An open preview adds a folder up, which is not done for a folder the cursor may never stop on.
       if (columns && flights.size < FLIGHTS) ask(columnsUrl(entry.path)).catch(() => undefined);
       continue;
     }
@@ -1234,7 +1233,7 @@ function Kind({ entry, stamp, report, raw, wrap, waiting, left, onReady }: Shown
   if (raw && hasSource(entry)) return <Text entry={entry} report={report} source wrap={wrap} />;
   switch (entry.kind) {
     case "folder":
-      // A folder has columns or a panel of its own beside the list: see `Side`.
+      // A folder has columns of its own beside the list: see `Side`.
       return null;
     case "image":
       return <Picture entry={entry} stamp={stamp} report={report} />;

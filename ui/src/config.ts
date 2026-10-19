@@ -25,6 +25,8 @@ export interface Config {
   delete: boolean;
   /** True when the server draws the first page of a PDF as a picture. */
   pdf?: boolean;
+  /** True with `--hidden`: dotfiles are served, and a browser with no choice of its own shows hidden entries. */
+  hidden?: boolean;
 }
 
 const read = (page: Document): Partial<Config> => JSON.parse(page.getElementById("okfs-config")?.textContent ?? "{}");
