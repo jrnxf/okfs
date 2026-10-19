@@ -58,6 +58,8 @@ export interface Found {
   total: number;
   indexed: number;
   ready: boolean;
+  /** How long the server searched, in milliseconds. */
+  took: number;
 }
 
 /** A file among the most recently written, with its time in seconds. */

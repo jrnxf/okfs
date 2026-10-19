@@ -118,6 +118,8 @@ pub struct Found {
     pub total: usize,
     pub indexed: usize,
     pub ready: bool,
+    /// How long the search took here, in milliseconds. The page shows it.
+    pub took: f64,
 }
 
 /// One file among the most recently written.
@@ -702,12 +704,14 @@ impl Index {
     /// Fuzzy search over every path. Returns the best `limit` matches. Without `all`,
     /// what a listing hides is not searched: see `hides`.
     pub fn search(&self, query: &str, limit: usize, all: bool) -> Found {
+        let began = Instant::now();
         let tree = self.tree.read().expect("the index lock");
         let mut found = Found {
             hits: Vec::new(),
             total: 0,
             indexed: tree.count,
             ready: self.ready(),
+            took: 0.0,
         };
         let query = query.trim();
         if query.is_empty() || limit == 0 {
@@ -773,6 +777,7 @@ impl Index {
                 name: by_name,
             });
         }
+        found.took = (began.elapsed().as_secs_f64() * 1e4).round() / 10.0;
         found
     }
 }

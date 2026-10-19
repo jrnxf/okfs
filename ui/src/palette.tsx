@@ -5,12 +5,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Changed, type Found, type Hit, type Recent, getJson, nameOf, parentOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
+import { type Answer, holdBack, took, waiting } from "./find";
 import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
 import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
 
-/** Typing pauses this long before the server is asked. */
+/** The server is asked no oftener than this while typing goes on. The first key after a pause is asked at once. */
 const SETTLE = 40;
 /** How often the search is asked again while the first walk of the folder goes on. */
 const WALKING = 1000;
@@ -125,7 +126,10 @@ type Row = { command: Entry; idx: number[] } | { hit: Hit } | { recent: Changed 
 export function Palette() {
   const [value, setValue] = useState("");
   const [selected, setSelected] = useState(0);
-  const [found, setFound] = useState<Found | null>(null);
+  // The last answer, kept while a newer query is on its way: the list shows it until the new one lands.
+  const [answer, setAnswer] = useState<Answer | null>(null);
+  const found = answer?.found ?? null;
+  const sent = useRef(0);
   // Asked for once, when the palette opens: it does not change while the palette is up.
   const [recent, setRecent] = useState<Changed[]>([]);
   const input = useRef<HTMLInputElement>(null);
@@ -156,9 +160,10 @@ export function Palette() {
     const abort = new AbortController();
     const timer = setTimeout(
       () => {
-        getJson<Found>(urls.search(asked), abort.signal).then(setFound, () => {});
+        sent.current = performance.now();
+        getJson<Found>(urls.search(asked), abort.signal).then((found) => setAnswer({ q: asked, found }), () => {});
       },
-      asked ? SETTLE : 0,
+      asked ? holdBack(performance.now(), sent.current, SETTLE) : 0,
     );
     return () => {
       clearTimeout(timer);
@@ -171,13 +176,13 @@ export function Palette() {
     if (!found || found.ready) return;
     const abort = new AbortController();
     const timer = setTimeout(() => {
-      getJson<Found>(urls.search(asked), abort.signal).then(setFound, () => {});
+      getJson<Found>(urls.search(asked), abort.signal).then((found) => setAnswer({ q: asked, found }), () => {});
     }, WALKING);
     return () => {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [found, asked]);
+  }, [answer, asked]);
 
   const matching = (entries: Entry[]): Row[] => {
     const matched = entries.flatMap((command) => {
@@ -266,7 +271,8 @@ export function Palette() {
   const matches = `${fmt.count(total)} ${total === 1 ? "match" : "matches"}`;
   // The group a row belongs to, which gets its label above the first row of the run.
   const groupOf = (row: Row): string => ("recent" in row ? "Recently changed" : "command" in row ? "Commands" : matches);
-  const waiting = searching && !found;
+  // Nothing matches only for the query typed: until its answer lands the list keeps the last one.
+  const pending = searching && waiting(asked, answer);
 
   return (
     <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && store.setPalette(false)}>
@@ -297,7 +303,7 @@ export function Palette() {
           <kbd class="pal-esc">esc</kbd>
         </div>
         <div class="pal-list" ref={list}>
-          {rows.length === 0 && !waiting && <div class="pal-empty">Nothing matches “{query}”.</div>}
+          {rows.length === 0 && !pending && <div class="pal-empty">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
             const common = { class: "pal-row", "aria-selected": index === at, onClick: () => pick(index) };
             const group = groupOf(row);
@@ -381,6 +387,7 @@ export function Palette() {
           <span class="sp" />
           {found && (
             <span class="num">
+              {searching && !pending && `${took(found.took)} · `}
               {fmt.count(found.indexed)} entries {found.ready ? "indexed" : "indexed so far"}
             </span>
           )}
