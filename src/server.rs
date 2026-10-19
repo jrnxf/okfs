@@ -75,8 +75,9 @@ pub struct Options {
     pub index: Option<String>,
     /// Host names answered besides `localhost` and plain addresses.
     pub allow_hosts: Vec<String>,
-    /// Refuse requests for other host names. On for a loopback address, where a
-    /// hostile page could otherwise reach the server by pointing a name at it.
+    /// Refuse requests for other host names, so that a hostile page cannot reach the
+    /// server by pointing a name of its own at it. okfs turns it on at every address it
+    /// listens on; a router built for a test may leave it off.
     pub check_host: bool,
     pub cache: Option<PathBuf>,
     /// okfs itself, started again to draw the first page of a PDF. Without it PDFs get no picture.
@@ -131,8 +132,10 @@ impl App {
             ThemeChoice::File(path) => Some(read_theme(path)?),
         };
         let workers = std::thread::available_parallelism().map_or(2, usize::from);
+        let thumbs = Thumbs::new(options.cache.clone(), root.dir());
+        index.after_rescan(thumbs.pruner());
         Ok(Arc::new(Self {
-            thumbs: Thumbs::new(options.cache.clone(), root.dir()),
+            thumbs,
             drawer: Drawer::new(options.drawer.clone(), options.pdf_limit),
             root,
             index,

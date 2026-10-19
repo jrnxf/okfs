@@ -68,7 +68,9 @@ okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 
 A folder's `README.md` is shown under its listing.
 
-The page follows changes through a watcher on the folder. Where okfs cannot set one up, it reads the folder again every 30 seconds and the page catches up at that pace. Something reached through a symbolic link is not followed as it changes: it catches up when the page is reloaded or shown again.
+The page follows changes through a watcher on the folder. Where okfs cannot set one up, it says so when it starts and reads the whole folder again on a timer: every 30 seconds, or 20 times as long as one read of it takes when that is longer, so a tree that takes minutes to read is not read over and over. The page catches up at that pace. Something reached through a symbolic link is not followed as it changes: it catches up when the page is reloaded or shown again.
+
+With `--rescan`, okfs sets up no watcher and reads the whole folder again on a timer you choose: `--rescan 6h`. That suits a tree too big to watch, and a network share, where a watcher does not see what other machines change. A folder's listing is always read from the disk when it is opened, so only what comes from the index waits for the next read: the search, its list of recent files, and how many entries a folder holds.
 
 <details>
 <summary>All flags</summary>
@@ -89,6 +91,7 @@ The page follows changes through a watcher on the folder. Where okfs cannot set 
 | `-H`, `--hidden` | Serve dotfiles, and show hidden files to a browser that has made no choice with `.`. Without it, dotfiles are never sent, and `.` shows only the folders left out of the search. |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
 | `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
+| `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
 </details>
 
@@ -140,15 +143,25 @@ backups/
 !dist
 ```
 
-A change to any of these files is read when it happens. The built-in names are always left out. The watcher still looks at the whole tree on Linux: it takes one inotify watch per folder, left out or not, so a very large tree can reach `fs.inotify.max_user_watches`. okfs then reads the folder again every 30 seconds, as described above.
+A change to any of these files is read when it happens. The built-in names are always left out. The watcher still looks at the whole tree on Linux: it takes one inotify watch per folder, left out or not, so a very large tree can reach `fs.inotify.max_user_watches`. okfs then reads the folder again on a timer, as described above. To choose that timer, or to spare a large tree the watches, pass `--rescan`:
+
+```sh
+okfs --rescan 6h /mnt/archive
+```
+
+Each of those reads also removes the cached thumbnails that have not been used for 30 days, which otherwise happens only when okfs starts.
 
 ### Behind a proxy or a tunnel
 
-While okfs listens on a loopback address it answers only to `localhost` and to plain addresses. This stops a hostile web page from reaching it by pointing a host name at your machine. If you put a proxy or a tunnel in front, name the host it uses:
+On every address it listens on, okfs answers only to `localhost`, to plain addresses such as `127.0.0.1` or `192.168.1.20`, and to the names you give it with `--allow-host`. Any other name in a request's `Host` gets a refusal that names the flag to pass. This stops a hostile web page from reaching okfs by pointing a host name of its own at your machine, also when okfs listens on `0.0.0.0` and the machine it points at is another one on your network. If you put a proxy or a tunnel in front, name the host it uses:
 
 ```sh
 okfs --allow-host files.example.com
 ```
+
+A name of your own on the network, such as `my-laptop.local`, needs `--allow-host` too. A plain address always works, as `--bind 0.0.0.0` prints it.
+
+This check is not a password. A program other than a browser can send any name it likes, so okfs behind a proxy that asks people to sign in is still open to anything that can reach its own address directly. Keep that address where only the proxy can reach it: listen on loopback with the proxy on the same machine, or let a firewall through to okfs's port from the proxy alone.
 
 ### Deleting
 

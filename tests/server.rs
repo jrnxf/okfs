@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
 use http_body_util::BodyExt;
-use okfs::index::Index;
+use okfs::index::{Follow, Index};
 use okfs::paths::Root;
 use okfs::server::{App, Options, ThemeChoice, router};
 use serde_json::Value;
@@ -1062,7 +1062,7 @@ async fn the_stream_of_changes_is_guarded_and_sent_as_it_is() {
 async fn an_open_page_is_told_of_what_changes_on_disk() {
     let site = Site::new();
     let root = Root::new(&site.served, false).unwrap();
-    let index = Index::spawn(root.clone());
+    let index = Index::spawn(root.clone(), Follow::Watch);
     let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
     for _ in 0..200 {
         if index.ready() {
@@ -1148,7 +1148,7 @@ async fn a_folder_reached_through_a_link_says_where_it_really_is() {
 async fn search_finds_names_across_the_tree_and_follows_changes() {
     let site = Site::new();
     let root = Root::new(&site.served, false).unwrap();
-    let index = Index::spawn(root.clone());
+    let index = Index::spawn(root.clone(), Follow::Watch);
     let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
     let found = |query: &'static str| {
         let app = app.clone();
@@ -1195,7 +1195,7 @@ async fn a_folder_left_out_of_the_search_still_opens_and_lists_its_files() {
     }
     fs::write(site.served.join(".gitignore"), "dist\n").unwrap();
     let root = Root::new(&site.served, false).unwrap();
-    let index = Index::spawn(root.clone());
+    let index = Index::spawn(root.clone(), Follow::Watch);
     let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
     let wait_for = |query: &'static str, want: usize| {
         let app = app.clone();
@@ -1380,7 +1380,7 @@ async fn a_rewritten_file_moves_to_the_top_and_a_removed_file_leaves() {
         written_at(site.served.join(path), seconds);
     }
     let root = Root::new(&site.served, false).unwrap();
-    let index = Index::spawn(root.clone());
+    let index = Index::spawn(root.clone(), Follow::Watch);
     let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
     let wait_for_first = |want: &'static str| {
         let app = app.clone();
@@ -1441,7 +1441,7 @@ async fn a_change_behind_a_link_to_a_folder_is_seen_once_under_the_real_folder()
     let site = Site::new();
     std::os::unix::fs::symlink(site.served.join("sub"), site.served.join("current")).unwrap();
     let root = Root::new(&site.served, false).unwrap();
-    let index = Index::spawn(root.clone());
+    let index = Index::spawn(root.clone(), Follow::Watch);
     let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
     let wait_for = |uri: &'static str, done: fn(&Value) -> bool| {
         let app = app.clone();

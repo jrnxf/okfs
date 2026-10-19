@@ -1,7 +1,8 @@
 //! Every name in the served tree, held in memory for the palette's search, with the
 //! time each file was last written. One walk at start builds it; a file watcher keeps
 //! it fresh after that. The same watcher is what open pages follow: every change it
-//! reads is told to the feed.
+//! reads is told to the feed. With `Follow::Rescan` there is no watcher, and the whole
+//! tree is walked again on a timer instead.
 //!
 //! Some folders are left out (see `skip`): they are listed in their folder, but what is
 //! inside is not walked, not searched, and not kept up by the watcher.
@@ -12,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::event::{EventKind, ModifyKind};
@@ -21,6 +22,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
+use crate::every;
 use crate::live::{Change, Feed};
 use crate::paths::{self, Resolved, Root};
 use crate::skip::{self, Rules, Skip};
@@ -29,8 +31,11 @@ use crate::skip::{self, Rules, Skip};
 const SETTLE: Duration = Duration::from_millis(150);
 /// The longest a busy tree can delay a read.
 const MAX_WAIT: Duration = Duration::from_secs(2);
-/// How often the tree is walked again when no watcher could be set up.
+/// The least time between walks of the whole tree when no watcher could be set up.
 const POLL: Duration = Duration::from_secs(30);
+/// Without a watcher, a walk of the whole tree takes at most one part in this many of the time,
+/// so a tree that takes minutes to read is not read over and over.
+const POLL_SHARE: u32 = 20;
 /// A match on the name itself outranks a match somewhere in the path.
 const NAME_BONUS: u32 = 64;
 /// How many files are listed as the ones written last.
@@ -75,12 +80,25 @@ struct Tree {
     count: usize,
 }
 
+/// How the index keeps up with the tree after the first walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Follow {
+    /// A file watcher tells of each change as it happens.
+    Watch,
+    /// No watcher: the whole tree is walked again this often. For a tree too big to
+    /// watch, or one a watcher cannot see change, such as a network share that other
+    /// machines write to.
+    Rescan(Duration),
+}
+
 pub struct Index {
     root: Root,
     skip: Skip,
     tree: RwLock<Tree>,
     ready: AtomicBool,
     feed: Feed,
+    /// Called after each walk of the whole tree that is not the first.
+    rescanned: OnceLock<Box<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -130,25 +148,54 @@ impl Index {
             tree: RwLock::default(),
             ready: AtomicBool::new(false),
             feed: Feed::default(),
+            rescanned: OnceLock::new(),
         })
     }
 
-    /// Starts the first walk and the watcher on their own thread and returns at once.
-    pub fn spawn(root: Root) -> Arc<Self> {
+    /// Starts the first walk, and what follows the tree after it, on their own thread and
+    /// returns at once.
+    pub fn spawn(root: Root, follow: Follow) -> Arc<Self> {
         let index = Self::new(root);
         let worker = Arc::clone(&index);
         std::thread::Builder::new()
             .name("okfs-index".to_owned())
-            .spawn(move || worker.run())
+            .spawn(move || match follow {
+                Follow::Watch => worker.watch(),
+                Follow::Rescan(every) => {
+                    worker.build();
+                    worker.rescan(every, |_| every);
+                }
+            })
             .expect("the index thread starts");
         index
     }
 
-    fn run(&self) {
+    /// Sets what to do after each walk of the whole tree that is not the first. Only the
+    /// first call counts.
+    pub fn after_rescan(&self, then: impl Fn() + Send + Sync + 'static) {
+        let _ = self.rescanned.set(Box::new(then));
+    }
+
+    /// Walks the whole tree again and again, for good. `wait` is the time before the first
+    /// walk, and `next` gives the time before each one after it from how long the last took.
+    fn rescan(&self, mut wait: Duration, next: impl Fn(Duration) -> Duration) -> ! {
+        loop {
+            std::thread::sleep(wait);
+            let started = Instant::now();
+            self.rebuild();
+            if let Some(then) = self.rescanned.get() {
+                then();
+            }
+            wait = next(started.elapsed());
+        }
+    }
+
+    fn watch(&self) {
         let (send, events) = mpsc::channel();
         // The watcher reads the whole tree to set itself up, left-out folders too, which on Linux
         // takes about as long as the first walk. They go at once, so the count climbs from the start.
         let began = SystemTime::now();
+        let started = Instant::now();
         let top = self.root.dir().to_path_buf();
         let setup = std::thread::Builder::new()
             .name("okfs-watch".to_owned())
@@ -162,18 +209,20 @@ impl Index {
             })
             .expect("the watcher thread starts");
         self.build();
+        let took = started.elapsed();
         let watcher = setup.join().expect("the watcher thread ends");
         let _watcher = match watcher {
             Ok(watcher) => watcher,
             Err(error) => {
+                let wait = poll_wait(took);
                 eprintln!(
-                    "okfs: cannot watch the folder for changes ({error}); reading it again every {}s",
-                    POLL.as_secs()
+                    "okfs: cannot watch the folder for changes ({error}). Reading all of it again every {} \
+                     instead: every {}, or {POLL_SHARE} times as long as one read takes when that is longer. \
+                     To choose how often, start okfs with --rescan, such as --rescan 6h",
+                    every::spoken(wait),
+                    every::spoken(POLL)
                 );
-                loop {
-                    std::thread::sleep(POLL);
-                    self.rebuild();
-                }
+                self.rescan(wait, poll_wait);
             }
         };
 
@@ -726,6 +775,11 @@ impl Index {
         }
         found
     }
+}
+
+/// The time between walks of the whole tree, without a watcher, when one takes `took`.
+fn poll_wait(took: Duration) -> Duration {
+    took.saturating_mul(POLL_SHARE).max(POLL)
 }
 
 /// Whether `path`, in the folder `dir`, is a file of rules for what the index leaves out.
@@ -1306,5 +1360,55 @@ mod tests {
         let lost = Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan);
         site.index.absorb(vec![Ok(lost)]);
         assert_eq!(site.told(), [Change::Sync]);
+    }
+
+    /// A served folder with one file, and an index of it that follows it as `follow` says.
+    fn spawned(follow: Follow) -> (tempfile::TempDir, PathBuf, Arc<Index>) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let served = tmp.path().canonicalize().unwrap();
+        fs::write(served.join("a.txt"), "a").unwrap();
+        let index = Index::spawn(Root::new(&served, false).unwrap(), follow);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !index.ready() {
+            assert!(Instant::now() < deadline, "the first walk never ended");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        (tmp, served, index)
+    }
+
+    #[test]
+    fn a_rescan_walks_the_tree_again_and_then_does_what_it_was_given() {
+        let (_tmp, served, index) = spawned(Follow::Rescan(Duration::from_millis(200)));
+        let (done, rescans) = mpsc::channel();
+        index.after_rescan(move || {
+            let _ = done.send(());
+        });
+        let mut page = Box::pin(index.feed().follow());
+        fs::write(served.join("new.txt"), "new").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while found(&index, "new.txt").is_empty() {
+            assert!(Instant::now() < deadline, "the rescan never found the new file");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        rescans.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(page.next().now_or_never(), Some(Some(Change::Sync)));
+    }
+
+    #[test]
+    fn with_a_rescan_there_is_no_watcher() {
+        let (_tmp, served, index) = spawned(Follow::Rescan(Duration::from_secs(3600)));
+        fs::write(served.join("new.txt"), "new").unwrap();
+        // A watcher would have read it well within this.
+        std::thread::sleep(SETTLE * 6);
+        assert!(found(&index, "new.txt").is_empty());
+        assert_eq!(found(&index, "a.txt"), ["a.txt"]);
+    }
+
+    #[test]
+    fn without_a_watcher_a_big_tree_is_walked_again_less_often() {
+        assert_eq!(poll_wait(Duration::from_millis(5)), POLL);
+        assert_eq!(poll_wait(Duration::from_secs(1)), POLL);
+        assert_eq!(poll_wait(Duration::from_secs(90)), Duration::from_secs(30 * 60));
+        assert_eq!(poll_wait(Duration::MAX), Duration::MAX);
     }
 }

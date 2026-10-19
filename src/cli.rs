@@ -4,10 +4,12 @@ use std::io::IsTerminal;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::index::Index;
+use crate::every;
+use crate::index::{Follow, Index};
 use crate::lan::{self, Scan};
 use crate::paths::Root;
 use crate::server::{self, App, Options, ThemeChoice};
@@ -25,6 +27,7 @@ Examples:
   okfs --theme ./mine.css         start in your own theme
   okfs theme check ./mine.css     check a theme file against the contract
   okfs --allow-delete             let visitors delete files and folders
+  okfs --rescan 6h                read the whole tree again every 6 hours instead of watching it
 
 Everything is read only unless you pass --allow-delete. There is no upload and no editing.";
 
@@ -95,6 +98,11 @@ struct Serve {
     /// Let anyone who can reach the address delete files and folders. Off by default
     #[arg(long)]
     allow_delete: bool,
+
+    /// Read the whole tree again this often instead of watching it for changes: --rescan 6h.
+    /// For a tree too big to watch, or a network share that other machines write to
+    #[arg(long, value_name = "EVERY", value_parser = every::parse)]
+    rescan: Option<Duration>,
 }
 
 #[derive(Subcommand)]
@@ -218,7 +226,7 @@ fn serve(args: Serve) -> Result<(), String> {
         header: args.header,
         index: args.index,
         allow_hosts: args.allow_host,
-        check_host: args.bind.is_loopback(),
+        check_host: true,
         allow_delete: args.allow_delete,
         cache: dirs::cache_dir().map(|dir| dir.join("okfs").join("thumbs")),
         drawer: this_program(),
@@ -228,7 +236,8 @@ fn serve(args: Serve) -> Result<(), String> {
         ThemeChoice::BuiltIn(name) => name.clone(),
         ThemeChoice::File(path) => path.display().to_string(),
     };
-    let index = Index::spawn(root.clone());
+    let follow = args.rescan.map_or(Follow::Watch, Follow::Rescan);
+    let index = Index::spawn(root.clone(), follow);
     let app = App::new(root.clone(), std::sync::Arc::clone(&index), options)?;
     std::thread::spawn(crate::render::warm);
 
@@ -246,6 +255,9 @@ fn serve(args: Serve) -> Result<(), String> {
             "read only"
         };
         println!("  serving  {} ({writes})", root.dir().display());
+        if let Follow::Rescan(every) = follow {
+            println!("  rescan   every {}", every::spoken(every));
+        }
         let addresses = lan::addresses(address.ip(), &lan::found());
         for (index, ip) in addresses.iter().enumerate() {
             let label = if index == 0 { "at" } else { "" };

@@ -24,7 +24,7 @@ pub const PICTURE_SIDE: u32 = 4096;
 const WHOLE: u32 = 0;
 /// A thumbnail never grows past this many times its width on the long side.
 const MAX_ASPECT: u32 = 4;
-/// Cached thumbnails not used for this long are removed at start.
+/// Cached thumbnails not used for this long are removed at start, and after each rescan.
 const KEEP: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 #[derive(Debug)]
@@ -71,6 +71,17 @@ impl Thumbs {
             std::thread::spawn(move || prune(&dir));
         }
         Self { cache }
+    }
+
+    /// What removes the pictures not used for a while, as starting does. A server that runs for
+    /// long, walking its tree again on a timer, calls it after each walk.
+    pub fn pruner(&self) -> impl Fn() + Send + Sync + 'static {
+        let cache = self.cache.clone();
+        move || {
+            if let Some(dir) = &cache {
+                prune(dir);
+            }
+        }
     }
 
     fn slot(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Option<PathBuf> {
