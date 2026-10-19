@@ -1,6 +1,6 @@
 [package]
 name = "okfs"
-version = "0.1.0"
+version = "0.1.0-dev.1"
 edition = "2024"
 description = "A web file browser. Run it in a folder and flip through every file inside."
 readme = "README.md"
