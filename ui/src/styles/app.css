@@ -20,6 +20,12 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 /* A pane that has gone, sliding out over the strip: see slide.ts. */
 .ghost { position: absolute; z-index: 1; pointer-events: none; }
 .ghost.left, .ghost.col { background: var(--bg); }
+/* The cursor's highlight while it travels with the slide, over the panes and their copies: see glide.ts. It tints what
+   is under it rather than covering it, so the rows sliding under it show through: on a light ground the darker of the
+   two is drawn, on a dark one the lighter. The rows' own highlight waits until it lands. */
+.glide { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); mix-blend-mode: darken; }
+:root[data-scheme="dark"] .glide { mix-blend-mode: lighten; }
+.main.gliding .left .row[aria-selected="true"] { background: none; box-shadow: none; }
 .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
 [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 68px 66px; }

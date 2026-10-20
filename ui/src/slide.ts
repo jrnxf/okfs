@@ -4,6 +4,7 @@
 
 import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { type Box, Glide, glideOf, highlightOf, landingOf } from "./glide";
 import { type Before, type Edges, type Move, alongOf, beforeOf, moveOf } from "./moves";
 import { keyHeld } from "./preview";
 import { store } from "./store";
@@ -198,12 +199,15 @@ class Slide {
  * slide takes the panes on from where they are, so nothing jumps. A step into a folder that was not shown slides
  * by a slot; any other move with no pane in common, a file given the full width in another folder, a phone's
  * single pane, a reader who asked for less motion, and a held key do not slide: under a held key the panes are
- * where the key has taken them at once.
+ * where the key has taken them at once. On a step from one folder to another, the cursor's highlight travels with
+ * them, from the row it was on to the row it lands on: see `glide.ts`. A cursor that moves while it travels stops it.
  */
 export function useSlide(strip: RefObject<HTMLElement | null>, path: string, open: boolean): void {
   const shown = useRef({ path, open });
   const before = useRef<Was[] | null>(null);
   const running = useRef<Slide | null>(null);
+  const highlight = useRef<Box | null>(null);
+  const gliding = useRef<Glide | null>(null);
 
   // The store tells of the change before the page draws it: the panes are looked at while they are the old ones.
   useEffect(
@@ -211,9 +215,16 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string, ope
       store.subscribe(() => {
         const el = strip.current;
         const { s } = store;
-        if (!el || before.current || (s.path === shown.current.path && (s.open !== null) === shown.current.open)) return;
+        const stays = s.path === shown.current.path && (s.open !== null) === shown.current.open;
+        // The cursor moved in the list while the highlight travels to it: the row draws it, where it is now.
+        if (stays && gliding.current && store.at() !== gliding.current.index) {
+          gliding.current.stop();
+          gliding.current = null;
+        }
+        if (!el || before.current || stays) return;
         if (still() || keyHeld()) return;
         before.current = look(el);
+        highlight.current = highlightOf(el);
       }),
     [strip],
   );
@@ -224,10 +235,14 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string, ope
     shown.current = { path, open };
     const was = before.current;
     before.current = null;
+    const fromBox = highlight.current;
+    highlight.current = null;
     // The panes' slide still running gives way: the new one starts from where they were looked at, or, with
     // nothing looked at, the panes are in their new slots at once.
     running.current?.stop();
     running.current = null;
+    gliding.current?.stop();
+    gliding.current = null;
     const el = strip.current;
     if (!el || !was || (open && path !== from.path)) return;
 
@@ -236,6 +251,12 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string, ope
     // from a column does.
     const along = alongOf(was, now) ?? (into(from.path, path) ? slot(was) : undefined);
     if (!along) return;
+    // Where the highlight lands is read before anything slides: the rows where they end. A file given the full width,
+    // or taking it back, shows no list at one end, and the highlight does not travel.
+    const index = store.at();
+    const to = path !== from.path && !open && !from.open ? landingOf(el, index) : null;
+    const frames = fromBox && to && glideOf(fromBox, to);
     running.current = new Slide(el, was, along);
+    if (to && frames) gliding.current = new Glide(el, index, to, frames, { duration: SLIDE_MS, easing: EASE_OUT });
   }, [path, open, strip]);
 }
