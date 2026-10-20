@@ -1,8 +1,10 @@
 // Panes slide sideways into their new slots when the folder shown changes to one beside it: a step in, a step
-// out, or a click a few columns along. Nothing moves up or down, and nothing waits for the slide.
+// out, or a click a few columns along; and when a file takes the full width or gives it back. Nothing moves up or
+// down, and nothing waits for the slide.
 
 import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { type Before, type Edges, type Move, alongOf, beforeOf, moveOf } from "./moves";
 import { keyHeld } from "./preview";
 import { store } from "./store";
 
@@ -11,36 +13,37 @@ export const SLIDE_MS = 150;
 /** Fast out of the gate, settling into the slot: the panes move with the key, not after it. */
 const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
 /** The parts of a pane that scroll: a copy of the pane is scrolled as far as the pane was. */
-const SCROLLS = ".list, .col-rows";
+const SCROLLS = ".list, .col-rows, .pv-scroll";
+/** What a copy of a preview leaves out: what would load again or play in it, and what is loaded out of sight. */
+const LIVE = "iframe, video, audio, object, embed, .pv-ahead";
 
-/**
- * A pane as it was on screen before the move: where it was and how far it had faded in, part way through a slide
- * that is still running, and a still copy of it to slide out when it is gone.
- */
-interface Was {
-  key: string;
-  rect: DOMRect;
-  opacity: number;
+/** A pane as it was on screen before the move, with its box, and a still copy of it to slide out when it is gone. */
+interface Was extends Before {
+  box: DOMRect;
   copy: HTMLElement;
   scrolls: number[];
 }
 
 const still = (): boolean => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Each pane of the strip by its folder's path. The preview pane has an empty one: it is never the same pane. */
+/**
+ * Each pane of the strip, by its key: the path of its folder, or of the file it shows. A pane that shows neither
+ * has an empty one: it is never the same pane.
+ */
 function panesOf(strip: HTMLElement): HTMLElement[] {
   return [...strip.querySelectorAll<HTMLElement>("[data-pane]")].filter((pane) => pane.getClientRects().length > 0);
 }
 
-/**
- * A copy of a pane that can be shown while the pane itself has gone. A preview's frames are left out: of a file's
- * preview only the bar is copied.
- */
+/** A pane's edges as they are drawn. */
+function edgesOf(pane: HTMLElement): Edges {
+  const { left, right } = pane.getBoundingClientRect();
+  return { left, right };
+}
+
+/** A copy of a pane that can be shown while the pane itself has gone. Of a preview, what is `LIVE` is left out. */
 function copyOf(pane: HTMLElement): HTMLElement {
-  const preview = pane.classList.contains("pane");
-  const copy = pane.cloneNode(!preview) as HTMLElement;
-  const bar = preview ? pane.querySelector(".ph") : null;
-  if (bar) copy.append(bar.cloneNode(true));
+  const copy = pane.cloneNode(true) as HTMLElement;
+  for (const el of copy.querySelectorAll(LIVE)) el.remove();
   for (const el of copy.querySelectorAll("[id]")) el.removeAttribute("id");
   copy.removeAttribute("data-pane");
   copy.setAttribute("aria-hidden", "true");
@@ -51,13 +54,17 @@ function copyOf(pane: HTMLElement): HTMLElement {
 
 // A pane's box and opacity are read as they are drawn, so a slide still running is looked at where it has got to.
 function look(strip: HTMLElement): Was[] {
-  return panesOf(strip).map((pane) => ({
-    key: pane.dataset.pane ?? "",
-    rect: pane.getBoundingClientRect(),
-    opacity: Number(getComputedStyle(pane).opacity),
-    copy: copyOf(pane),
-    scrolls: [...pane.querySelectorAll(SCROLLS)].map((el) => el.scrollTop),
-  }));
+  return panesOf(strip).map((pane) => {
+    const box = pane.getBoundingClientRect();
+    return {
+      key: pane.dataset.pane ?? "",
+      rect: { left: box.left, right: box.right },
+      box,
+      opacity: Number(getComputedStyle(pane).opacity),
+      copy: copyOf(pane),
+      scrolls: [...pane.querySelectorAll(SCROLLS)].map((el) => el.scrollTop),
+    };
+  });
 }
 
 /** True when `path` is a folder directly inside `from`: a step in, which slides left even with no pane in common. */
@@ -69,27 +76,128 @@ const into = (from: string, path: string): boolean => {
 /** How far a slot is from the next, as the panes were: the main list's left edge to the first column's. */
 function slot(was: Was[]): number | undefined {
   const [first, next] = was;
-  return first && next ? next.rect.left - first.rect.left : first?.rect.width;
+  return first && next ? next.rect.left - first.rect.left : first && first.rect.right - first.rect.left;
+}
+
+/** The frames of a move: a pane moved whole slides, one held at the right edge moves its left edge. */
+function framesOf(move: Move): Keyframe[] {
+  return move.edge
+    ? [
+        { marginLeft: `${move.from}px`, opacity: move.opacity },
+        { marginLeft: "0px", opacity: 1 },
+      ]
+    : [
+        { transform: `translateX(${move.from}px)`, opacity: move.opacity },
+        { transform: "none", opacity: 1 },
+      ];
+}
+
+/** A pane coming or going: a change the slide has to take in. A copy sliding out is not one. */
+const isPane = (node: Node): boolean =>
+  node instanceof HTMLElement && !node.classList.contains("ghost") && (node.matches("[data-pane]") || node.querySelector("[data-pane]") !== null);
+
+/**
+ * One slide of the panes of `strip`, from where they were, `was`, by `along`. A pane that comes or goes while it runs,
+ * as a column whose answer comes a moment after the step, joins it where it has got to: every pane is where the
+ * slide would have it had the pane been there from the start, so the panes move as one.
+ */
+class Slide {
+  private readonly runs = new Map<HTMLElement, Animation>();
+  private readonly out = new Map<Was, Animation>();
+  private readonly watch: MutationObserver;
+  private readonly start = performance.now();
+
+  constructor(
+    private readonly strip: HTMLElement,
+    private readonly was: Was[],
+    private readonly along: number,
+  ) {
+    this.place();
+    this.watch = new MutationObserver((records) => {
+      if (records.some((record) => record.type === "attributes" || [...record.addedNodes, ...record.removedNodes].some(isPane))) this.place();
+    });
+    this.watch.observe(strip, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-pane"] });
+    setTimeout(() => this.watch.disconnect(), SLIDE_MS);
+  }
+
+  /** Each pane where the slide has got to, from where it would be with no slide on it, and a copy of each gone. */
+  private place(): void {
+    const at = performance.now() - this.start;
+    if (at >= SLIDE_MS) return;
+    for (const run of this.runs.values()) run.cancel();
+    this.runs.clear();
+    const box = this.strip.getBoundingClientRect();
+    const now = panesOf(this.strip).map((pane) => ({ pane, key: pane.dataset.pane ?? "", rect: edgesOf(pane) }));
+    const timing = { duration: SLIDE_MS, easing: EASE_OUT };
+    for (const placed of now) {
+      const run = placed.pane.animate(framesOf(moveOf(placed.rect, beforeOf(this.was, placed), this.along, box.right)), timing);
+      run.currentTime = at;
+      this.runs.set(placed.pane, run);
+    }
+    const kept = new Set(now.map((placed) => placed.key).filter(Boolean));
+    for (const it of this.was) {
+      const going = this.out.get(it);
+      if (it.key && kept.has(it.key)) {
+        going?.cancel();
+        this.out.delete(it);
+        continue;
+      }
+      if (going) continue;
+      const { copy, box: was } = it;
+      Object.assign(copy.style, {
+        top: `${was.top - box.top}px`,
+        left: `${was.left - box.left}px`,
+        width: `${was.width}px`,
+        height: `${was.height}px`,
+      });
+      this.strip.append(copy);
+      copy.querySelectorAll(SCROLLS).forEach((scroller, index) => {
+        scroller.scrollTop = it.scrolls[index] ?? 0;
+      });
+      const run = copy.animate(
+        [
+          { transform: "none", opacity: it.opacity },
+          { transform: `translateX(${-this.along}px)`, opacity: 0 },
+        ],
+        timing,
+      );
+      run.currentTime = at;
+      this.out.set(it, run);
+      void run.finished.then(
+        () => copy.remove(),
+        () => copy.remove(),
+      );
+    }
+  }
+
+  /** Gives way to the next slide, which starts from where the panes have got to. Copies sliding out finish on their own. */
+  stop(): void {
+    this.watch.disconnect();
+    for (const run of this.runs.values()) run.cancel();
+  }
 }
 
 /**
- * Slides the panes of `strip` when `path`, the folder shown, changes. A pane showing the same folder before and
- * after slides from where it is on screen to its new slot; a pane that comes slides in with them, fading up; a
- * pane that goes slides on out, fading away. A move during a slide takes the panes on from where they are, so
- * nothing jumps. A step into a folder that was not shown slides by a slot; any other move with no pane in common, a phone's single pane, a reader who asked for less motion, and a
- * held key do not slide: under a held key the panes are where the key has taken them at once.
+ * Slides the panes of `strip` when `path`, the folder shown, changes, and when `open`, a file has the full width,
+ * does. A pane showing the same folder or file before and after slides from where it is on screen to its new slot;
+ * a pane that comes slides in with them, fading up; a pane that goes slides on out, fading away. A move during a
+ * slide takes the panes on from where they are, so nothing jumps. A step into a folder that was not shown slides
+ * by a slot; any other move with no pane in common, a file given the full width in another folder, a phone's
+ * single pane, a reader who asked for less motion, and a held key do not slide: under a held key the panes are
+ * where the key has taken them at once.
  */
-export function useSlide(strip: RefObject<HTMLElement | null>, path: string): void {
-  const shown = useRef(path);
+export function useSlide(strip: RefObject<HTMLElement | null>, path: string, open: boolean): void {
+  const shown = useRef({ path, open });
   const before = useRef<Was[] | null>(null);
-  const stop = useRef<(() => void) | null>(null);
+  const running = useRef<Slide | null>(null);
 
-  // The store tells of the new folder before the page draws it: the panes are looked at while they are the old ones.
+  // The store tells of the change before the page draws it: the panes are looked at while they are the old ones.
   useEffect(
     () =>
       store.subscribe(() => {
         const el = strip.current;
-        if (!el || before.current || store.s.path === shown.current) return;
+        const { s } = store;
+        if (!el || before.current || (s.path === shown.current.path && (s.open !== null) === shown.current.open)) return;
         if (still() || keyHeld()) return;
         before.current = look(el);
       }),
@@ -97,67 +205,23 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string): vo
   );
 
   useLayoutEffect(() => {
-    if (path === shown.current) return;
     const from = shown.current;
-    shown.current = path;
+    if (path === from.path && open === from.open) return;
+    shown.current = { path, open };
     const was = before.current;
     before.current = null;
     // The panes' slide still running gives way: the new one starts from where they were looked at, or, with
-    // nothing looked at, the panes are in their new slots at once. Copies sliding out finish on their own.
-    stop.current?.();
-    stop.current = null;
+    // nothing looked at, the panes are in their new slots at once.
+    running.current?.stop();
+    running.current = null;
     const el = strip.current;
-    if (!el || !was || store.s.open) return;
+    if (!el || !was || (open && path !== from.path)) return;
 
-    const box = el.getBoundingClientRect();
-    const now = panesOf(el);
-    const old = new Map(was.map((it) => [it.key, it]));
-    const shift = new Map<HTMLElement, number>();
-    for (const pane of now) {
-      const it = pane.dataset.pane ? old.get(pane.dataset.pane) : undefined;
-      if (it) shift.set(pane, it.rect.left - pane.getBoundingClientRect().left);
-    }
-    // The way the strip moves, from the panes it kept. A pane that comes or goes moves the same way. A click in the
-    // first pane on a folder that was not shown keeps none: the step in slides by a slot, as one from a column does.
-    const along = [...shift.values()].find((dx) => dx !== 0) ?? (into(from, path) ? slot(was) : undefined);
-    if (along === undefined || along === 0) return;
-
-    const timing = { duration: SLIDE_MS, easing: EASE_OUT };
-    const runs: Animation[] = [];
-    for (const pane of now) {
-      const dx = shift.get(pane);
-      const from = dx === undefined ? 0 : (old.get(pane.dataset.pane ?? "")?.opacity ?? 1);
-      runs.push(pane.animate([{ transform: `translateX(${dx ?? along}px)`, opacity: from }, { transform: "none", opacity: 1 }], timing));
-    }
-    const kept = new Set(now.map((pane) => pane.dataset.pane).filter(Boolean));
-    for (const it of was) {
-      if (it.key && kept.has(it.key)) continue;
-      const { copy, rect } = it;
-      Object.assign(copy.style, {
-        top: `${rect.top - box.top}px`,
-        left: `${rect.left - box.left}px`,
-        width: `${rect.width}px`,
-        height: `${rect.height}px`,
-      });
-      el.append(copy);
-      copy.querySelectorAll(SCROLLS).forEach((scroller, at) => {
-        scroller.scrollTop = it.scrolls[at] ?? 0;
-      });
-      const out = copy.animate([{ transform: "none", opacity: it.opacity }, { transform: `translateX(${-along}px)`, opacity: 0 }], timing);
-      void out.finished.then(
-        () => copy.remove(),
-        () => copy.remove(),
-      );
-    }
-    const end = () => {
-      for (const run of runs) run.cancel();
-    };
-    stop.current = end;
-    void Promise.all(runs.map((run) => run.finished)).then(
-      () => {
-        if (stop.current === end) stop.current = null;
-      },
-      () => undefined,
-    );
-  }, [path, strip]);
+    const now = panesOf(el).map((pane) => ({ key: pane.dataset.pane ?? "", rect: edgesOf(pane) }));
+    // A click in the first pane on a folder that was not shown keeps none: the step in slides by a slot, as one
+    // from a column does.
+    const along = alongOf(was, now) ?? (into(from.path, path) ? slot(was) : undefined);
+    if (!along) return;
+    running.current = new Slide(el, was, along);
+  }, [path, open, strip]);
 }

@@ -39,6 +39,8 @@ function listing(path: string, limit: number | undefined, depth: number, follow:
 }
 
 const saved = new Map<string, string>();
+/** The addresses whose answers have been read, in the order they were. */
+const answered: string[] = [];
 /** What the page's modules find on `globalThis` while these tests run, and what was there before. */
 const page = {
   document: { getElementById: () => null, addEventListener: () => undefined, querySelector: () => null },
@@ -50,7 +52,14 @@ const page = {
     const query = new URL(url, "http://localhost").searchParams;
     const limit = query.get("limit");
     const body = listing(query.get("path") ?? "", limit ? Number(limit) : undefined, Number(query.get("depth") ?? 0), (query.get("follow") ?? "").split("/").filter(Boolean));
-    return { ok: true, status: 200, json: async () => body };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => {
+        answered.push(url);
+        return body;
+      },
+    };
   },
 };
 const before = Object.fromEntries(Object.keys(page).map((key) => [key, (globalThis as Record<string, unknown>)[key]]));
@@ -186,4 +195,24 @@ test("the columns asked for ahead of the cursor are the ones the side asks for, 
   const wasAt = (path: string) => store.leftIn(path);
   expect(preview.columnsUrl("code/blip", [], wasAt)).toContain(`&follow=src`);
   expect(preview.columnsUrl("code/devbox", [], wasAt)).not.toContain("follow");
+});
+
+test("a step out draws the folder with the columns beside it: their answer has come by then, so every pane is there to slide", async () => {
+  const store = await at("code/dotfiles", "src");
+  await right(store);
+  expect(store.s.path).toBe("code/dotfiles/src");
+  // What the side asks for once the folder is drawn, and whether its answer had come when it was.
+  let asked = "";
+  let had = false;
+  const stop = store.subscribe(() => {
+    const root = store.columnsRoot();
+    if (store.s.path !== "code/dotfiles" || root === null || asked) return;
+    asked = preview.columnsUrl(root, store.picked(root), (path) => store.leftIn(path));
+    had = answered.includes(asked);
+  });
+  await left(store);
+  stop();
+  expect(store.cur()?.name).toBe("src");
+  expect(asked).toContain("follow=lib.rs");
+  expect(had).toBe(true);
 });

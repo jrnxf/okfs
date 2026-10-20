@@ -13,7 +13,7 @@ import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
 import { DELETE_KEY } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
-import { type Chain, type Left, columnsOf, focusOf, startingAt } from "./slots";
+import { type Chain, type Left, columnsOf, focusOf, standIn } from "./slots";
 import { type Doomed, type Entry, store, toEntry } from "./store";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
@@ -251,7 +251,7 @@ export function Side({ slots }: { slots: number }) {
   const chainRef = useRef<Chain>({ levels: [], led: [], file: null });
   const { names, onMove, onLeave } = usePicks(columns?.path ?? null, chainRef);
   const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path, names, left) : null);
-  const own = columns ? startingAt(data, columns.path) : undefined;
+  const own = columns ? standIn(data, columns.path) : undefined;
   const chain = columns ? columnsOf(own, slots, names, left) : { levels: [], led: [], file: null };
   chainRef.current = chain;
   const { levels } = chain;
@@ -316,9 +316,10 @@ export function Side({ slots }: { slots: number }) {
     // The slots are counted for the pane: the matches take one more than a folder's list does.
     <section class="right" style={`--slots: ${slots}`} onPointerMove={onMove} onPointerLeave={onLeave}>
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
-          would load again if it did. */}
+          would load again if it did. It goes by the path of the file it shows, as a column goes by its folder's:
+          the same file is the same pane, which slides with the columns. */}
       {(!columns || ledFile) && (
-        <div class="pane" key="pane" data-pane="">
+        <div class="pane" key="pane" data-pane={shown?.path ?? ""}>
           <div class="ph" onMouseDown={keepFocus}>
             {header}
           </div>
@@ -332,7 +333,8 @@ export function Side({ slots }: { slots: number }) {
         const into = above && at >= 0 ? above.entries[at] : undefined;
         // The folder under the cursor heads the first column. Each one after is the entry the one before leads on to.
         const head = level === 0 ? columns : above && into ? toEntry(into, above.path, at) : null;
-        return head && <Column key={level} folder={head} listing={listing} led={chain.led[level]} edge={level === slots - 2} level={level} />;
+        // A column goes by its folder, not its slot: a step moves it, and what it is doing goes with it.
+        return head && <Column key={head.path} folder={head} listing={listing} led={chain.led[level]} edge={level === slots - 2} level={level} />;
       })}
     </section>
   );

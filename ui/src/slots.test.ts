@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import type { Listing } from "./api";
-import { columnsOf, slotsFor, startingAt } from "./slots";
+import { columnsOf, slotsFor, standIn, startingAt } from "./slots";
 
 /** A folder holding one folder under another, `depth` deep, the last one holding `last`. */
 function nest(depth: number, last: Listing["entries"] = [], path = "top"): Listing {
@@ -75,7 +75,22 @@ test("a step into a folder starts its columns from the answer of the folder abov
   const above = level("a", level("a/in", level("a/in/in")));
   expect(startingAt(above, "a/in")).toBe(above.under);
   expect(columnsOf(startingAt(above, "a/in"), 4).levels.map((it) => it?.path)).toEqual(["a/in", "a/in/in"]);
-  // An answer that does not reach the folder stays on screen as it is, until the folder's own replaces it.
-  expect(startingAt(above, "b")).toBe(above);
+  // An answer that does not reach the folder has no part of it.
+  expect(startingAt(above, "b")).toBeUndefined();
   expect(startingAt(undefined, "a")).toBeUndefined();
+});
+
+test("a folder's columns stand in on the answer for the folder beside it, and never on one for a folder above or below", () => {
+  const level = (path: string, under?: Listing): Listing => ({ path, m: 0, entries: [{ n: "in", d: true, s: 0, m: 0 }], total: 1, readme: null, under });
+  // Down the list: the last folder's answer stays on screen until this one's comes.
+  const beside = level("p/a", level("p/a/in"));
+  expect(standIn(beside, "p/b")).toBe(beside);
+  // A step in: the part of the answer above that starts at the folder.
+  expect(standIn(level("p", beside), "p/a")).toBe(beside);
+  // A step out from `p/a/in`: the answer on screen is for the folder left, a level below. Drawn under `p/a`, its column
+  // would show the rows of `p/a/in`, and the next column would sit in the slot of the one after it.
+  expect(standIn(level("p/a/in", level("p/a/in/in")), "p/a")).toBeUndefined();
+  expect(columnsOf(standIn(level("p/a/in"), "p/a"), 4).levels).toEqual([undefined]);
+  expect(standIn(level("p"), "p/a/in")).toBeUndefined();
+  expect(standIn(undefined, "p/a")).toBeUndefined();
 });

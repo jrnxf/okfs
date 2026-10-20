@@ -1,6 +1,6 @@
 // How the window is cut into slots, and what the folder under the cursor puts in them.
 
-import { type Item, type Listing, joinPath } from "./api";
+import { type Item, type Listing, joinPath, parentOf } from "./api";
 
 /**
  * The window is cut into equal slots: four from 1,200 px, three from 900 px, two under that. The main list is
@@ -86,11 +86,21 @@ export function columnsOf(listing: Listing | undefined, slots: number, picks: st
 }
 
 /**
- * The part of an answer that starts at the folder `path`. The answer for a folder above it already holds its
- * columns, so a step into the folder under the cursor shows them with the step while the folder's own answer is
- * on its way: no column shows the last folder's rows under this one's name, and each is in its slot for the slide.
+ * The part of an answer that starts at the folder `path`, if the answer reaches it. The answer for a folder above
+ * it already holds its columns, so a step into the folder under the cursor shows them with the step while the
+ * folder's own answer is on its way: each column is in its slot for the slide.
  */
 export function startingAt(listing: Listing | undefined, path: string): Listing | undefined {
   for (let at = listing; at; at = at.under) if (at.path === path) return at;
-  return listing;
+  return undefined;
+}
+
+/**
+ * What the columns of the folder `path` are drawn from while its own answer is on its way: the part of the last
+ * answer that starts at it, or else the last answer whole when it is for a folder beside it, as the cursor moves
+ * down the list. An answer for a folder above or below it is not drawn: under this folder's name a column would
+ * show another folder's rows, and the panes would slide from the wrong slots.
+ */
+export function standIn(listing: Listing | undefined, path: string): Listing | undefined {
+  return startingAt(listing, path) ?? (listing && parentOf(listing.path) === parentOf(path) ? listing : undefined);
 }

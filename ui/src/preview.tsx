@@ -161,6 +161,13 @@ function ask<T>(url: string): Promise<T> {
   return flight.done as Promise<T>;
 }
 
+/** Asks for an answer about to be drawn, as `ask` does. Settles once it is kept, or is not coming. */
+export const preload = (url: string): Promise<void> =>
+  ask(url).then(
+    () => undefined,
+    () => undefined,
+  );
+
 /** The start of a text file, by the address of the whole of it: what the pane asks for first. */
 const startOf = (whole: string): string => `${whole}&lines=${FIRST_LINES}`;
 const startUrl = (path: string, source = false): string => startOf(source ? urls.source(path) : urls.preview(path));

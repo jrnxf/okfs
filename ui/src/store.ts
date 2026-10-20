@@ -22,7 +22,7 @@ import { type Config, config, locate } from "./config";
 import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
-import { forgetAnswers } from "./preview";
+import { columnsUrl, forgetAnswers, preload } from "./preview";
 import { COLUMN_ROWS } from "./slots";
 
 export interface Entry {
@@ -170,6 +170,18 @@ interface Picks {
 
 const NO_PICKS: Picks = { root: "", names: [] };
 
+/** How long a folder waits for the columns beside it once its listing has come. Past it, they come after it. */
+const COLUMNS_WAIT = 150;
+
+/** Settles when `promise` does, or after `ms`, whichever is first. */
+function within(promise: Promise<void>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<void>((done) => {
+    timer = setTimeout(done, ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 export function toEntry(item: Item, dir: string, rank: number): Entry {
   const isDir = item.d === true;
   return {
@@ -229,9 +241,9 @@ export class Store {
   private turn = 0;
   /**
    * Where the cursor was in each folder visited, by name. `drawn`: the entry is among the rows a column of the
-   * folder draws, so the column can lead on to it. See `leftIn`.
+   * folder draws, so the column can lead on to it. See `leftIn`. `dir`: the entry is a folder.
    */
-  private readonly remembered = new Map<string, { name: string; drawn: boolean }>();
+  private readonly remembered = new Map<string, { name: string; drawn: boolean; dir: boolean }>();
   /** What the pointer picked in the columns beside the list. See `pick`. */
   private picks: Picks = NO_PICKS;
   /** Where the folder being shown really is: the path its changes on disk are told by. */
@@ -442,11 +454,16 @@ export class Store {
     const turn = ++this.turn;
     const heard = this.heard;
     const leaving = this.cur();
-    if (leaving && s.status === "ready") this.remembered.set(s.path, { name: leaving.name, drawn: this.column().includes(leaving) });
+    if (leaving && s.status === "ready") this.remembered.set(s.path, { name: leaving.name, drawn: this.column().includes(leaving), dir: leaving.dir });
+    // The columns of the folder the cursor lands on are asked for with the folder, and the folder waits a moment for
+    // them: drawn together, every pane is on screen when the panes slide. See `landing`.
+    const beside = this.landing(path, opts);
+    const columns = beside === null ? null : preload(columnsUrl(beside, this.picked(beside), (at) => this.leftIn(at)));
 
     let listing: Listing;
     try {
       listing = await getJson<Listing>(urls.list(path));
+      if (columns) await within(columns, COLUMNS_WAIT);
     } catch (error) {
       if (turn !== this.turn) return;
       if (!(error instanceof HttpError)) throw error;
@@ -491,6 +508,19 @@ export class Store {
     this.emit();
     // A change told while the listing was on its way may not be in it.
     if (heard !== this.heard) this.catchUp();
+  }
+
+  /**
+   * The folder the cursor lands on when `showDir` shows `path`, where that is known before the folder's listing
+   * comes: on a step out the folder left, and on a jump to a folder visited before the folder the cursor was on when
+   * it was left. A step in needs none: its columns are in the answer for the folder above. See `startingAt`.
+   */
+  private landing(path: string, opts: { select?: string; open?: string; enter?: string[]; finding?: boolean }): string | null {
+    const { s } = this;
+    if (path === s.path || opts.open !== undefined || opts.enter || opts.finding) return null;
+    if (opts.select !== undefined) return s.status === "ready" && joinPath(path, opts.select) === s.path ? s.path : null;
+    const left = this.remembered.get(path);
+    return left?.dir ? joinPath(path, left.name) : null;
   }
 
   /**

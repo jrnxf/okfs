@@ -155,7 +155,12 @@ export function App() {
 
   const scroller = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLDivElement>(null);
-  useSlide(main, s.path);
+  // Drawn with the change, before the panes are measured for the slide: a frame later, the slide would start from
+  // the layout of a file that no longer has the full width, or not yet has it.
+  useLayoutEffect(() => {
+    document.body.classList.toggle("open", s.open !== null);
+  }, [s.open]);
+  useSlide(main, s.path, s.open !== null);
   const filterInput = useRef<HTMLInputElement>(null);
   const queryInput = useRef<HTMLInputElement>(null);
   const [filtering, setFiltering] = useState(false);
@@ -212,10 +217,6 @@ export function App() {
     document.addEventListener("pointerover", tip);
     return () => document.removeEventListener("pointerover", tip);
   }, []);
-
-  useEffect(() => {
-    document.body.classList.toggle("open", s.open !== null);
-  }, [s.open]);
 
   useEffect(() => {
     const name = s.open?.name ?? (s.path ? s.path.slice(s.path.lastIndexOf("/") + 1) : "");
