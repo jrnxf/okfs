@@ -250,6 +250,9 @@ export class Store {
   private picks: Picks = NO_PICKS;
   /** Where the folder being shown really is: the path its changes on disk are told by. */
   private real = "";
+  /** The listing of the folder being shown, and of the one shown before it. See `before`. */
+  private listing: Listing | null = null;
+  private last: Listing | null = null;
   /** Counts what the server told, so a folder that was on its way while something came in is read once more. */
   private heard = 0;
   /** What the next catch-up has to do, while one is due. See `catchUp`. */
@@ -370,6 +373,14 @@ export class Store {
     return left?.drawn ? left.name : undefined;
   }
 
+  /**
+   * The listing of the folder at `path` when it is the one shown before this one, as on a step out of it: its
+   * columns are drawn from it until their own answer comes. See `steppedOut`.
+   */
+  before(path: string): Listing | undefined {
+    return this.last?.path === path ? this.last : undefined;
+  }
+
   /** The folder being shown as a column of it draws it: its first entries, folders first, in name order. */
   private column(): Entry[] {
     const { all } = this.s;
@@ -435,6 +446,8 @@ export class Store {
   /** Takes a listing as the folder being shown. */
   private take(listing: Listing): void {
     const { s } = this;
+    if (this.listing?.path !== listing.path) this.last = this.listing;
+    this.listing = listing;
     s.status = "ready";
     s.path = listing.path;
     this.real = listing.real ?? listing.path;

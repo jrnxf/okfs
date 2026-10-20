@@ -4,15 +4,17 @@
 // or else its first: going into the folder lands on it.
 
 import type { ComponentChildren, RefObject } from "preact";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Item, type Listing, urls } from "./api";
 import { Aim, AIM_RECHECK } from "./aim";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
+import { goingOf } from "./moves";
 import { DELETE_KEY } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
+import { SLIDE_MS } from "./slide";
 import { type Chain, type Left, columnsOf, focusOf, standIn } from "./slots";
 import { type Doomed, type Entry, store, toEntry } from "./store";
 
@@ -236,6 +238,30 @@ function usePicks(root: string | null, drawn: RefObject<Chain>) {
   return { names: store.picked(root), onMove, onLeave };
 }
 
+/**
+ * The file the pane showed a moment ago, while the panes slide, when the pane has just gone from the slots: on a step
+ * out that takes the file past the window's right edge. The pane stays in the page for the slide, out of the slots,
+ * and slides out whole: a copy of it would leave out what is live in it, a page's or a PDF's frame, and go blank.
+ * See `useSlide`.
+ */
+function useGoing(here: boolean, shown: Entry | null): Entry | null {
+  const was = useRef<Entry | null>(null);
+  const going = useRef<Entry | null>(null);
+  const [, gone] = useState(0);
+  going.current = goingOf(here, was.current, going.current);
+  was.current = here ? shown : null;
+  const entry = going.current;
+  useEffect(() => {
+    if (!entry) return;
+    const timer = setTimeout(() => {
+      going.current = null;
+      gone((count) => count + 1);
+    }, SLIDE_MS);
+    return () => clearTimeout(timer);
+  }, [entry]);
+  return entry;
+}
+
 export function Side({ slots }: { slots: number }) {
   const { s } = store;
   const cur = store.cur();
@@ -251,16 +277,31 @@ export function Side({ slots }: { slots: number }) {
   const chainRef = useRef<Chain>({ levels: [], led: [], file: null });
   const { names, onMove, onLeave } = usePicks(columns?.path ?? null, chainRef);
   const { data } = useLoaded<Listing>(columns ? columnsUrl(columns.path, names, left) : null);
-  const own = columns ? standIn(data, columns.path) : undefined;
+  // On a step out the folder left is drawn as it was on screen, with the answer that was beside it, until its own
+  // answer comes: a late answer would otherwise take the columns past it and the preview off screen, and bring them
+  // back in their slots with no slide.
+  const own = columns ? standIn(data, columns.path, store.before(columns.path)) : undefined;
   const chain = columns ? columnsOf(own, slots, names, left) : { levels: [], led: [], file: null };
   chainRef.current = chain;
   const { levels } = chain;
   const ledFile = chain.file ? toEntry(chain.file.item, chain.file.listing.path, chain.file.at) : null;
 
   const shown = file ?? ledFile;
+  const here = !columns || ledFile !== null;
+  const going = useGoing(here, shown);
+  const drawn = here ? shown : going;
+  const pane = useRef<HTMLDivElement>(null);
+  // A pane back in the slots while it slid out, as a step back in at once does, is in its slot from here: the slide
+  // of the step takes it on.
+  useLayoutEffect(() => {
+    const el = pane.current;
+    if (!here || !el?.style.position) return;
+    for (const run of el.getAnimations()) run.cancel();
+    el.removeAttribute("style");
+  });
   let header: ComponentChildren = null;
-  if (shown) {
-    const file = shown;
+  if (drawn) {
+    const file = drawn;
     const learned = facts.path === file.path ? facts.list : [];
     const files = s.open ? store.files() : [];
     const raw = store.isRaw(file);
@@ -317,15 +358,25 @@ export function Side({ slots }: { slots: number }) {
     <section class="right" style={`--slots: ${slots}`} onPointerMove={onMove} onPointerLeave={onLeave}>
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. It goes by the path of the file it shows, as a column goes by its folder's:
-          the same file is the same pane, which slides with the columns. */}
-      {(!columns || ledFile) && (
-        <div class="pane" key="pane" data-pane={shown?.path ?? ""}>
+          the same file is the same pane, which slides with the columns. One that has just gone slides out as it
+          was, live: see `useGoing`. */}
+      {here ? (
+        <div class="pane" key="pane" ref={pane} data-pane={shown?.path ?? ""}>
           <div class="ph" onMouseDown={keepFocus}>
             {header}
           </div>
           <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}</div>
           {s.open && shown && !ledFile && <StepBar file={shown} />}
         </div>
+      ) : (
+        going && (
+          <div class="pane going" key="pane" ref={pane} data-going={going.path} aria-hidden="true" inert>
+            <div class="ph">{header}</div>
+            <div class="pv">
+              <Preview entry={going} stamp={store.stamp(going)} report={report} raw={store.isRaw(going)} wrap={store.wraps(going)} />
+            </div>
+          </div>
+        )
       )}
       {levels.map((listing, level) => {
         const above = levels[level - 1];

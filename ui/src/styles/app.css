@@ -45,6 +45,8 @@ body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 
 .right { grid-column: 2 / -1; display: flex; min-width: 0; min-height: 0; }
 .pane { order: 1; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+/* A pane that has gone from the slots, kept in the page while the panes slide: the slide shows it, as it slides out. */
+.pane.going { display: none; }
 /* A column is a slot wide, on the list's own ground, and its rows are the list's rows. */
 .col { flex: none; width: calc(100% / (var(--slots, 4) - 1)); display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
 .col.edge { border-right: 0; }

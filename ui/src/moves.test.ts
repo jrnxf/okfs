@@ -1,7 +1,7 @@
 // How each pane moves when the panes slide, in a window of four 375 px slots, 1,500 px wide.
 
 import { expect, test } from "bun:test";
-import { type Before, type Placed, alongOf, beforeOf, moveOf } from "./moves";
+import { type Before, type Placed, alongOf, beforeOf, goingOf, moveOf } from "./moves";
 
 const RIGHT = 1500;
 
@@ -65,4 +65,21 @@ test("a pane part way through fading in goes on from where it had got to, and an
   expect(by["a/b"]?.opacity).toBe(0.4);
   expect(by[""]?.opacity).toBe(0);
   expect(alongOf([was("", 0, 375)], [at("", 375, 750)])).toBeUndefined();
+});
+
+test("a preview pushed past the right edge slides out as it was, live, and one back in the slots is drawn there", () => {
+  // `page.html` is in the slots, then a step out takes it past the right edge: the pane keeps it while it slides out.
+  // Before, a copy slid out in its place, and a copy leaves out the frame of a page or a PDF: it went blank.
+  let going = goingOf<string>(true, null, null);
+  expect(going).toBeNull();
+  going = goingOf(false, "page.html", going);
+  expect(going).toBe("page.html");
+  // It keeps it on the draws during the slide, and when a second step out comes before the first is over.
+  going = goingOf(false, null, going);
+  expect(going).toBe("page.html");
+  // A step straight back in: the pane is in the slots again, and slides on from where it had got to.
+  expect(goingOf(true, null, going)).toBeNull();
+  // A pane kept as it slid out goes on from where it was, as far faded out as it was.
+  const back = moveOf({ left: 1125, right: 1500 }, was("page.html", 1409, 1787, 0.27), 275, RIGHT);
+  expect(back).toEqual({ from: 284, edge: false, opacity: 0.27 });
 });

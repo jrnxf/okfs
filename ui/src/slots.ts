@@ -98,9 +98,24 @@ export function startingAt(listing: Listing | undefined, path: string): Listing 
 /**
  * What the columns of the folder `path` are drawn from while its own answer is on its way: the part of the last
  * answer that starts at it, or else the last answer whole when it is for a folder beside it, as the cursor moves
- * down the list. An answer for a folder above or below it is not drawn: under this folder's name a column would
- * show another folder's rows, and the panes would slide from the wrong slots.
+ * down the list. On a step out of the folder, with `left` its listing as the main list had it, they are drawn as
+ * they were on screen: see `steppedOut`. An answer for a folder above or below it is not drawn: under this
+ * folder's name a column would show another folder's rows, and the panes would slide from the wrong slots.
  */
-export function standIn(listing: Listing | undefined, path: string): Listing | undefined {
-  return startingAt(listing, path) ?? (listing && parentOf(listing.path) === parentOf(path) ? listing : undefined);
+export function standIn(listing: Listing | undefined, path: string, left?: Listing): Listing | undefined {
+  const beside = startingAt(listing, path) ?? (listing && parentOf(listing.path) === parentOf(path) ? listing : undefined);
+  return beside ?? (left?.path === path ? steppedOut(left, listing) : undefined);
+}
+
+/**
+ * What the columns of a folder the cursor has just stepped out of are drawn from while their own answer is on its
+ * way: they were on screen a moment ago. `left` is the folder's listing as the main list had it, cut as the server
+ * cuts a column, its first entries, folders first. `under` is the answer that was beside it, for the entry the
+ * cursor was on, when it is the inside of an entry of it. Every pane is then in its slot for the slide, and the
+ * preview of the file the columns lead on to stays on screen.
+ */
+export function steppedOut(left: Listing, under: Listing | undefined): Listing {
+  const entries = [...left.entries.filter((item) => item.d), ...left.entries.filter((item) => !item.d)].slice(0, COLUMN_ROWS);
+  const inside = under && parentOf(under.path) === left.path ? under : undefined;
+  return { path: left.path, m: left.m, entries, total: left.total, hidden: left.hidden, readme: null, under: inside };
 }

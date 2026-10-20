@@ -256,3 +256,26 @@ test("moving off a folder also forgets the spots in the folders inside it", asyn
   expect(store.leftIn("code/okfs")).toBeUndefined();
   expect(store.leftIn("code/okfs/src")).toBeUndefined();
 });
+
+test("a step out whose columns answer is late draws the folder left as it was on screen, as its answer would", async () => {
+  const store = await at("code", "okfs");
+  await right(store);
+  expect([store.s.path, store.cur()?.name]).toEqual(["code/okfs", "docs"]);
+  // What the side drew beside `code/okfs`: the answer for the folder under the cursor.
+  const wasAt = (path: string) => store.leftIn(path);
+  const beside = await api.getJson<Listing>(preview.columnsUrl("code/okfs/docs", [], wasAt));
+  // The step out is drawn with no answer yet for `code/okfs`. What the side draws then is what its answer draws.
+  let drawn: string[] = [];
+  const stop = store.subscribe(() => {
+    const root = store.columnsRoot();
+    if (store.s.path !== "code" || root === null || drawn.length) return;
+    const chain = slots.columnsOf(slots.standIn(beside, root, store.before(root)), slots.slots(), store.picked(root), wasAt);
+    drawn = [...chain.levels.map((level) => level?.path ?? "none"), ...chain.led];
+  });
+  await left(store);
+  stop();
+  const answer = await api.getJson<Listing>(preview.columnsUrl("code/okfs", [], wasAt));
+  const chain = slots.columnsOf(answer, slots.slots(), [], wasAt);
+  expect(drawn).toEqual([...chain.levels.map((level) => level?.path ?? "none"), ...chain.led]);
+  expect(drawn).toEqual(["code/okfs", "code/okfs/docs", "docs", "a.md"]);
+});

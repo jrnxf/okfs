@@ -62,3 +62,12 @@ export function moveOf(now: Edges, was: Before | undefined, along: number, right
   }
   return { from: along, edge: along < 0 && same(now.right, right), opacity: 0 };
 }
+
+/**
+ * What a pane that has just gone from the slots shows while the panes slide: `going`, what it showed as it slid out
+ * after the last draw, and `was`, what it showed in the slots then. One that goes keeps what it showed, so it slides
+ * out live and whole; one back in the slots, `here`, shows what it is given there.
+ */
+export function goingOf<T>(here: boolean, was: T | null, going: T | null): T | null {
+  return here ? null : (was ?? going);
+}

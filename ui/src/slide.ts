@@ -46,18 +46,21 @@ function copyOf(pane: HTMLElement): HTMLElement {
   for (const el of copy.querySelectorAll(LIVE)) el.remove();
   for (const el of copy.querySelectorAll("[id]")) el.removeAttribute("id");
   copy.removeAttribute("data-pane");
+  copy.removeAttribute("data-going");
   copy.setAttribute("aria-hidden", "true");
   copy.inert = true;
   copy.classList.add("ghost");
   return copy;
 }
 
-// A pane's box and opacity are read as they are drawn, so a slide still running is looked at where it has got to.
+// A pane's box and opacity are read as they are drawn, so a slide still running is looked at where it has got to. A
+// pane sliding out that the page keeps is looked at too: back in the slots, it goes on from where it had got to.
 function look(strip: HTMLElement): Was[] {
-  return panesOf(strip).map((pane) => {
+  const going = [...strip.querySelectorAll<HTMLElement>("[data-going]")].filter((pane) => pane.getClientRects().length > 0);
+  return [...panesOf(strip), ...going].map((pane) => {
     const box = pane.getBoundingClientRect();
     return {
-      key: pane.dataset.pane ?? "",
+      key: pane.dataset.pane ?? pane.dataset.going ?? "",
       rect: { left: box.left, right: box.right },
       box,
       opacity: Number(getComputedStyle(pane).opacity),
@@ -91,6 +94,9 @@ function framesOf(move: Move): Keyframe[] {
         { transform: "none", opacity: 1 },
       ];
 }
+
+/** The pane that showed `key`, when the page keeps it in for the slide once it has gone from the slots. See `Side`. */
+const goneOf = (strip: HTMLElement, key: string): HTMLElement | null => strip.querySelector<HTMLElement>(`[data-going="${CSS.escape(key)}"]`);
 
 /** A pane coming or going: a change the slide has to take in. A copy sliding out is not one. */
 const isPane = (node: Node): boolean =>
@@ -143,14 +149,19 @@ class Slide {
         continue;
       }
       if (going) continue;
-      const { copy, box: was } = it;
+      // The pane itself when the page keeps it for the slide, live: a copy leaves out what is live in it.
+      const live = it.key ? goneOf(this.strip, it.key) : null;
+      const copy = live ?? it.copy;
+      const { box: was } = it;
+      // It is drawn as a copy is: see `.ghost`.
+      if (live) Object.assign(live.style, { display: "flex", position: "absolute", zIndex: "1", pointerEvents: "none" });
       Object.assign(copy.style, {
         top: `${was.top - box.top}px`,
         left: `${was.left - box.left}px`,
         width: `${was.width}px`,
         height: `${was.height}px`,
       });
-      this.strip.append(copy);
+      if (!live) this.strip.append(copy);
       copy.querySelectorAll(SCROLLS).forEach((scroller, index) => {
         scroller.scrollTop = it.scrolls[index] ?? 0;
       });
@@ -163,10 +174,13 @@ class Slide {
       );
       run.currentTime = at;
       this.out.set(it, run);
-      void run.finished.then(
-        () => copy.remove(),
-        () => copy.remove(),
-      );
+      // The page takes away a pane it kept, once the slide is over: until then it is out of sight. One back in the
+      // slots is left as it is.
+      const done = () => {
+        if (!live) copy.remove();
+        else if (live.dataset.going !== undefined) live.style.display = "none";
+      };
+      void run.finished.then(done, done);
     }
   }
 

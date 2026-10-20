@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import type { Listing } from "./api";
-import { columnsOf, slotsFor, standIn, startingAt } from "./slots";
+import { COLUMN_ROWS, columnsOf, slotsFor, standIn, startingAt, steppedOut } from "./slots";
 
 /** A folder holding one folder under another, `depth` deep, the last one holding `last`. */
 function nest(depth: number, last: Listing["entries"] = [], path = "top"): Listing {
@@ -93,4 +93,36 @@ test("a folder's columns stand in on the answer for the folder beside it, and ne
   expect(columnsOf(standIn(level("p/a/in"), "p/a"), 4).levels).toEqual([undefined]);
   expect(standIn(level("p"), "p/a/in")).toBeUndefined();
   expect(standIn(undefined, "p/a")).toBeUndefined();
+});
+
+test("on a step out, the folder left is drawn as it was on screen until its own answer comes", () => {
+  const level = (path: string, entries: Listing["entries"], under?: Listing): Listing => ({ path, m: 0, entries, total: entries.length, readme: null, under });
+  const file = { n: "page.html", s: 1, m: 0 };
+  // On screen before the step: `p/a` in the main list, the cursor on its folder `in`, and beside it the answer for `in`.
+  const shown = level("p/a", [{ n: "z.txt", s: 1, m: 0 }, { n: "in", d: true, s: 0, m: 0 }]);
+  const beside = level("p/a/in", [file]);
+  // After the step to `p` with no answer yet for `p/a`, every pane is still there: `p/a`, `in`, and the preview of the
+  // file `in` leads on to. Before, the column of `p/a` had no rows, and `in` and the preview left the screen.
+  const left = (path: string) => (path === "p/a" ? "in" : undefined);
+  const chain = columnsOf(standIn(beside, "p/a", shown), 4, [], left);
+  expect(chain.levels.map((it) => it?.path)).toEqual(["p/a", "p/a/in"]);
+  expect([chain.led, chain.file?.item.n]).toEqual([["in", "page.html"], "page.html"]);
+  // Without the folder's listing, as before the fix, the column is a header with nothing past it.
+  expect(columnsOf(standIn(beside, "p/a"), 4, [], left).levels).toEqual([undefined]);
+  // The answer for the folder itself, once it has come, is drawn over what was on screen.
+  const own = level("p/a", [{ n: "in", d: true, s: 0, m: 0 }], beside);
+  expect(standIn(own, "p/a", shown)).toBe(own);
+  // Only the folder left stands in, and only for itself.
+  expect(standIn(beside, "p/b", shown)).toBeUndefined();
+});
+
+test("the folder left is cut as the server cuts a column: its first entries, folders first, past a folder not inside it", () => {
+  const entries = [...Array.from({ length: 50 }, (_, at) => ({ n: `f${at}`, s: 1, m: 0 })), { n: "d", d: true, s: 0, m: 0 }];
+  const shown: Listing = { path: "p/a", m: 3, entries, total: entries.length, hidden: 2, readme: { name: "README.md", html: "" } };
+  const drawn = steppedOut(shown, { path: "p/b/in", m: 0, entries: [], total: 0, readme: null });
+  expect(drawn.entries.length).toBe(COLUMN_ROWS);
+  expect(drawn.entries[0]?.n).toBe("d");
+  expect([drawn.total, drawn.hidden, drawn.readme, drawn.under]).toEqual([51, 2, null, undefined]);
+  // What the main list had is left as it was.
+  expect(shown.entries.length).toBe(51);
 });
