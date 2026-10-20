@@ -13,12 +13,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, RwLockWriteGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::event::{EventKind, ModifyKind};
 use notify::{RecursiveMode, Watcher};
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 
@@ -55,7 +55,10 @@ struct Flush {
 }
 
 struct Node {
-    name: Box<str>,
+    /// Where its name ends in `Folder::names`. It starts where the name before it ends.
+    end: u32,
+    /// The name is plain ASCII, which the search can look through a byte at a time.
+    ascii: bool,
     dir: bool,
     /// A real folder, not a link to one: the walk goes in.
     walk: bool,
@@ -66,18 +69,79 @@ struct Node {
     modified: u32,
 }
 
-impl Node {
-    /// All that a listing tells of an entry.
-    fn shape(&self) -> (&str, bool, bool, bool) {
-        (&self.name, self.dir, self.walk, self.hidden)
+/// One folder's entries, laid out for the search: the names side by side in one string, read in
+/// one sweep, in place of a string apiece scattered over memory.
+struct Folder {
+    nodes: Vec<Node>,
+    names: String,
+    /// It is inside a hidden folder: see `in_hidden`.
+    hidden: bool,
+    /// Its path is plain ASCII: see `Node::ascii`.
+    ascii: bool,
+}
+
+impl Folder {
+    fn new(dir: &str, entries: impl IntoIterator<Item = (String, Node)>) -> Self {
+        let mut folder = Self {
+            nodes: Vec::new(),
+            names: String::new(),
+            hidden: in_hidden(dir),
+            ascii: dir.is_ascii(),
+        };
+        for (name, node) in entries {
+            folder.names.push_str(&name);
+            let end = u32::try_from(folder.names.len()).expect("a folder's names fit in 4 GB");
+            folder.nodes.push(Node {
+                end,
+                ascii: name.is_ascii(),
+                ..node
+            });
+        }
+        folder.names.shrink_to_fit();
+        folder
+    }
+
+    fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// The name of the entry at `at`.
+    fn name(&self, at: usize) -> &str {
+        let start = at.checked_sub(1).map_or(0, |before| self.nodes[before].end as usize);
+        &self.names[start..self.nodes[at].end as usize]
+    }
+
+    /// Each entry with its name.
+    fn entries(&self) -> impl Iterator<Item = (&str, &Node)> {
+        (0..self.len()).map(|at| (self.name(at), &self.nodes[at]))
+    }
+
+    /// All that a listing tells of each entry.
+    fn shapes(&self) -> impl Iterator<Item = (&str, bool, bool, bool)> {
+        self.entries().map(|(name, n)| (name, n.dir, n.walk, n.hidden))
     }
 }
 
 #[derive(Default)]
 struct Tree {
     /// Folder path to its children. The served folder itself is the empty path.
-    dirs: HashMap<String, Vec<Node>>,
+    dirs: HashMap<Arc<str>, Folder>,
     count: usize,
+    /// Goes up with every change to what is searched: see `Index::change`.
+    version: u64,
+}
+
+/// What a search matched, kept so the next one can look only there when its query adds to this
+/// one's: every entry that matches the longer query matches this one too.
+struct Last {
+    query: String,
+    all: bool,
+    /// The `Tree::version` it searched.
+    version: u64,
+    /// Each folder with a match, and how many it has. Where each one is in its folder is in
+    /// `ats`, folder after folder.
+    dirs: Vec<(Arc<str>, u32)>,
+    ats: Vec<u32>,
 }
 
 /// How the index keeps up with the tree after the first walk.
@@ -99,6 +163,7 @@ pub struct Index {
     feed: Feed,
     /// Called after each walk of the whole tree that is not the first.
     rescanned: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    last: Mutex<Option<Last>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -151,6 +216,7 @@ impl Index {
             ready: AtomicBool::new(false),
             feed: Feed::default(),
             rescanned: OnceLock::new(),
+            last: Mutex::new(None),
         })
     }
 
@@ -251,9 +317,9 @@ impl Index {
     fn catch_up(&self, since: SystemTime) {
         // A file system may keep times to the second or two.
         let since = since.checked_sub(Duration::from_secs(2)).unwrap_or(since);
-        let held: Vec<String> = self.tree.read().expect("the index lock").dirs.keys().cloned().collect();
+        let held: Vec<Arc<str>> = self.tree.read().expect("the index lock").dirs.keys().cloned().collect();
         for dir in held {
-            let written = fs::metadata(self.root.dir().join(&dir)).and_then(|meta| meta.modified());
+            let written = fs::metadata(self.root.dir().join(&*dir)).and_then(|meta| meta.modified());
             if written.is_ok_and(|written| written < since) {
                 continue;
             }
@@ -277,22 +343,24 @@ impl Index {
     fn fill(&self, flush: Flush, mut flushed: impl FnMut()) {
         if self.ready() {
             let fresh = self.walk("");
-            *self.tree.write().expect("the index lock") = fresh;
+            let mut tree = self.change();
+            tree.dirs = fresh.dirs;
+            tree.count = fresh.count;
             return;
         }
         let mut gathered = Tree::default();
         let mut last = Instant::now();
         let mut hand_over = |gathered: &mut Tree| {
             let more = std::mem::take(gathered);
-            let mut tree = self.tree.write().expect("the index lock");
+            let mut tree = self.change();
             tree.count += more.count;
             tree.dirs.extend(more.dirs);
             drop(tree);
             flushed();
         };
-        self.walk_with("", |dir, nodes| {
-            gathered.count += nodes.len();
-            gathered.dirs.insert(dir, nodes);
+        self.walk_with("", |dir, folder| {
+            gathered.count += folder.len();
+            gathered.dirs.insert(dir.into(), folder);
             if gathered.count >= flush.entries || last.elapsed() >= flush.every {
                 hand_over(&mut gathered);
                 last = Instant::now();
@@ -304,33 +372,35 @@ impl Index {
 
     fn walk(&self, from: &str) -> Tree {
         let mut tree = Tree::default();
-        self.walk_with(from, |dir, nodes| {
-            tree.count += nodes.len();
-            tree.dirs.insert(dir, nodes);
+        self.walk_with(from, |dir, folder| {
+            tree.count += folder.len();
+            tree.dirs.insert(dir.into(), folder);
         });
         tree
     }
 
     /// Reads `from` and every folder under it that is not left out, the nearest first, and
     /// hands each folder's names to `take`. Nothing is read of a folder that is left out.
-    fn walk_with(&self, from: &str, mut take: impl FnMut(String, Vec<Node>)) {
+    fn walk_with(&self, from: &str, mut take: impl FnMut(String, Folder)) {
         let Some(rules) = self.skip.rules_for(self.root.dir(), from) else {
             return;
         };
         let mut todo = VecDeque::from([(from.to_owned(), rules)]);
         while let Some((dir, rules)) = todo.pop_front() {
-            let Some(nodes) = self.read(&dir, &rules) else { continue };
-            for node in nodes.iter().filter(|n| n.walk) {
-                let inside = paths::join(&dir, &node.name);
+            let Some(folder) = self.read(&dir, &rules) else {
+                continue;
+            };
+            for (name, _) in folder.entries().filter(|(_, n)| n.walk) {
+                let inside = paths::join(&dir, name);
                 let rules = self.skip.enter(&self.root.dir().join(&inside), false, &rules);
                 todo.push_back((inside, rules));
             }
-            take(dir, nodes);
+            take(dir, folder);
         }
     }
 
     /// The names in the folder `dir`, when it is not left out.
-    fn open(&self, dir: &str) -> Option<Vec<Node>> {
+    fn open(&self, dir: &str) -> Option<Folder> {
         self.read(dir, &self.skip.rules_for(self.root.dir(), dir)?)
     }
 
@@ -341,28 +411,27 @@ impl Index {
 
     /// The names in one folder, each file with the time the disk has for it now. `rules` are
     /// those inside the folder: a folder they leave out is listed, and is not walked.
-    fn read(&self, dir: &str, rules: &Rules) -> Option<Vec<Node>> {
+    fn read(&self, dir: &str, rules: &Rules) -> Option<Folder> {
         let at = self.root.dir().join(dir);
         let seen = self.root.scan(&at).ok()?;
-        Some(
-            seen.into_iter()
-                .map(|s| {
-                    let modified = if s.dir {
-                        0
-                    } else {
-                        seconds(self.root.modified(&at, &s.name))
-                    };
-                    let left_out = s.dir && self.skip.skips(rules, &at, dir.is_empty(), &s.name);
-                    Node {
-                        dir: s.dir,
-                        walk: s.dir && !s.link && !left_out,
-                        hidden: left_out || s.name.starts_with('.'),
-                        name: s.name.into_boxed_str(),
-                        modified,
-                    }
-                })
-                .collect(),
-        )
+        let entries = seen.into_iter().map(|s| {
+            let modified = if s.dir {
+                0
+            } else {
+                seconds(self.root.modified(&at, &s.name))
+            };
+            let left_out = s.dir && self.skip.skips(rules, &at, dir.is_empty(), &s.name);
+            let node = Node {
+                end: 0,
+                ascii: false,
+                dir: s.dir,
+                walk: s.dir && !s.link && !left_out,
+                hidden: left_out || s.name.starts_with('.'),
+                modified,
+            };
+            (s.name, node)
+        });
+        Some(Folder::new(dir, entries))
     }
 
     /// Walks everything again and tells the pages to do the same.
@@ -487,14 +556,15 @@ impl Index {
         if stamps.is_empty() {
             return;
         }
+        // A time is not searched: what the last search found still stands.
         let mut tree = self.tree.write().expect("the index lock");
         for (dir, times) in stamps {
-            let Some(nodes) = tree.dirs.get_mut(&dir) else {
+            let Some(folder) = tree.dirs.get_mut(dir.as_str()) else {
                 continue;
             };
-            for node in nodes.iter_mut().filter(|n| !n.dir) {
-                if let Some(&time) = times.get(&*node.name) {
-                    node.modified = time;
+            for at in 0..folder.len() {
+                if let Some(&time) = times.get(folder.name(at)).filter(|_| !folder.nodes[at].dir) {
+                    folder.nodes[at].modified = time;
                 }
             }
         }
@@ -544,19 +614,23 @@ impl Index {
     /// Reads one folder again and folds what changed into the index. True when the
     /// folder does not list what it listed before.
     fn refresh(&self, dir: &str) -> bool {
-        let Some(nodes) = self.open(dir) else {
+        let Some(folder) = self.open(dir) else {
             return self.forget(dir);
         };
         let known: HashSet<String> = {
             let tree = self.tree.read().expect("the index lock");
             match tree.dirs.get(dir) {
-                Some(old) => old.iter().filter(|n| n.walk).map(|n| n.name.to_string()).collect(),
+                Some(old) => old
+                    .entries()
+                    .filter(|(_, n)| n.walk)
+                    .map(|(name, _)| name.to_owned())
+                    .collect(),
                 // Not indexed yet: its parent's reread will walk it.
                 None if !dir.is_empty() => return false,
                 None => HashSet::new(),
             }
         };
-        let now: HashSet<&str> = nodes.iter().filter(|n| n.walk).map(|n| &*n.name).collect();
+        let now: HashSet<&str> = folder.entries().filter(|(_, n)| n.walk).map(|(name, _)| name).collect();
         let added: Vec<Tree> = now
             .iter()
             .filter(|name| !known.contains(**name))
@@ -568,7 +642,7 @@ impl Index {
             .map(|name| paths::join(dir, name))
             .collect();
 
-        let mut tree = self.tree.write().expect("the index lock");
+        let mut tree = self.change();
         for path in gone {
             tree.remove(&path);
         }
@@ -576,14 +650,14 @@ impl Index {
             tree.count += sub.count;
             tree.dirs.extend(sub.dirs);
         }
-        tree.count += nodes.len();
-        let Some(old) = tree.dirs.insert(dir.to_owned(), nodes) else {
+        tree.count += folder.len();
+        let Some(old) = tree.dirs.insert(dir.into(), folder) else {
             return true;
         };
         tree.count -= old.len();
         let now = &tree.dirs[dir];
-        let before: HashSet<(&str, bool, bool, bool)> = old.iter().map(Node::shape).collect();
-        old.len() != now.len() || now.iter().any(|node| !before.contains(&node.shape()))
+        let before: HashSet<(&str, bool, bool, bool)> = old.shapes().collect();
+        old.len() != now.len() || now.shapes().any(|shape| !before.contains(&shape))
     }
 
     /// Walks one folder again with everything under it, in place of what the index
@@ -605,7 +679,7 @@ impl Index {
         }
         // Walking a folder that is now left out finds nothing, and so drops what was held of it.
         let fresh = self.walk(dir);
-        let mut tree = self.tree.write().expect("the index lock");
+        let mut tree = self.change();
         if !tree.dirs.contains_key(dir) {
             return false;
         }
@@ -617,10 +691,18 @@ impl Index {
 
     /// Drops a folder that is gone. True when the index held it.
     fn forget(&self, dir: &str) -> bool {
-        let mut tree = self.tree.write().expect("the index lock");
+        let mut tree = self.change();
         let held = tree.dirs.contains_key(dir);
         tree.remove(dir);
         held
+    }
+
+    /// The tree, to change. Each change gives it a new version, so a search knows whether what
+    /// the last one found is still there.
+    fn change(&self) -> RwLockWriteGuard<'_, Tree> {
+        let mut tree = self.tree.write().expect("the index lock");
+        tree.version += 1;
+        tree
     }
 
     pub fn ready(&self) -> bool {
@@ -638,7 +720,7 @@ impl Index {
     /// How many entries a folder holds, when the index has seen it.
     pub fn child_count(&self, dir: &str) -> Option<usize> {
         let tree = self.tree.read().expect("the index lock");
-        tree.dirs.get(dir).map(Vec::len)
+        tree.dirs.get(dir).map(Folder::len)
     }
 
     /// The rules inside the folder `dir`, as `hides` takes them.
@@ -659,8 +741,8 @@ impl Index {
     /// when not.
     pub fn counts(&self, dir: &str, up: &Rules) -> Option<(usize, usize)> {
         let split = |hidden: usize, all: usize| Some((all - hidden, hidden));
-        if let Some(nodes) = self.tree.read().expect("the index lock").dirs.get(dir) {
-            return split(nodes.iter().filter(|n| n.hidden).count(), nodes.len());
+        if let Some(folder) = self.tree.read().expect("the index lock").dirs.get(dir) {
+            return split(folder.nodes.iter().filter(|n| n.hidden).count(), folder.len());
         }
         let abs = self.root.dir().join(dir);
         let seen = self.root.scan(&abs).ok()?;
@@ -680,9 +762,12 @@ impl Index {
         // earlier name, is greater.
         // The heap keeps the `RECENT` greatest, its least on top.
         let mut best = BinaryHeap::with_capacity(RECENT + 1);
-        for (dir, nodes) in tree.dirs.iter().filter(|(dir, _)| all || !in_hidden(dir)) {
-            for node in nodes.iter().filter(|n| !n.dir && n.modified != 0 && (all || !n.hidden)) {
-                best.push(Reverse((node.modified, Reverse(dir.as_str()), Reverse(&*node.name))));
+        for (dir, folder) in tree.dirs.iter().filter(|(_, folder)| all || !folder.hidden) {
+            for (name, node) in folder
+                .entries()
+                .filter(|(_, n)| !n.dir && n.modified != 0 && (all || !n.hidden))
+            {
+                best.push(Reverse((node.modified, Reverse(&**dir), Reverse(name))));
                 if best.len() > RECENT {
                     best.pop();
                 }
@@ -704,6 +789,13 @@ impl Index {
     /// Fuzzy search over every path. Returns the best `limit` matches. Without `all`,
     /// what a listing hides is not searched: see `hides`.
     pub fn search(&self, query: &str, limit: usize, all: bool) -> Found {
+        self.search_unless(query, limit, all, &AtomicBool::new(false))
+            .expect("a search no one stops")
+    }
+
+    /// `search`, given up as soon as `gone` is set: by a page that asked for something else
+    /// before the answer came, and so no longer waits for it. `None` when it was given up.
+    pub fn search_unless(&self, query: &str, limit: usize, all: bool, gone: &AtomicBool) -> Option<Found> {
         let began = Instant::now();
         let tree = self.tree.read().expect("the index lock");
         let mut found = Found {
@@ -715,70 +807,88 @@ impl Index {
         };
         let query = query.trim();
         if query.is_empty() || limit == 0 {
-            return found;
+            return Some(found);
         }
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-        let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
-        let (mut chars, mut path) = (Vec::new(), String::new());
-
-        let mut scored: Vec<Scored> = Vec::new();
-        let mut idx = Vec::new();
-        for (dir, nodes) in tree.dirs.iter().filter(|(dir, _)| all || !in_hidden(dir)) {
-            for (at, node) in nodes.iter().enumerate().filter(|(_, n)| all || !n.hidden) {
-                let by_name = pattern.score(Utf32Str::new(&node.name, &mut chars), &mut matcher);
-                if let Some(score) = by_name {
-                    let close = is_close(&pattern, &node.name, &mut idx, &mut chars, &mut matcher);
-                    scored.push((score + NAME_BONUS, dir, at, true, close));
-                    continue;
-                }
-                if dir.is_empty() {
-                    continue;
-                }
-                path.clear();
-                path.push_str(dir);
-                path.push('/');
-                path.push_str(&node.name);
-                if let Some(score) = pattern.score(Utf32Str::new(&path, &mut chars), &mut matcher) {
-                    let close = is_close(&pattern, &path, &mut idx, &mut chars, &mut matcher);
-                    scored.push((score, dir, at, false, close));
-                }
+        let last = self.last.lock().expect("the search lock").take();
+        let last = last.filter(|last| last.all == all && last.version == tree.version && narrows(&last.query, query));
+        let parts: Vec<Part> = match &last {
+            Some(last) => {
+                let mut ats = last.ats.as_slice();
+                last.dirs
+                    .iter()
+                    .map(|(dir, count)| {
+                        let (dir, folder) = tree.dirs.get_key_value(&**dir).expect("a folder of the same version");
+                        let here;
+                        (here, ats) = ats.split_at(*count as usize);
+                        (dir, folder, Some(here))
+                    })
+                    .collect()
             }
+            None => tree
+                .dirs
+                .iter()
+                .filter(|(_, folder)| all || !folder.hidden)
+                .map(|(dir, folder)| (dir, folder, None))
+                .collect(),
+        };
+        let close = Close::new(&pattern);
+        let mut look = Look {
+            pattern: &pattern,
+            all,
+            limit,
+            keep: can_narrow(query),
+            close: close.as_ref(),
+        };
+        let mut finds = scan_all(&look, &parts, gone)?;
+        // Nothing sits close: what was passed over is all there is, and is looked at after all.
+        if finds.closes == 0 && finds.passed > 0 {
+            look.close = None;
+            finds = scan_all(&look, &parts, gone)?;
+        }
+        // When most folders hold a match, looking only there would save little next time, and
+        // cost more to keep than it saves.
+        if look.keep && finds.dirs.len() * 2 < tree.dirs.len() {
+            *self.last.lock().expect("the search lock") = Some(Last {
+                query: query.to_owned(),
+                all,
+                version: tree.version,
+                dirs: finds
+                    .dirs
+                    .iter()
+                    .map(|&(part, count)| (Arc::clone(parts[part].0), count))
+                    .collect(),
+                ats: finds.ats,
+            });
         }
         // Letters spread over a whole path are a match of last resort: they only show when nothing is closer.
-        if scored.iter().any(|s| s.4) {
-            scored.retain(|s| s.4);
-        }
-        found.total = scored.len();
-        // Best score first; ties go to the shorter path, then by name, so results never shuffle.
-        let rank = |a: &Scored, b: &Scored| {
-            let (left, right) = (&*tree.dirs[a.1][a.2].name, &*tree.dirs[b.1][b.2].name);
-            (b.0.cmp(&a.0))
-                .then_with(|| (a.1.len() + left.len()).cmp(&(b.1.len() + right.len())))
-                .then_with(|| (a.1, left).cmp(&(b.1, right)))
+        let (mut scored, total) = if finds.closes > 0 {
+            (finds.close, finds.closes)
+        } else {
+            (finds.loose, finds.looses)
         };
-        if scored.len() > limit {
-            scored.select_nth_unstable_by(limit - 1, rank);
-            scored.truncate(limit);
-        }
+        found.total = total;
+        best(&mut scored, limit);
         scored.sort_by(rank);
 
-        for (_, dir, at, by_name, _) in scored {
-            let node = &tree.dirs[dir][at];
-            let path = paths::join(dir, &node.name);
+        let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+        let mut chars = Vec::new();
+        for hit in scored {
+            let path = paths::join(hit.dir, hit.name);
             let mut idx = Vec::new();
-            let hay = if by_name { &*node.name } else { path.as_str() };
+            let hay = if hit.by_name { hit.name } else { path.as_str() };
             pattern.indices(Utf32Str::new(hay, &mut chars), &mut matcher, &mut idx);
             idx.sort_unstable();
             idx.dedup();
             found.hits.push(Hit {
                 path,
-                dir: node.dir,
+                dir: hit.folder,
                 idx,
-                name: by_name,
+                name: hit.by_name,
             });
         }
         found.took = (began.elapsed().as_secs_f64() * 1e4).round() / 10.0;
-        found
+        Some(found)
     }
 }
 
@@ -808,26 +918,414 @@ fn seconds(time: Option<SystemTime>) -> u32 {
         .map_or(0, |since| u32::try_from(since.as_secs()).unwrap_or(u32::MAX))
 }
 
-/// One match: score, folder, position in that folder, whether the name itself matched, and whether
-/// its letters sit close together (see `is_close`).
-type Scored<'a> = (u32, &'a str, usize, bool, bool);
+/// Whether a query's matches can be kept for the next query to narrow: see `narrows`.
+fn can_narrow(query: &str) -> bool {
+    !query.contains(['!', '\\', '^', '$', '\''])
+}
 
-/// Whether every matched letter of `hay` either follows the one before it or starts a word. A query
-/// found as a run, or as the starts of words, is close; letters picked out of the middle of
-/// several words are not.
-fn is_close(pattern: &Pattern, hay: &str, idx: &mut Vec<u32>, chars: &mut Vec<char>, matcher: &mut Matcher) -> bool {
+/// Whether every entry that `next` matches is one that `last` matched. True when `next` only adds
+/// to `last`: each word of `last` is then a word of `next` or the start of one, and a word that
+/// holds another word's letters in order matches wherever that word does. A word of `next` may
+/// even be marked to match only as a run, at the start or at the end: it still holds the letters.
+/// Not when `last` itself marks a word, such as `!pdf`: adding to that can match more.
+fn narrows(last: &str, next: &str) -> bool {
+    can_narrow(last) && next.starts_with(last)
+}
+
+/// One folder to search: its path, its entries, and which of them, or all of them for `None`.
+type Part<'t> = (&'t Arc<str>, &'t Folder, Option<&'t [u32]>);
+
+/// One match.
+struct Scored<'t> {
+    score: u32,
+    dir: &'t str,
+    name: &'t str,
+    /// It is a folder.
+    folder: bool,
+    /// Where the entry is in its folder.
+    at: u32,
+    /// Whether the name itself matched, and not only the whole path.
+    by_name: bool,
+    /// Whether its letters sit close together: see `score`.
+    close: bool,
+}
+
+/// Best score first; ties go to the shorter path, then by name, so results never shuffle.
+fn rank(a: &Scored, b: &Scored) -> std::cmp::Ordering {
+    (b.score.cmp(&a.score))
+        .then_with(|| (a.dir.len() + a.name.len()).cmp(&(b.dir.len() + b.name.len())))
+        .then_with(|| (a.dir, a.name).cmp(&(b.dir, b.name)))
+}
+
+/// Keeps the `limit` best of `hits`, in no order.
+fn best(hits: &mut Vec<Scored>, limit: usize) {
+    if hits.len() > limit {
+        hits.select_nth_unstable_by(limit - 1, rank);
+        hits.truncate(limit);
+    }
+}
+
+/// What a search found in some of the folders. Only the best few matches are held, so what a
+/// search holds does not grow with how many entries match.
+#[derive(Default)]
+struct Finds<'t> {
+    /// The best matches whose letters sit close together, and the best of the rest. At least the
+    /// `limit` best of each are here.
+    close: Vec<Scored<'t>>,
+    loose: Vec<Scored<'t>>,
+    /// How many of each there are in all.
+    closes: usize,
+    looses: usize,
+    /// How many matches were passed over unscored: see `Close`.
+    passed: usize,
+    /// When asked for: each folder with a match, by its place in the parts, and how many it
+    /// has. Where each one is in its folder is in `ats`, folder after folder.
+    dirs: Vec<(usize, u32)>,
+    ats: Vec<u32>,
+}
+
+impl<'t> Finds<'t> {
+    /// Notes where a match is, when asked to.
+    fn found(&mut self, part: usize, at: u32, keep: bool) {
+        if keep {
+            match self.dirs.last_mut() {
+                Some((last, count)) if *last == part => *count += 1,
+                _ => self.dirs.push((part, 1)),
+            }
+            self.ats.push(at);
+        }
+    }
+
+    /// A match passed over unscored.
+    fn pass(&mut self, part: usize, at: usize, keep: bool) {
+        self.found(part, at as u32, keep);
+        self.passed += 1;
+    }
+
+    fn add(&mut self, part: usize, hit: Scored<'t>, limit: usize, keep: bool) {
+        self.found(part, hit.at, keep);
+        let (held, count) = if hit.close {
+            (&mut self.close, &mut self.closes)
+        } else {
+            (&mut self.loose, &mut self.looses)
+        };
+        *count += 1;
+        held.push(hit);
+        // Cut back now and then, not on every match.
+        if held.len() >= (2 * limit).max(256) {
+            best(held, limit);
+        }
+    }
+
+    /// Adds what `more` found, which comes after what is here.
+    fn extend(&mut self, more: Finds<'t>) {
+        self.close.extend(more.close);
+        self.loose.extend(more.loose);
+        self.closes += more.closes;
+        self.looses += more.looses;
+        self.passed += more.passed;
+        self.dirs.extend(more.dirs);
+        self.ats.extend(more.ats);
+    }
+}
+
+/// About how many entries a thread is handed at a time.
+const SHARE: usize = 4096;
+
+/// How a search looks through the folders.
+struct Look<'p> {
+    pattern: &'p Pattern,
+    /// Look at what a listing hides too.
+    all: bool,
+    /// How many of the best matches are wanted.
+    limit: usize,
+    /// Keep where each match is, for the next search to narrow: see `Last`.
+    keep: bool,
+    /// Pass over each match whose letters cannot sit close together: see `Close`.
+    close: Option<&'p Close>,
+}
+
+/// What `parts` hold that matches, searched on as many threads as the machine has cores.
+/// `None` when `gone` is set first.
+fn scan_all<'t>(look: &Look, parts: &[Part<'t>], gone: &AtomicBool) -> Option<Finds<'t>> {
+    // Cut into runs of whole folders of about `SHARE` entries each.
+    let mut runs = Vec::new();
+    let (mut start, mut held) = (0, 0);
+    for (at, (_, folder, ats)) in parts.iter().enumerate() {
+        held += ats.map_or(folder.len(), <[u32]>::len);
+        if held >= SHARE {
+            runs.push(start..at + 1);
+            (start, held) = (at + 1, 0);
+        }
+    }
+    if start < parts.len() {
+        runs.push(start..parts.len());
+    }
+    // Asking can mean reading files of the system's, so it is asked once.
+    static CORES: LazyLock<usize> = LazyLock::new(|| std::thread::available_parallelism().map_or(1, usize::from));
+    let threads = CORES.min(runs.len());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let work = || {
+        let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+        let mut done = Vec::new();
+        loop {
+            let at = next.fetch_add(1, Ordering::Relaxed);
+            let Some(run) = runs.get(at).filter(|_| !gone.load(Ordering::Relaxed)) else {
+                break done;
+            };
+            let mut finds = Finds::default();
+            scan(look, parts, run.clone(), &mut matcher, &mut finds);
+            done.push((at, finds));
+        }
+    };
+    let mut done = std::thread::scope(|scope| {
+        let helpers: Vec<_> = (1..threads).map(|_| scope.spawn(work)).collect();
+        let mut done = work();
+        for helper in helpers {
+            done.extend(helper.join().expect("a search thread ends"));
+        }
+        done
+    });
+    if gone.load(Ordering::Relaxed) {
+        return None;
+    }
+    done.sort_unstable_by_key(|(at, _)| *at);
+    let mut finds = Finds::default();
+    for (_, more) in done {
+        finds.extend(more);
+    }
+    Some(finds)
+}
+
+/// What the parts in `run` hold that matches, on this thread.
+fn scan<'t>(
+    look: &Look,
+    parts: &[Part<'t>],
+    run: std::ops::Range<usize>,
+    matcher: &mut Matcher,
+    finds: &mut Finds<'t>,
+) {
+    let Look {
+        pattern,
+        all,
+        limit,
+        keep,
+        close,
+    } = *look;
+    let (mut chars, mut path, mut idx) = (Vec::new(), String::new(), Vec::new());
+    let needles = needles(pattern);
+    // How much of each needle a folder's path holds, when it is plain ASCII: see `prefix_held`.
+    let mut held = Vec::new();
+    let mut look = |part: usize, held: Option<&[usize]>, reach: Option<Reach>, at: usize| {
+        let (dir, folder, _) = parts[part];
+        let (name, node) = (folder.name(at), &folder.nodes[at]);
+        // Before the matcher, a quick look for the letters in order, which every match needs.
+        let (mut by_name, mut by_path) = (true, true);
+        if node.ascii {
+            let bytes = name.as_bytes();
+            by_name = needles.iter().all(|needle| holds(bytes, needle));
+            if let Some(held) = held.filter(|_| !by_name) {
+                by_path = needles
+                    .iter()
+                    .zip(held)
+                    .all(|(needle, &held)| holds(bytes, &needle[held..]));
+            }
+            // Those letters in order are a match here. One whose letters cannot sit close is passed over.
+            let reach = if by_name {
+                Some(Reach::START)
+            } else {
+                reach.filter(|_| by_path)
+            };
+            if let (Some(close), Some(reach)) = (close, reach)
+                && !close.can(close.read(reach, bytes))
+            {
+                finds.pass(part, at, keep);
+                return;
+            }
+        }
+        let hit = |score, by_name, close| Scored {
+            score,
+            dir,
+            name,
+            folder: node.dir,
+            at: at as u32,
+            by_name,
+            close,
+        };
+        if by_name && let Some((score, close)) = score(pattern, name, &mut idx, &mut chars, matcher) {
+            finds.add(part, hit(score + NAME_BONUS, true, close), limit, keep);
+            return;
+        }
+        if dir.is_empty() || !by_path {
+            return;
+        }
+        path.clear();
+        path.push_str(dir);
+        path.push('/');
+        path.push_str(name);
+        if let Some((score, close)) = score(pattern, &path, &mut idx, &mut chars, matcher) {
+            finds.add(part, hit(score, false, close), limit, keep);
+        }
+    };
+    for part in run {
+        let (dir, folder, ats) = parts[part];
+        held.clear();
+        let path = [dir.as_bytes(), b"/"];
+        held.extend(needles.iter().map(|needle| prefix_held(&path, needle)));
+        let plain = !dir.is_empty() && folder.ascii;
+        let held = plain.then_some(held.as_slice());
+        let reach = close
+            .filter(|_| plain)
+            .map(|close| close.read(close.read(Reach::START, dir.as_bytes()), b"/"));
+        match ats {
+            Some(ats) => {
+                for &at in ats {
+                    look(part, held, reach, at as usize);
+                }
+            }
+            None => {
+                for at in (0..folder.len()).filter(|&at| all || !folder.nodes[at].hidden) {
+                    look(part, held, reach, at);
+                }
+            }
+        }
+    }
+}
+
+/// For a query of one plain word, which matches whenever its letters are in a name or path in
+/// order: a quick way to tell where those letters cannot sit close together (see `score`). Such a
+/// match is one of last resort, so it can be passed over unscored while anything closer is found.
+struct Close {
+    /// For each ASCII byte, the letters of the word it is, in lower case, as bits.
+    letters: [u64; 128],
+    /// The bit of the word's last letter.
+    last: u64,
+}
+
+/// How far `Close` got through a name or path read so far.
+#[derive(Clone, Copy)]
+struct Reach {
+    /// The letters of the word that can be the last byte read, each with all before it close.
+    ends: u64,
+    /// The letters that can be any byte read so far, each with all before it close.
+    any: u64,
+    /// The next byte starts a word.
+    word: bool,
+}
+
+impl Reach {
+    const START: Reach = Reach {
+        ends: 0,
+        any: 0,
+        word: true,
+    };
+}
+
+impl Close {
+    fn new(pattern: &Pattern) -> Option<Self> {
+        let [atom] = pattern.atoms.as_slice() else {
+            return None;
+        };
+        let Utf32Str::Ascii(word) = atom.needle_text() else {
+            return None;
+        };
+        if atom.negative || atom.kind != AtomKind::Fuzzy || word.is_empty() || word.len() > 64 {
+            return None;
+        }
+        let mut letters = [0; 128];
+        for (at, &byte) in word.iter().enumerate() {
+            letters[usize::from(byte)] |= 1 << at;
+        }
+        Some(Self {
+            letters,
+            last: 1 << (word.len() - 1),
+        })
+    }
+
+    /// Reads on through `hay`, which is plain ASCII. A letter is close when it follows the one
+    /// before it, or starts a word with the one before it anywhere earlier.
+    fn read(&self, mut reach: Reach, hay: &[u8]) -> Reach {
+        for &byte in hay {
+            let from = (reach.ends << 1) | if reach.word { (reach.any << 1) | 1 } else { 0 };
+            reach.ends = self.letters[usize::from(byte.to_ascii_lowercase())] & from;
+            reach.any |= reach.ends;
+            reach.word = !byte.is_ascii_alphanumeric();
+        }
+        reach
+    }
+
+    /// Whether every letter of the word can sit close in what was read.
+    fn can(&self, reach: Reach) -> bool {
+        reach.any & self.last != 0
+    }
+}
+
+/// The letters every match of `pattern` holds in order, word by word: a word that has to be
+/// there, in plain ASCII. The matcher compares such a word to plain ASCII with case ignored.
+fn needles(pattern: &Pattern) -> Vec<&[u8]> {
+    pattern
+        .atoms
+        .iter()
+        .filter(|atom| !atom.negative)
+        .filter_map(|atom| match atom.needle_text() {
+            Utf32Str::Ascii(needle) => Some(needle),
+            Utf32Str::Unicode(_) => None,
+        })
+        .collect()
+}
+
+/// Whether `hay` holds the letters of `needle` in order, case ignored. `needle` is in lower case.
+fn holds(hay: &[u8], needle: &[u8]) -> bool {
+    prefix_held(&[hay], needle) == needle.len()
+}
+
+/// How many of the first letters of `needle` the pieces of `hay`, one after the other, hold in
+/// order, case ignored. Taking each letter as early as it comes holds the most, so `hay` followed
+/// by more holds `needle` exactly when the more holds the letters left.
+fn prefix_held(hay: &[&[u8]], needle: &[u8]) -> usize {
+    let mut held = 0;
+    for piece in hay {
+        for &byte in *piece {
+            match needle.get(held) {
+                Some(&want) if byte.to_ascii_lowercase() == want => held += 1,
+                Some(_) => {}
+                None => return held,
+            }
+        }
+    }
+    held
+}
+
+/// The score of `hay` when it matches, and whether its matched letters sit close together: each
+/// one either follows the one before it or starts a word. A query found as a run, or as the starts
+/// of words, is close; letters picked out of the middle of several words are not.
+fn score(
+    pattern: &Pattern,
+    hay: &str,
+    idx: &mut Vec<u32>,
+    chars: &mut Vec<char>,
+    matcher: &mut Matcher,
+) -> Option<(u32, bool)> {
     idx.clear();
-    pattern.indices(Utf32Str::new(hay, chars), matcher, idx);
+    let score = pattern.indices(Utf32Str::new(hay, chars), matcher, idx)?;
     idx.sort_unstable();
     idx.dedup();
-    let letters: Vec<char> = hay.chars().collect();
-    let mut last = None;
-    idx.iter().all(|&i| {
-        let i = i as usize;
-        let ok = last.is_some_and(|l| i == l + 1) || i == 0 || letters.get(i - 1).is_some_and(|c| !c.is_alphanumeric());
-        last = Some(i);
-        ok
-    })
+    let close = |starts_word: &dyn Fn(usize) -> bool| {
+        let mut last = None;
+        idx.iter().all(|&i| {
+            let i = i as usize;
+            let ok = last.is_some_and(|l| i == l + 1) || i == 0 || starts_word(i - 1);
+            last = Some(i);
+            ok
+        })
+    };
+    let close = if hay.is_ascii() {
+        close(&|before| hay.as_bytes().get(before).is_some_and(|b| !b.is_ascii_alphanumeric()))
+    } else {
+        let letters: Vec<char> = hay.chars().collect();
+        close(&|before| letters.get(before).is_some_and(|c| !c.is_alphanumeric()))
+    };
+    Some((score, close))
 }
 
 impl Tree {
@@ -835,9 +1333,16 @@ impl Tree {
     fn remove(&mut self, dir: &str) {
         let mut todo = vec![dir.to_owned()];
         while let Some(dir) = todo.pop() {
-            let Some(nodes) = self.dirs.remove(&dir) else { continue };
-            self.count -= nodes.len();
-            todo.extend(nodes.iter().filter(|n| n.walk).map(|n| paths::join(&dir, &n.name)));
+            let Some(folder) = self.dirs.remove(dir.as_str()) else {
+                continue;
+            };
+            self.count -= folder.len();
+            todo.extend(
+                folder
+                    .entries()
+                    .filter(|(_, n)| n.walk)
+                    .map(|(name, _)| paths::join(&dir, name)),
+            );
         }
     }
 }
@@ -1407,6 +1912,471 @@ mod tests {
         std::thread::sleep(SETTLE * 6);
         assert!(found(&index, "new.txt").is_empty());
         assert_eq!(found(&index, "a.txt"), ["a.txt"]);
+    }
+
+    /// Whether every matched letter of `hay` either follows the one before it or starts a word. A query
+    /// found as a run, or as the starts of words, is close; letters picked out of the middle of
+    /// several words are not.
+    fn is_close(
+        pattern: &Pattern,
+        hay: &str,
+        idx: &mut Vec<u32>,
+        chars: &mut Vec<char>,
+        matcher: &mut Matcher,
+    ) -> bool {
+        idx.clear();
+        pattern.indices(Utf32Str::new(hay, chars), matcher, idx);
+        idx.sort_unstable();
+        idx.dedup();
+        let letters: Vec<char> = hay.chars().collect();
+        let mut last = None;
+        idx.iter().all(|&i| {
+            let i = i as usize;
+            let ok =
+                last.is_some_and(|l| i == l + 1) || i == 0 || letters.get(i - 1).is_some_and(|c| !c.is_alphanumeric());
+            last = Some(i);
+            ok
+        })
+    }
+
+    /// The search as it was before it was made fast: every entry scored by its name, then by its
+    /// whole path, one after the other. What the search finds must be what this finds.
+    fn plain_search(index: &Index, query: &str, limit: usize, all: bool) -> Vec<Hit> {
+        let tree = index.tree.read().expect("the index lock");
+        let query = query.trim();
+        if query.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+        let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+        let (mut chars, mut path) = (Vec::new(), String::new());
+        // Score, folder, place in the folder, whether the name matched, and whether it is close.
+        type Scored<'a> = (u32, &'a str, usize, bool, bool);
+        let mut scored: Vec<Scored> = Vec::new();
+        let mut idx = Vec::new();
+        for (dir, folder) in tree.dirs.iter().filter(|(dir, _)| all || !in_hidden(dir)) {
+            for (at, (name, _)) in folder.entries().enumerate().filter(|(_, (_, n))| all || !n.hidden) {
+                if let Some(score) = pattern.score(Utf32Str::new(name, &mut chars), &mut matcher) {
+                    let close = is_close(&pattern, name, &mut idx, &mut chars, &mut matcher);
+                    scored.push((score + NAME_BONUS, dir, at, true, close));
+                    continue;
+                }
+                if dir.is_empty() {
+                    continue;
+                }
+                path.clear();
+                path.push_str(dir);
+                path.push('/');
+                path.push_str(name);
+                if let Some(score) = pattern.score(Utf32Str::new(&path, &mut chars), &mut matcher) {
+                    let close = is_close(&pattern, &path, &mut idx, &mut chars, &mut matcher);
+                    scored.push((score, dir, at, false, close));
+                }
+            }
+        }
+        if scored.iter().any(|s| s.4) {
+            scored.retain(|s| s.4);
+        }
+        let total = scored.len();
+        let rank = |a: &Scored, b: &Scored| {
+            let (left, right) = (tree.dirs[a.1].name(a.2), tree.dirs[b.1].name(b.2));
+            (b.0.cmp(&a.0))
+                .then_with(|| (a.1.len() + left.len()).cmp(&(b.1.len() + right.len())))
+                .then_with(|| (a.1, left).cmp(&(b.1, right)))
+        };
+        scored.sort_by(rank);
+        scored.truncate(limit);
+        let mut hits: Vec<Hit> = scored
+            .into_iter()
+            .map(|(_, dir, at, by_name, _)| {
+                let (name, node) = (tree.dirs[dir].name(at), &tree.dirs[dir].nodes[at]);
+                let path = paths::join(dir, name);
+                let mut idx = Vec::new();
+                let hay = if by_name { name } else { path.as_str() };
+                pattern.indices(Utf32Str::new(hay, &mut chars), &mut matcher, &mut idx);
+                idx.sort_unstable();
+                idx.dedup();
+                Hit {
+                    path,
+                    dir: node.dir,
+                    idx,
+                    name: by_name,
+                }
+            })
+            .collect();
+        // The total rides along as one more hit, so a comparison checks it too.
+        hits.push(Hit {
+            path: format!("total {total}"),
+            dir: false,
+            idx: Vec::new(),
+            name: false,
+        });
+        hits
+    }
+
+    /// What `search` answers, in the shape `plain_search` gives it.
+    fn searched(index: &Index, query: &str, limit: usize, all: bool) -> Vec<Hit> {
+        let found = index.search(query, limit, all);
+        let mut hits = found.hits;
+        if !query.trim().is_empty() && limit > 0 {
+            hits.push(Hit {
+                path: format!("total {}", found.total),
+                dir: false,
+                idx: Vec::new(),
+                name: false,
+            });
+        }
+        hits
+    }
+
+    /// Words a home folder's names are made of.
+    const WORDS: &[&str] = &[
+        "report",
+        "invoice",
+        "photo",
+        "draft",
+        "notes",
+        "budget",
+        "project",
+        "client",
+        "meeting",
+        "summary",
+        "design",
+        "final",
+        "review",
+        "backup",
+        "archive",
+        "music",
+        "video",
+        "school",
+        "taxes",
+        "travel",
+        "recipe",
+        "garden",
+        "letter",
+        "resume",
+        "contract",
+        "slides",
+        "export",
+        "import",
+        "config",
+        "readme",
+        "index",
+        "main",
+        "server",
+        "client",
+        "render",
+        "theme",
+        "assets",
+        "build",
+        "release",
+        "screenshot",
+        "holiday",
+        "wedding",
+        "family",
+        "work",
+        "personal",
+        "scan",
+        "receipt",
+        "manual",
+        "guide",
+        "schedule",
+        "northwind",
+        "tidewater",
+        "summit",
+        "harbor",
+        "maple",
+        "cedar",
+        "orbit",
+        "pixel",
+        "vector",
+        "kernel",
+        "data",
+        "model",
+        "sample",
+        "test",
+        "spec",
+        "lib",
+        "util",
+        "helper",
+        "store",
+        "palette",
+        "preview",
+    ];
+    const EXTENSIONS: &[&str] = &[
+        "txt", "md", "pdf", "jpg", "JPG", "png", "rs", "ts", "tsx", "json", "toml", "docx", "xlsx", "mp3", "mov",
+        "zip", "csv", "html", "css", "py", "heic", "svg",
+    ];
+
+    /// The same numbers every time, from one seed.
+    struct Dice(u64);
+
+    impl Dice {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % n as u64) as usize
+        }
+
+        fn word(&mut self) -> &'static str {
+            WORDS[self.below(WORDS.len())]
+        }
+
+        fn title(&mut self) -> String {
+            let word = self.word();
+            word[..1].to_uppercase() + &word[1..]
+        }
+
+        fn file(&mut self) -> String {
+            let ext = EXTENSIONS[self.below(EXTENSIONS.len())];
+            match self.below(10) {
+                0 => format!("IMG_{:04}.{ext}", self.below(10_000)),
+                1 => format!("{} {} {}.{ext}", self.title(), self.title(), 2015 + self.below(11)),
+                2 => format!("{}{}.{ext}", self.title(), self.title()),
+                3 => format!("{}_{}.{ext}", self.word(), self.below(100)),
+                4 if self.below(8) == 0 => format!("café {}.{ext}", self.word()),
+                4 if self.below(8) == 0 => format!("Über-{}.{ext}", self.word()),
+                5 => format!("{}.{ext}", self.word()),
+                _ => format!("{}-{}.{ext}", self.word(), self.word()),
+            }
+        }
+
+        fn folder(&mut self) -> String {
+            match self.below(12) {
+                0 => format!("{}", 2015 + self.below(11)),
+                1 | 2 => format!("{} {}", self.title(), self.title()),
+                3 => format!("{}-{}", self.word(), self.word()),
+                4 if self.below(4) == 0 => "node_modules".to_owned(),
+                4 if self.below(4) == 0 => "src".to_owned(),
+                _ => self.word().to_owned(),
+            }
+        }
+    }
+
+    /// Writes a tree of at least `entries` entries under `top`, the same every time: folders up to
+    /// ten deep, named the way a home folder's are.
+    fn synthetic(top: &Path, entries: usize) {
+        let mut dice = Dice(0x9e37_79b9_7f4a_7c15);
+        let mut made = 0;
+        let mut todo = VecDeque::from([(top.to_path_buf(), 0)]);
+        fs::create_dir_all(top).unwrap();
+        while let Some((dir, depth)) = todo.pop_front() {
+            for _ in 0..dice.below(24) {
+                if made < entries {
+                    fs::write(dir.join(dice.file()), "").unwrap();
+                    made += 1;
+                }
+            }
+            let folders = if depth < 10 { dice.below(6) } else { 0 };
+            for _ in 0..folders {
+                if made < entries {
+                    let inside = dir.join(dice.folder());
+                    if !inside.exists() {
+                        fs::create_dir(&inside).unwrap();
+                        made += 1;
+                        // What is in a folder that is left out is not indexed: it stays empty.
+                        if !inside.ends_with("node_modules") {
+                            todo.push_back((inside, depth + 1));
+                        }
+                    }
+                }
+            }
+            // Keep folders coming while entries are still owed.
+            if todo.is_empty() && made < entries {
+                let more = top.join(format!("more {made}"));
+                fs::create_dir(&more).unwrap();
+                made += 1;
+                todo.push_back((more, 1));
+            }
+        }
+    }
+
+    /// Queries as they are typed: one letter, two, a word, a path, and one that finds nothing.
+    const QUERIES: &[&str] = &[
+        "r",
+        "re",
+        "rep",
+        "repo",
+        "report",
+        "inv",
+        "img",
+        "img_12",
+        "md",
+        "readme",
+        "budget 2021",
+        "nw ind",
+        "src/main",
+        "photo/2019",
+        "notes/draft",
+        "summit harbor final",
+        "zqxj",
+        "cafe",
+        "über",
+        "^report",
+        "pdf$",
+        "'draft",
+        "!jpg rep",
+        "report !pdf",
+        "!",
+        "x y",
+        "eaoiu",
+        "nwdtr",
+    ];
+
+    #[test]
+    fn the_search_finds_what_a_plain_scan_finds() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        synthetic(tmp.path(), 6000);
+        let index = Index::new(Root::new(tmp.path(), false).unwrap());
+        index.build();
+        let same = |query: &str, limit: usize, all: bool| {
+            let plain = plain_search(&index, query, limit, all);
+            assert_eq!(
+                searched(&index, query, limit, all),
+                plain,
+                "{query:?} limit {limit} all {all}"
+            );
+        };
+        for all in [false, true] {
+            for query in QUERIES {
+                for limit in [0, 1, 7, 60, 200] {
+                    *index.last.lock().unwrap() = None;
+                    same(query, limit, all);
+                }
+                // Typed a letter at a time: each search can narrow what the one before found.
+                let ends = query.char_indices().skip(1).map(|(end, _)| end).chain([query.len()]);
+                for end in ends {
+                    same(&query[..end], 60, all);
+                }
+            }
+        }
+        // Taken back and typed again, with and without what a listing hides.
+        for (query, all) in [
+            ("repo", false),
+            ("rep", false),
+            ("rex", false),
+            ("re", true),
+            ("rep", false),
+            ("rep", true),
+        ] {
+            same(query, 60, all);
+        }
+    }
+
+    #[test]
+    fn a_search_that_narrows_the_last_sees_what_changed_in_between() {
+        let mut site = Watched::new(false);
+        let same = |site: &Watched, query: &str| {
+            let plain = plain_search(&site.index, query, 60, false);
+            assert_eq!(searched(&site.index, query, 60, false), plain, "{query:?}");
+        };
+        same(&site, "rep");
+        fs::write(site.served.join("sub/report.txt"), "x").unwrap();
+        site.see(&[(CREATE, "sub/report.txt")]);
+        same(&site, "repo");
+        assert_eq!(found(&site.index, "repo"), ["sub/report.txt"]);
+        fs::remove_file(site.served.join("sub/report.txt")).unwrap();
+        site.see(&[(REMOVE, "sub/report.txt")]);
+        same(&site, "repor");
+        assert!(found(&site.index, "repor").is_empty());
+        // A folder read again holds its entries in another order, under the same names.
+        fs::write(site.served.join("sub/rep-a.txt"), "x").unwrap();
+        site.see(&[(CREATE, "sub/rep-a.txt")]);
+        same(&site, "r");
+        fs::write(site.served.join("sub/rep-b.txt"), "x").unwrap();
+        site.index.reread("sub");
+        same(&site, "re");
+        same(&site, "rep");
+        assert_eq!(found(&site.index, "rep").len(), 2);
+    }
+
+    #[test]
+    fn a_search_no_one_waits_for_stops_and_leaves_nothing_for_the_next() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        synthetic(tmp.path(), 6000);
+        let index = Index::new(Root::new(tmp.path(), false).unwrap());
+        index.build();
+        assert!(index.search_unless("rep", 60, false, &AtomicBool::new(true)).is_none());
+        assert!(index.last.lock().unwrap().is_none());
+        assert_eq!(
+            searched(&index, "repo", 60, false),
+            plain_search(&index, "repo", 60, false)
+        );
+    }
+
+    /// How much memory the process holds, in bytes, where that can be read.
+    fn resident() -> Option<usize> {
+        let statm = fs::read_to_string("/proc/self/statm").ok()?;
+        let pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+        Some(pages * 4096)
+    }
+
+    /// The search over a tree the size of a big home folder, each query timed. Run it in release:
+    /// `OKFS_BENCH_TREE=<folder> cargo test --release --lib bench_search -- --ignored --nocapture`.
+    /// The folder is written the first time.
+    #[test]
+    #[ignore = "a benchmark: run it by hand, in release"]
+    fn bench_search() {
+        let top = PathBuf::from(std::env::var("OKFS_BENCH_TREE").expect("OKFS_BENCH_TREE names a folder"));
+        if !top.exists() {
+            synthetic(&top, 311_174);
+        }
+        let before = resident();
+        let index = Index::new(Root::new(&top, false).unwrap());
+        index.build();
+        let after = resident();
+        let mb = |bytes: usize| bytes as f64 / 1e6;
+        if let (Some(before), Some(after)) = (before, after) {
+            println!(
+                "{} entries, {:.1} MB resident for the index",
+                index.len(),
+                mb(after - before)
+            );
+        }
+        let runs = 9;
+        // The median time of `search`, each run after `before`, which is not timed.
+        let time = |before: &dyn Fn(), search: &dyn Fn()| {
+            let mut took: Vec<f64> = (0..runs)
+                .map(|_| {
+                    before();
+                    let began = Instant::now();
+                    search();
+                    began.elapsed().as_secs_f64() * 1e3
+                })
+                .collect();
+            took.sort_by(f64::total_cmp);
+            took[runs / 2]
+        };
+        let forget = || *index.last.lock().unwrap() = None;
+        let plain = std::env::var_os("OKFS_BENCH_PLAIN").is_some();
+        for query in QUERIES {
+            for all in [false, true] {
+                assert_eq!(
+                    searched(&index, query, 60, all),
+                    plain_search(&index, query, 60, all),
+                    "{query:?}"
+                );
+            }
+            // As the first query typed, and as typed a letter at a time.
+            let cold = time(&forget, &|| drop(index.search(query, 60, false)));
+            let shorter = &query[..query.char_indices().last().unwrap().0];
+            let typed = time(
+                &|| {
+                    forget();
+                    drop(index.search(shorter, 60, false));
+                },
+                &|| drop(index.search(query, 60, false)),
+            );
+            let total = index.search(query, 60, false).total;
+            let plain = if plain {
+                let took = time(&|| {}, &|| drop(plain_search(&index, query, 60, false)));
+                format!("plain {took:7.1} ms  ")
+            } else {
+                String::new()
+            };
+            println!("{query:>22} {total:>7} found  {plain}first {cold:7.1} ms  typed {typed:7.1} ms");
+        }
     }
 
     #[test]

@@ -731,9 +731,13 @@ struct RecentQuery {
 async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -> Response {
     let limit = query.limit.unwrap_or(60).min(200);
     let index = Arc::clone(&app.index);
-    match tokio::task::spawn_blocking(move || index.search(&query.q, limit, query.all.is_some())).await {
-        Ok(found) => Json(found).into_response(),
-        Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the search failed"),
+    // A page asking for something else drops this request, and the search stops with it: it
+    // takes no time from the search for what is asked now.
+    let gone = Gone(Arc::new(AtomicBool::new(false)));
+    let flag = Arc::clone(&gone.0);
+    match tokio::task::spawn_blocking(move || index.search_unless(&query.q, limit, query.all.is_some(), &flag)).await {
+        Ok(Some(found)) => Json(found).into_response(),
+        Ok(None) | Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the search failed"),
     }
 }
 
