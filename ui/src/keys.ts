@@ -4,6 +4,7 @@ import type { Store } from "./store";
 
 /** What the keys need from the page around the list. */
 export interface KeyHost {
+  /** Puts the focus where the list is narrowed: the folder's filter, or the query of the matches. */
   filter: () => void;
   closeMenu: () => void;
   flipScheme: () => void;
@@ -47,12 +48,14 @@ export function keyFor(store: Store, host: KeyHost, press: Press): (() => void) 
 
 export function listKeys(store: Store, host: KeyHost): Record<string, () => void> {
   const { s } = store;
-  // With a file open, the keys that move the cursor step from file to file instead.
+  // With a file open, down and up step from file to file instead. Left goes back to the list the file was opened
+  // from, the way right opened it.
   const modal = s.open !== null;
   const down = () => (modal ? store.step(1) : store.move(1));
   const up = () => (modal ? store.step(-1) : store.move(-1));
-  const left = () => (modal ? store.step(-1) : store.up());
-  const right = () => (modal ? store.step(1) : store.activate());
+  const left = () => store.up();
+  const right = () => store.activate();
+  if (s.finding) return findKeys(store, host, { down, up, left, right });
   return {
     j: down,
     ArrowDown: down,
@@ -60,8 +63,8 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     ArrowUp: up,
     h: left,
     ArrowLeft: left,
-    l: right,
-    ArrowRight: right,
+    // Not taken at all on an open file: a player there seeks with it.
+    ...(modal ? {} : { l: right, ArrowRight: right }),
     Enter: () => store.activate(),
     ".": () => store.setHidden(),
     // Only a file with two forms has the key: on any other it does nothing, and is not offered.
@@ -72,12 +75,45 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     Escape: () => {
       if (s.open) store.close();
       else if (s.filter) store.setFilter("");
+      else if (store.trail()) store.toMatches();
       host.closeMenu();
     },
     Home: () => store.moveTo(0),
     End: () => store.moveTo(s.entries.length - 1),
     "/": host.filter,
     s: () => store.setSort(),
+    t: host.flipScheme,
+    "?": () => store.setHelp(true),
+  };
+}
+
+/** The keys on the matches: as on a folder, except that the ways out of the folder go back to it, and `s` sorts the matches. */
+function findKeys(store: Store, host: KeyHost, move: Record<"down" | "up" | "left" | "right", () => void>): Record<string, () => void> {
+  const { down, up, left, right } = move;
+  const last = () => store.list().length - 1;
+  return {
+    j: down,
+    ArrowDown: down,
+    k: up,
+    ArrowUp: up,
+    h: left,
+    ArrowLeft: left,
+    l: right,
+    ArrowRight: right,
+    Enter: () => store.activate(),
+    Backspace: left,
+    "-": left,
+    Escape: () => {
+      store.leaveFind();
+      host.closeMenu();
+    },
+    Home: () => store.moveTo(0),
+    End: () => store.moveTo(last()),
+    PageDown: () => store.move(10),
+    PageUp: () => store.move(-10),
+    "/": host.filter,
+    s: () => store.setMatchSort(),
+    ".": () => store.setHidden(),
     t: host.flipScheme,
     "?": () => store.setHelp(true),
   };

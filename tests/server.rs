@@ -1180,6 +1180,49 @@ async fn search_finds_names_across_the_tree_and_follows_changes() {
 }
 
 #[tokio::test]
+async fn search_hands_back_any_page_of_the_matches_in_the_order_asked_with_their_times_and_sizes() {
+    let site = Site::new();
+    let root = Root::new(&site.served, false).unwrap();
+    let index = Index::spawn(root.clone(), Follow::Watch);
+    let app = router(App::new(root, Arc::clone(&index), Options::default()).unwrap());
+    for _ in 0..200 {
+        if json(&app, "/api/search?q=txt").await["ready"] == true {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let paths = |found: &Value| -> Vec<String> {
+        let hits = found["hits"].as_array().unwrap();
+        hits.iter()
+            .map(|hit| hit["path"].as_str().unwrap().to_owned())
+            .collect()
+    };
+
+    // Largest first; a link has no size of its own, and comes last.
+    let by_size = json(&app, "/api/search?q=.txt&sort=size").await;
+    let all = paths(&by_size);
+    assert_eq!(all[..2], ["a.txt", "sub/b.txt"]);
+    assert_eq!(by_size["hits"][0]["s"], 20);
+    assert!(by_size["hits"][0]["m"].as_u64().unwrap() > 0);
+    // The next page starts where the last one ended, and the total is the same on each.
+    let second = json(&app, "/api/search?q=.txt&sort=size&offset=1&limit=2").await;
+    assert_eq!(paths(&second), all[1..3]);
+    assert_eq!(second["total"], by_size["total"]);
+    let turned = json(&app, "/api/search?q=.txt&sort=size&rev=1").await;
+    assert_eq!(paths(&turned).last().unwrap(), "a.txt");
+    // A folder tells how many entries its listing shows, and has no size or time.
+    let sub = json(&app, "/api/search?q=sub").await;
+    assert_eq!(sub["hits"][0]["path"], "sub");
+    assert_eq!(
+        (sub["hits"][0]["c"].clone(), sub["hits"][0]["s"].clone()),
+        (Value::from(2), Value::from(0))
+    );
+    // An order the server does not know is refused.
+    let (refused, _) = get(&app, "/api/search?q=txt&sort=colour").await;
+    assert_eq!(refused.status(), 400);
+}
+
+#[tokio::test]
 async fn a_folder_left_out_of_the_search_still_opens_and_lists_its_files() {
     let site = Site::new();
     for dir in ["dist/deep", "app/node_modules/pad"] {

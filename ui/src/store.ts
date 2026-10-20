@@ -1,6 +1,23 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
-import { HttpError, type Item, type Listing, type Readme, deleteEntry, getJson, joinPath, nameOf, parentOf, parseLocation, urls } from "./api";
+import {
+  type Found,
+  type Hit,
+  HttpError,
+  type Item,
+  type Listing,
+  type MatchOrder,
+  type Readme,
+  deleteEntry,
+  findOf,
+  getJson,
+  joinPath,
+  nameOf,
+  parentOf,
+  parseLocation,
+  urls,
+  withFind,
+} from "./api";
 import { type Config, config, locate } from "./config";
 import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
@@ -43,6 +60,47 @@ export const SORT_LABEL: Record<SortKey, string> = { name: "Name", time: "Modifi
 /** Names and kinds read best first to last; sizes and times are wanted largest and newest first. */
 const naturalDir = (key: SortKey): 1 | -1 => (key === "name" || key === "kind" ? 1 : -1);
 
+/** One of the matches: the entry it is, and what of it the query matched. */
+export interface Match {
+  entry: Entry;
+  hit: Hit;
+}
+
+/** The orders of the matches, in the order `s` steps through them. */
+export const MATCH_ORDERS: MatchOrder[] = ["rank", "name", "folder", "size", "time"];
+export const MATCH_LABEL: Record<MatchOrder, string> = { rank: "relevance", name: "name", folder: "folder", size: "size", time: "modified" };
+
+/** How many matches are asked for at a time. The server sends no more in one answer. */
+export const MATCH_PAGE = 200;
+/** The next page is asked for once the cursor or the end of what is on screen comes this close to the last match loaded. */
+const MATCH_AHEAD = 60;
+
+/** Every match of a query from anywhere in the tree, listed in place of a folder: see `Store.find`. */
+export interface Matches {
+  q: string;
+  /** The matches loaded so far, in `sort`. More come a page at a time: see `Store.more`. */
+  list: Match[];
+  /** How many there are in all. */
+  total: number;
+  /** How long the server took over the first page, in milliseconds. */
+  took: number;
+  sort: { key: MatchOrder; rev: boolean };
+  cursor: number;
+  /** The first page for the query and the sort has come. Until it has, the last answer stays on screen. */
+  ready: boolean;
+}
+
+/** While browsing below a folder entered from the matches: the way back to them. */
+export interface Trail {
+  q: string;
+  /** How many matches there were, for the button that goes back. */
+  total: number;
+  /** The folder entered from the matches. */
+  root: string;
+  /** How many entries of history back the matches are. */
+  steps: number;
+}
+
 export interface State {
   status: "loading" | "ready" | "missing";
   /** The folder being shown, relative to the served folder. Empty for the top. */
@@ -75,6 +133,10 @@ export interface State {
   unlisted: number;
   palette: boolean;
   help: boolean;
+  /** The matches are on screen in place of the folder's list. */
+  finding: boolean;
+  /** The last matches, kept while a folder or a file entered from them is shown, to go back to. */
+  matches: Matches | null;
   /** What the delete dialog is asking about, while it is up. */
   doomed: Doomed | null;
   /** Counts the times the list caught up with the disk by itself. The list does not scroll for those. */
@@ -89,6 +151,13 @@ interface Mark {
   opened?: boolean;
   /** A folder's address standing for its listing, where it would otherwise open the folder's index page. */
   listing?: boolean;
+  /** The matches, opened in this visit from the page before this entry: leaving them is going back. */
+  found?: boolean;
+  /** The matches' cursor and sort when they were left, for a return to them after a reload. */
+  at?: number;
+  sort?: Matches["sort"];
+  /** See `Trail`. */
+  trail?: Trail;
 }
 
 const mark = (): Mark => (history.state as Mark | null) ?? {};
@@ -149,6 +218,8 @@ export class Store {
     unlisted: 0,
     palette: false,
     help: false,
+    finding: false,
+    matches: null,
     doomed: null,
     caught: 0,
   };
@@ -188,7 +259,19 @@ export class Store {
   }
 
   cur(): Entry | null {
-    return this.s.entries[this.s.cursor] ?? null;
+    return this.list()[this.at()] ?? null;
+  }
+
+  /** What the list on screen shows: the folder's entries, or the matches. */
+  list(): Entry[] {
+    const { s } = this;
+    return s.finding && s.matches ? s.matches.list.map((match) => match.entry) : s.entries;
+  }
+
+  /** Where the cursor is in `list`. */
+  at(): number {
+    const { s } = this;
+    return s.finding && s.matches ? s.matches.cursor : s.cursor;
   }
 
   /** The file on show: the one given the full width, or the one under the cursor. */
@@ -290,10 +373,26 @@ export class Store {
 
   private setUrl(mode: HistoryMode, path: string, dir: boolean, state: Mark = {}): void {
     if (mode === "none") return;
-    const url = urls.view(path, dir) + location.search;
-    if (mode === "push" && url !== location.pathname + location.search) return history.pushState(state, "", url);
+    const url = urls.view(path, dir) + withFind(location.search);
+    const pushing = mode === "push" && url !== location.pathname + location.search;
+    const trail = state.trail ?? this.trailTo(path, pushing);
+    const marked = trail ? { ...state, trail } : state;
+    if (pushing) return history.pushState(marked, "", url);
     // A replaced file entry keeps what it remembered; a folder's entry takes only the mark it is given.
-    history.replaceState(mode === "push" || dir ? state : history.state, "", url);
+    history.replaceState(mode === "push" || dir ? marked : history.state, "", url);
+  }
+
+  /** The way back to the matches from `path`, while it is at or below the folder entered from them. */
+  private trailTo(path: string, pushing: boolean): Trail | undefined {
+    const trail = mark().trail;
+    if (!trail || !(path === trail.root || path.startsWith(`${trail.root}/`))) return undefined;
+    return { ...trail, steps: trail.steps + (pushing ? 1 : 0) };
+  }
+
+  /** The way back to the matches, while browsing below a folder entered from them. */
+  trail(): Trail | null {
+    const { s } = this;
+    return s.finding ? null : (mark().trail ?? null);
   }
 
   /** Takes a listing as the folder being shown. */
@@ -325,7 +424,19 @@ export class Store {
    */
   async showDir(
     path: string,
-    opts: { select?: string; open?: string; listing?: boolean; history?: HistoryMode; enter?: string[] } = {},
+    opts: {
+      select?: string;
+      open?: string;
+      listing?: boolean;
+      history?: HistoryMode;
+      enter?: string[];
+      /** The matches are shown over the folder once it has come. */
+      finding?: boolean;
+      /** The folder is entered from the matches: see `Trail`. */
+      trail?: Trail;
+      /** A file opened from the matches: its folder gets no entry of its own, so closing it goes back to them. */
+      alone?: boolean;
+    } = {},
   ): Promise<void> {
     const { s } = this;
     const turn = ++this.turn;
@@ -348,6 +459,7 @@ export class Store {
 
     const changed = s.path !== listing.path || s.status !== "ready";
     this.take(listing);
+    s.finding = opts.finding === true;
     if (changed) s.filter = "";
     this.compute();
     const asked = opts.open !== undefined || opts.select !== undefined || opts.listing === true;
@@ -372,7 +484,9 @@ export class Store {
     // An index page keeps its folder's address, so a link to the folder means the page.
     const paged = s.open !== null && index !== undefined;
     // A file opened from elsewhere gets its folder as the entry before it, so closing lands there.
-    if (!s.open || paged || (mode === "push" && changed)) this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex() });
+    if (!s.open || paged || (mode === "push" && changed && !opts.alone)) {
+      this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex(), trail: opts.trail });
+    }
     if (s.open && !paged) this.setUrl(mode, s.open.path, false, { opened: true });
     this.emit();
     // A change told while the listing was on its way may not be in it.
@@ -560,6 +674,9 @@ export class Store {
 
   start(): Promise<void> {
     addEventListener("popstate", () => void this.route());
+    const { path, kind } = config.target;
+    const find = findOf(location.search);
+    if (find !== null && kind === "dir") return this.showMatches(find, path);
     return this.land(config.target);
   }
 
@@ -567,6 +684,9 @@ export class Store {
   private route(): Promise<void> {
     const { s } = this;
     const { path, dir } = parseLocation();
+    const find = findOf(location.search);
+    if (find !== null && dir) return this.showMatches(find, path);
+    s.finding = false;
     const folder = dir ? path : parentOf(path);
     const listing = mark().listing === true;
     if (s.status !== "ready" || folder !== s.path) return this.go(path, dir, "none", listing);
@@ -583,13 +703,20 @@ export class Store {
 
   moveTo(index: number): void {
     const { s } = this;
-    if (!s.entries.length) return;
-    s.cursor = Math.max(0, Math.min(index, s.entries.length - 1));
+    const list = this.list();
+    if (!list.length) return;
+    const at = Math.max(0, Math.min(index, list.length - 1));
+    if (s.finding && s.matches) {
+      s.matches.cursor = at;
+      this.more(at);
+    } else {
+      s.cursor = at;
+    }
     this.emit();
   }
 
   move(delta: number): void {
-    this.moveTo(this.s.cursor + delta);
+    this.moveTo(this.at() + delta);
   }
 
   /**
@@ -600,6 +727,7 @@ export class Store {
     const { s } = this;
     // A file already at full width stays as it is: opening it again would only rewrite its history entry.
     if (s.open) return;
+    if (s.finding) return this.openMatch(index);
     if (index !== undefined) s.cursor = index;
     const entry = this.cur();
     if (!entry) return;
@@ -632,7 +760,167 @@ export class Store {
   up(): void {
     const { s } = this;
     if (s.open) return this.close();
+    if (s.finding) return this.leaveFind();
+    // Above the folder the matches led into are the matches, not that folder's own folder.
+    if (this.trail()?.root === s.path) return this.toMatches();
     if (s.path) void this.showDir(parentOf(s.path), { select: nameOf(s.path) });
+  }
+
+  /**
+   * Lists every match of `query` in place of the folder, from anywhere in the tree, and pushes the folder's address
+   * with `?find=` for it: back leaves the matches, and a reload or a shared link opens them again.
+   */
+  find(query: string): void {
+    const { s } = this;
+    const q = query.trim();
+    if (!q || s.status === "loading") return;
+    // Taken up again where they were left when they are the same matches.
+    if (s.matches?.q !== q) s.matches = newMatches(q);
+    s.finding = true;
+    s.open = null;
+    s.palette = false;
+    history.pushState({ found: true } satisfies Mark, "", this.matchesUrl());
+    this.emit();
+    if (!s.matches.ready) void this.askMatches(false);
+  }
+
+  /** The matches for another query, in the same place in history. */
+  refine(query: string): void {
+    const { s } = this;
+    const q = query.trim();
+    if (!s.finding || !s.matches || !q || q === s.matches.q) return;
+    s.matches.q = q;
+    history.replaceState(history.state, "", this.matchesUrl());
+    this.emit();
+    void this.askMatches(false);
+  }
+
+  /** Sorts the matches by `key`. The same key again turns the order around; no key steps to the next one. */
+  setMatchSort(key?: MatchOrder): void {
+    const { matches } = this.s;
+    if (!matches) return;
+    const { sort } = matches;
+    const next = key ?? MATCH_ORDERS[(MATCH_ORDERS.indexOf(sort.key) + 1) % MATCH_ORDERS.length] ?? "rank";
+    matches.sort = { key: next, rev: next === sort.key && next !== "rank" ? !sort.rev : false };
+    history.replaceState({ ...mark(), sort: matches.sort }, "", location.href);
+    this.emit();
+    void this.askMatches(false);
+  }
+
+  /** Leaves the matches for the folder they were opened over. */
+  leaveFind(): void {
+    const { s } = this;
+    if (!s.finding) return;
+    if (mark().found) {
+      history.back();
+      return;
+    }
+    s.finding = false;
+    this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
+    this.emit();
+  }
+
+  /** Goes back to the matches from a folder entered from them, however deep, the way back goes: see `Trail`. */
+  toMatches(): void {
+    const trail = this.trail();
+    if (!trail) return;
+    if (trail.steps > 0) {
+      history.go(-trail.steps);
+      return;
+    }
+    this.find(trail.q);
+  }
+
+  /** Asks for the next page of the matches once `seen`, the cursor or the end of what is on screen, comes near the last loaded. */
+  more(seen: number): void {
+    const { matches } = this.s;
+    if (!matches?.ready || matches.list.length >= matches.total) return;
+    if (seen >= matches.list.length - MATCH_AHEAD) void this.askMatches(true);
+  }
+
+  /** Opens the match under the cursor, or at `index`: a folder is entered, a file is given the full width in its folder. */
+  private openMatch(index?: number): void {
+    const { s } = this;
+    const matches = s.matches;
+    if (!matches) return;
+    if (index !== undefined) matches.cursor = index;
+    const entry = this.cur();
+    if (!entry) return;
+    // Where the matches were left, for a return to them after a reload.
+    history.replaceState({ ...mark(), at: matches.cursor, sort: matches.sort } satisfies Mark, "", location.href);
+    if (entry.dir) {
+      const trail = { q: matches.q, total: matches.total, root: entry.path, steps: 1 };
+      void this.showDir(entry.path, { enter: this.picked(entry.path), trail });
+    } else {
+      void this.showDir(parentOf(entry.path), { open: entry.name, alone: true });
+    }
+  }
+
+  /** The matches for `q` over the folder at `path`, as the address bar has them after back, forward or a reload. */
+  private async showMatches(q: string, path: string): Promise<void> {
+    const { s } = this;
+    if (s.matches?.q !== q) {
+      const kept = mark();
+      s.matches = newMatches(q, kept.sort);
+      s.matches.cursor = kept.at ?? 0;
+      void this.askMatches(false);
+    }
+    s.open = null;
+    if (s.status === "ready" && s.path === path) {
+      s.finding = true;
+      this.emit();
+      return;
+    }
+    await this.showDir(path, { history: "none", listing: true, finding: true });
+  }
+
+  /** The address of the matches: the folder they are over, with `?find=` for them. */
+  private matchesUrl(): string {
+    return urls.view(this.s.path, true) + withFind(location.search, this.s.matches?.q);
+  }
+
+  /** Counts the asks for the first page of the matches, so an answer for a query or a sort since left is dropped. */
+  private matchTurn = 0;
+  private asking: AbortController | null = null;
+  private askingMore = false;
+
+  /** Asks for the first page of the matches, or with `more` for the page after those loaded. */
+  private async askMatches(more: boolean): Promise<void> {
+    const matches = this.s.matches;
+    if (!matches || (more && this.askingMore)) return;
+    if (!more) {
+      this.asking?.abort();
+      this.matchTurn++;
+    }
+    const turn = this.matchTurn;
+    const abort = new AbortController();
+    if (more) this.askingMore = true;
+    else this.asking = abort;
+    const { q, sort } = matches;
+    const offset = more ? matches.list.length : 0;
+    try {
+      const found = await getJson<Found>(urls.search(q, { offset, limit: MATCH_PAGE, sort: sort.key, rev: sort.rev }), abort.signal);
+      if (turn !== this.matchTurn || this.s.matches !== matches) return;
+      const list = found.hits.map((hit, rank) => ({ entry: matchEntry(hit, offset + rank), hit }));
+      if (more) {
+        matches.list = [...matches.list, ...list];
+      } else {
+        // A first answer lands on the match the cursor was left on, when there is one; a new query starts at the top.
+        const at = matches.ready ? 0 : matches.cursor;
+        matches.list = list;
+        matches.took = found.took;
+        matches.cursor = Math.max(0, Math.min(at, list.length - 1));
+        matches.ready = true;
+      }
+      matches.total = found.total;
+      this.emit();
+      // The first walk of the tree is still going on: what it finds later is asked for again.
+      if (!more && !found.ready) setTimeout(() => turn === this.matchTurn && void this.askMatches(false), 1000);
+    } catch {
+      // Given up for a newer ask, or the server did not answer: the last answer stays.
+    } finally {
+      if (more) this.askingMore = false;
+    }
   }
 
   /** While a file is open: moves to the next or previous file, skipping folders. */
@@ -653,6 +941,8 @@ export class Store {
     this.s.hidden = on;
     this.emit();
     this.catchUp();
+    // The matches change too: the hidden ones are searched only while they are shown.
+    if (this.s.matches) void this.askMatches(false);
   }
 
   /**
@@ -721,7 +1011,8 @@ export class Store {
 
   /** Puts up the delete dialog, for the open file or the entry under the cursor unless one is given. */
   askDelete(doomed: Doomed | null = this.s.open ?? this.cur()): void {
-    if (!config.delete || !doomed) return;
+    // A match is deleted from its own folder, where the list shows what is left.
+    if (!config.delete || !doomed || this.s.finding) return;
     this.s.doomed = doomed;
     this.emit();
   }
@@ -790,6 +1081,16 @@ export class Store {
       this.emit();
     }
   }
+}
+
+/** Matches for `q`, before any has come. */
+function newMatches(q: string, sort: Matches["sort"] = { key: "rank", rev: false }): Matches {
+  return { q, list: [], total: 0, took: 0, sort, cursor: 0, ready: false };
+}
+
+/** A match as an entry of a list, with its folder's path in front of its name. */
+export function matchEntry(hit: Hit, rank: number): Entry {
+  return toEntry({ n: nameOf(hit.path), d: hit.dir, s: hit.s, m: hit.m, c: hit.c }, parentOf(hit.path), rank);
 }
 
 export const store = new Store();

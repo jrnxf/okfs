@@ -14,7 +14,7 @@
 - A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the inside of its first entry in the next, or of the entry you were on when you last left it, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file. The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file, and a key that moves the cursor takes over until the pointer moves again. Going into the folder puts the cursor on the entry its column leads on to, whatever the sort. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out.
 - Hidden files stay out of the way: dotfiles, and the folders left out of the search, such as `node_modules` and what a `.gitignore` names (see [A big folder](#a-big-folder)). `.`, or the eye button at the top, shows them and hides them again, and the browser remembers the choice. The counts beside each folder are of what is shown, so a folder says how many entries you will find in it, and the bar at the foot says how many are hidden. The search hides the same ones.
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
-- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`.
+- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`. `Ctrl Enter` or `Cmd Enter`, or the row under its matches, lists every match in place of the folder: ranked, with the folder each is in, sortable by name, folder, size and time, and loaded a page at a time as you scroll. The query is in the address (`?find=`), so back, a reload and a shared link all work, and a folder or a file opened from the matches leads back to them.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
 - Themes: one CSS file each, five built in, light and dark.
 - Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
@@ -104,14 +104,14 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `r` | Rendered or source, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
 | `w` | Wrap long lines or not, for prose shown as its source: Markdown, HTML, text, logs |
 | `Backspace`, `-` | Up one folder |
-| `h` `l`, left and right arrows | Out of a folder and into one. With a file open, back and on through the folder's files. |
+| `h` `l`, left and right arrows | Out of a folder and into one. With a file open, left goes back to the list it was opened from. |
 | `Home` `End` | First and last in the folder |
 | `/` | Filter this folder |
 | `Ctrl K`, `Cmd K` | Find anything in the tree. Start with `>` for commands. |
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
-| `Esc` | Close the open file or the filter |
+| `Esc` | Close the open file or the filter. In a folder entered from the matches, go back to them. |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 

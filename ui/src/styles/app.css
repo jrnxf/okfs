@@ -85,6 +85,31 @@ body.open .ph .only-open { display: inline-flex; }
 .status kbd { height: 1.55em; min-width: 1.55em; border-bottom-width: var(--line-w); }
 .status .touch { display: none; }
 
+.empty .hint { color: var(--faint); font-size: var(--text-s); }
+
+/* The matches of a search in the list's place: two slots wide, for the folder each is in, or all of them when the
+   window has two. Their bar holds the query. */
+.main .left.wide { grid-column: span 2; }
+.main .left.wide + .right { grid-column: 3 / -1; }
+.main .left.res:not(.wide) { grid-column: 1 / -1; border-right: 0; }
+.qbar { display: flex; align-items: center; gap: 8px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; color: var(--faint); }
+.qbar input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; padding: 0; font-weight: var(--weight-strong); color: var(--fg); }
+.qbar input::placeholder { color: var(--faint); font-weight: var(--weight); }
+.qbar .facts { color: var(--muted); font-size: var(--text-xs); flex: none; }
+.qbar .btn { height: calc(24px * var(--density)); padding: 0 6px; }
+.res .cols, .res .row { grid-template-columns: 16px minmax(0, 1.15fr) minmax(0, 1fr) 68px 66px; }
+[data-icons="none"] .res .cols, [data-icons="none"] .res .row { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 68px 66px; }
+.res .cols .on { color: var(--fg); }
+.res .row .nmw { display: flex; min-width: 0; }
+.res .row .dir { color: var(--muted); font-size: var(--text-s); direction: rtl; text-align: left; }
+.res .row .dir bdi, .res .row .sub bdi { direction: ltr; }
+.res .row .sub { display: none; }
+.res .row mark { background: none; color: var(--accent); font-weight: var(--weight-strong); }
+/* The way back to the matches, while browsing below a folder entered from them. */
+.top .trail { flex: none; height: calc(26px * var(--density)); padding: 0 9px 0 6px; gap: 4px; color: var(--fg); max-width: 260px; }
+.top .trail .ic { color: var(--accent); }
+.top .trail .phone-only { display: none; }
+
 @media (max-width: 760px) {
   .main { grid-template-columns: minmax(0, 1fr); }
   .right { display: none; position: fixed; inset: 0; z-index: 20; grid-column: 1; }
@@ -124,12 +149,29 @@ body.open .ph .only-open { display: inline-flex; }
   /* no keys to hint at here, and the count needs the room */
   .pal-foot span:not(.num, .sp) { display: none; }
   .pal-up { height: 34px; }
+  .pal-all .pal-row { height: 44px; }
+  .pal-all .kk { display: none; }
+  /* A match takes two lines: its name, and the folder it is in under it. */
+  .res { --row-h: calc(52px * var(--density)); }
+  .res .cols, .res .row { grid-template-columns: 16px minmax(0, 1fr) 62px; }
+  [data-icons="none"] .res .cols, [data-icons="none"] .res .row { grid-template-columns: minmax(0, 1fr) 62px; }
+  .res .cols > :nth-child(3), .res .row .dir, .res .cols > :last-child, .res .row .tm { display: none; }
+  .res .row .nmw { flex-direction: column; line-height: 1.3; }
+  .res .row .sub { display: block; color: var(--muted); font-size: var(--text-xs); direction: rtl; text-align: left; }
+  .qbar { height: calc(44px * var(--density)); }
+  .qbar .btn { height: 34px; padding: 0 9px; }
+  .top .trail { height: 32px; padding: 0 8px; gap: 5px; font-size: var(--text-xs); }
+  .top .trail .wide-only { display: none; }
+  .top .trail .phone-only { display: inline; }
+  .top .trail .ic.phone-only { display: block; color: var(--muted); }
+  /* At the folder entered from the matches, the back arrow beside it already goes back to them. */
+  .top .trail.at-root { display: none; }
   .ask-do .btn { height: 38px; flex: 1; justify-content: center; }
 }
 
 /* A phone zooms the page into a text field set smaller than 16 px, and leaves it zoomed. */
 @media (pointer: coarse) {
-  .pal-in input, .status .fil input { font-size: 16px; }
+  .pal-in input, .status .fil input, .qbar input { font-size: 16px; }
   /* there is no Escape key here, and the chip sits over the end of the placeholder */
   .pal-esc { display: none; }
 }

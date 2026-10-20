@@ -51,6 +51,22 @@ export interface Hit {
   /** Matched characters, counted in characters of the name or of the whole path. */
   idx: number[];
   name: boolean;
+  /** Modified time in seconds, and size in bytes. Zero for a folder, and for a link. */
+  m: number;
+  s: number;
+  /** For a folder, how many entries its listing shows. */
+  c?: number;
+}
+
+/** The orders the matches can come in: the best first, or by one of these. */
+export type MatchOrder = "rank" | "name" | "folder" | "size" | "time";
+
+/** One page of the matches: `limit` of them after the first `offset`, in `sort`, turned around with `rev`. */
+export interface MatchPage {
+  offset: number;
+  limit: number;
+  sort: MatchOrder;
+  rev: boolean;
 }
 
 export interface Found {
@@ -101,7 +117,12 @@ export const urls = {
   previews: (paths: string[], lines: number, source = false) =>
     `/api/previews?lines=${lines}${source ? "&raw=1" : ""}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,
   archive: (path: string) => `/api/archive?path=${encodeURIComponent(path)}`,
-  search: (query: string) => `/api/search?q=${encodeURIComponent(query)}${all()}`,
+  /** The best matches for the palette; with `page`, any page of them in any order. */
+  search: (query: string, page?: MatchPage) =>
+    `/api/search?q=${encodeURIComponent(query)}${all()}` +
+    (page
+      ? `&offset=${page.offset}&limit=${page.limit}${page.sort === "rank" ? "" : `&sort=${page.sort}`}${page.rev ? "&rev=1" : ""}`
+      : ""),
   recent: () => `/api/recent${showsHidden() ? "?all=1" : ""}`,
   /** The time and size make a rewritten picture a new address: the browser keeps a thumbnail by its address. */
   thumb: (path: string, width: number, modified: number, size: number) =>
@@ -121,6 +142,18 @@ export const urls = {
     return `${RESERVED.has(first) ? "/-/" : "/"}${encode(path)}${dir ? "/" : ""}`;
   },
 };
+
+/** The query of the matches an address shows, from its `?find=`, or `null` when it shows none. */
+export const findOf = (search: string): string | null => new URLSearchParams(search).get("find");
+
+/** An address's query with its `?find=` set to `find`, or taken out without one. The rest, such as `?theme=`, stays. */
+export function withFind(search: string, find?: string): string {
+  const params = new URLSearchParams(search);
+  params.delete("find");
+  if (find !== undefined) params.set("find", find);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
 
 /** Reads the address bar back into a path and whether it names a folder. */
 export function parseLocation(): { path: string; dir: boolean } {

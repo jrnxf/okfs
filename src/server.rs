@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
-use crate::index::Index;
+use crate::index::{Index, Order, Page};
 use crate::live::Change;
 use crate::paths::{self, Kept, NoEntry, Resolved, Root, Unshown};
 use crate::pdf::{self, Drawer};
@@ -718,6 +718,13 @@ struct SearchQuery {
     #[serde(default)]
     q: String,
     limit: Option<usize>,
+    /// How many matches, in this order, come before the ones sent: the next page starts where the
+    /// last one ended.
+    offset: Option<usize>,
+    #[serde(default)]
+    sort: Order,
+    /// Turns the order around.
+    rev: Option<u8>,
     /// Search hidden entries too: see `Index::hides`.
     all: Option<u8>,
 }
@@ -735,7 +742,13 @@ async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -
     // takes no time from the search for what is asked now.
     let gone = Gone(Arc::new(AtomicBool::new(false)));
     let flag = Arc::clone(&gone.0);
-    match tokio::task::spawn_blocking(move || index.search_unless(&query.q, limit, query.all.is_some(), &flag)).await {
+    let page = Page {
+        offset: query.offset.unwrap_or(0),
+        limit,
+        order: query.sort,
+        reverse: query.rev.is_some(),
+    };
+    match tokio::task::spawn_blocking(move || index.search_unless(&query.q, page, query.all.is_some(), &flag)).await {
         Ok(Some(found)) => Json(found).into_response(),
         Ok(None) | Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the search failed"),
     }

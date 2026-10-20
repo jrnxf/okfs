@@ -313,7 +313,8 @@ export function Side({ slots }: { slots: number }) {
   }
 
   return (
-    <section class="right" onPointerMove={onMove} onPointerLeave={onLeave}>
+    // The slots are counted for the pane: the matches take one more than a folder's list does.
+    <section class="right" style={`--slots: ${slots}`} onPointerMove={onMove} onPointerLeave={onLeave}>
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. */}
       {(!columns || ledFile) && (

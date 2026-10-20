@@ -20,7 +20,7 @@ use notify::event::{EventKind, ModifyKind};
 use notify::{RecursiveMode, Watcher};
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::every;
 use crate::live::{Change, Feed};
@@ -74,6 +74,9 @@ struct Node {
 struct Folder {
     nodes: Vec<Node>,
     names: String,
+    /// Each file's size in bytes, beside the nodes rather than in them: the search reads every
+    /// node and no size, and only sorts and pages by them. Zero for a folder and for a link.
+    sizes: Vec<u64>,
     /// It is inside a hidden folder: see `in_hidden`.
     hidden: bool,
     /// Its path is plain ASCII: see `Node::ascii`.
@@ -81,14 +84,16 @@ struct Folder {
 }
 
 impl Folder {
-    fn new(dir: &str, entries: impl IntoIterator<Item = (String, Node)>) -> Self {
+    fn new(dir: &str, entries: impl IntoIterator<Item = (String, Node, u64)>) -> Self {
         let mut folder = Self {
             nodes: Vec::new(),
             names: String::new(),
+            sizes: Vec::new(),
             hidden: in_hidden(dir),
             ascii: dir.is_ascii(),
         };
-        for (name, node) in entries {
+        for (name, node, size) in entries {
+            folder.sizes.push(size);
             folder.names.push_str(&name);
             let end = u32::try_from(folder.names.len()).expect("a folder's names fit in 4 GB");
             folder.nodes.push(Node {
@@ -98,6 +103,7 @@ impl Folder {
             });
         }
         folder.names.shrink_to_fit();
+        folder.sizes.shrink_to_fit();
         folder
     }
 
@@ -174,6 +180,51 @@ pub struct Hit {
     pub idx: Vec<u32>,
     /// True when `idx` counts into the name, false when into the whole path.
     pub name: bool,
+    /// When a file was last written, in seconds. Zero for a folder, for a link, and for a time
+    /// that could not be read.
+    pub m: u32,
+    /// A file's size in bytes. Zero for a folder and for a link.
+    pub s: u64,
+    /// For a folder, how many entries a listing of it shows: hidden ones only when they are searched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub c: Option<usize>,
+}
+
+/// The order a search hands its matches back in. Each but the first puts its natural end first:
+/// names from A, the largest and the newest first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Order {
+    /// The best match first.
+    #[default]
+    Rank,
+    Name,
+    /// By the folder a match is in, then by its name.
+    Folder,
+    Size,
+    Time,
+}
+
+/// Which of the matches a search hands back: `limit` of them, after the first `offset`, in `order`,
+/// turned around when `reverse` is set. The best match always comes first in `Order::Rank`.
+#[derive(Debug, Clone, Copy)]
+pub struct Page {
+    pub offset: usize,
+    pub limit: usize,
+    pub order: Order,
+    pub reverse: bool,
+}
+
+impl Page {
+    /// The best `limit` matches.
+    pub fn first(limit: usize) -> Self {
+        Self {
+            offset: 0,
+            limit,
+            order: Order::Rank,
+            reverse: false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -409,17 +460,14 @@ impl Index {
         self.skip.rules_for(self.root.dir(), dir).is_none()
     }
 
-    /// The names in one folder, each file with the time the disk has for it now. `rules` are
-    /// those inside the folder: a folder they leave out is listed, and is not walked.
+    /// The names in one folder, each file with the time and size the disk has for it now.
+    /// `rules` are those inside the folder: a folder they leave out is listed, and is not walked.
     fn read(&self, dir: &str, rules: &Rules) -> Option<Folder> {
         let at = self.root.dir().join(dir);
         let seen = self.root.scan(&at).ok()?;
         let entries = seen.into_iter().map(|s| {
-            let modified = if s.dir {
-                0
-            } else {
-                seconds(self.root.modified(&at, &s.name))
-            };
+            let stamp = if s.dir { None } else { self.root.stamp(&at, &s.name) };
+            let modified = seconds(stamp.and_then(|stamp| stamp.modified));
             let left_out = s.dir && self.skip.skips(rules, &at, dir.is_empty(), &s.name);
             let node = Node {
                 end: 0,
@@ -429,7 +477,7 @@ impl Index {
                 hidden: left_out || s.name.starts_with('.'),
                 modified,
             };
-            (s.name, node)
+            (s.name, node, stamp.map_or(0, |stamp| stamp.size))
         });
         Some(Folder::new(dir, entries))
     }
@@ -541,30 +589,33 @@ impl Index {
         }
     }
 
-    /// Reads the time of each written file again, the way `read` does, and writes it
-    /// into the index: one look at the disk per file, however often it was written to
+    /// Reads the time and size of each written file again, the way `read` does, and writes
+    /// them into the index: one look at the disk per file, however often it was written to
     /// since the last batch.
     fn restamp(&self, written: HashSet<PathBuf>) {
-        let mut stamps: HashMap<String, HashMap<String, u32>> = HashMap::new();
+        let mut stamps: HashMap<String, HashMap<String, (u32, u64)>> = HashMap::new();
         for path in written {
             let (Some(dir), Some(name)) = (self.dir_of(&path), path.file_name().and_then(|name| name.to_str())) else {
                 continue;
             };
-            let time = seconds(self.root.modified(&self.root.dir().join(&dir), name));
-            stamps.entry(dir).or_default().insert(name.to_owned(), time);
+            let stamp = self.root.stamp(&self.root.dir().join(&dir), name);
+            let time = seconds(stamp.and_then(|stamp| stamp.modified));
+            let size = stamp.map_or(0, |stamp| stamp.size);
+            stamps.entry(dir).or_default().insert(name.to_owned(), (time, size));
         }
         if stamps.is_empty() {
             return;
         }
-        // A time is not searched: what the last search found still stands.
+        // A time and a size are not searched: what the last search found still stands.
         let mut tree = self.tree.write().expect("the index lock");
-        for (dir, times) in stamps {
+        for (dir, stamps) in stamps {
             let Some(folder) = tree.dirs.get_mut(dir.as_str()) else {
                 continue;
             };
             for at in 0..folder.len() {
-                if let Some(&time) = times.get(folder.name(at)).filter(|_| !folder.nodes[at].dir) {
+                if let Some(&(time, size)) = stamps.get(folder.name(at)).filter(|_| !folder.nodes[at].dir) {
                     folder.nodes[at].modified = time;
+                    folder.sizes[at] = size;
                 }
             }
         }
@@ -789,13 +840,18 @@ impl Index {
     /// Fuzzy search over every path. Returns the best `limit` matches. Without `all`,
     /// what a listing hides is not searched: see `hides`.
     pub fn search(&self, query: &str, limit: usize, all: bool) -> Found {
-        self.search_unless(query, limit, all, &AtomicBool::new(false))
+        self.search_page(query, Page::first(limit), all)
+    }
+
+    /// `search`, for one page of the matches in any order.
+    pub fn search_page(&self, query: &str, page: Page, all: bool) -> Found {
+        self.search_unless(query, page, all, &AtomicBool::new(false))
             .expect("a search no one stops")
     }
 
-    /// `search`, given up as soon as `gone` is set: by a page that asked for something else
+    /// `search_page`, given up as soon as `gone` is set: by a page that asked for something else
     /// before the answer came, and so no longer waits for it. `None` when it was given up.
-    pub fn search_unless(&self, query: &str, limit: usize, all: bool, gone: &AtomicBool) -> Option<Found> {
+    pub fn search_unless(&self, query: &str, page: Page, all: bool, gone: &AtomicBool) -> Option<Found> {
         let began = Instant::now();
         let tree = self.tree.read().expect("the index lock");
         let mut found = Found {
@@ -806,9 +862,15 @@ impl Index {
             took: 0.0,
         };
         let query = query.trim();
-        if query.is_empty() || limit == 0 {
+        if query.is_empty() || page.limit == 0 {
             return Some(found);
         }
+        // In rank order the best matches up to the end of the page are all that is needed. Any
+        // other order needs every match, to sort.
+        let limit = match page.order {
+            Order::Rank => page.offset.saturating_add(page.limit),
+            _ => usize::MAX,
+        };
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
         let last = self.last.lock().expect("the search lock").take();
         let last = last.filter(|last| last.all == all && last.version == tree.version && narrows(&last.query, query));
@@ -868,12 +930,20 @@ impl Index {
             (finds.loose, finds.looses)
         };
         found.total = total;
-        best(&mut scored, limit);
-        scored.sort_by(rank);
+        if page.order == Order::Rank {
+            best(&mut scored, limit);
+            scored.sort_by(rank);
+        } else {
+            // Ties keep the order of rank, so a page never shuffles against the next.
+            scored.sort_by(|a, b| {
+                let by = ordered(page.order, a, b);
+                if page.reverse { by.reverse() } else { by }.then_with(|| rank(a, b))
+            });
+        }
 
         let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
         let mut chars = Vec::new();
-        for hit in scored {
+        for hit in scored.into_iter().skip(page.offset).take(page.limit) {
             let path = paths::join(hit.dir, hit.name);
             let mut idx = Vec::new();
             let hay = if hit.by_name { hit.name } else { path.as_str() };
@@ -881,10 +951,13 @@ impl Index {
             idx.sort_unstable();
             idx.dedup();
             found.hits.push(Hit {
+                c: hit.folder.then(|| tree.shown_in(&path, all)).flatten(),
                 path,
                 dir: hit.folder,
                 idx,
                 name: hit.by_name,
+                m: hit.modified,
+                s: hit.size,
             });
         }
         found.took = (began.elapsed().as_secs_f64() * 1e4).round() / 10.0;
@@ -948,6 +1021,10 @@ struct Scored<'t> {
     by_name: bool,
     /// Whether its letters sit close together: see `score`.
     close: bool,
+    /// See `Node::modified`.
+    modified: u32,
+    /// See `Folder::sizes`.
+    size: u64,
 }
 
 /// Best score first; ties go to the shorter path, then by name, so results never shuffle.
@@ -955,6 +1032,22 @@ fn rank(a: &Scored, b: &Scored) -> std::cmp::Ordering {
     (b.score.cmp(&a.score))
         .then_with(|| (a.dir.len() + a.name.len()).cmp(&(b.dir.len() + b.name.len())))
         .then_with(|| (a.dir, a.name).cmp(&(b.dir, b.name)))
+}
+
+/// Two matches in `order`, its natural end first. Names are compared without regard to case.
+fn ordered(order: Order, a: &Scored, b: &Scored) -> std::cmp::Ordering {
+    fn fold(text: &str) -> impl Iterator<Item = u8> + '_ {
+        text.bytes().map(|byte| byte.to_ascii_lowercase())
+    }
+    let folded = |a: &str, b: &str| fold(a).cmp(fold(b));
+    let names = || folded(a.name, b.name);
+    match order {
+        Order::Rank => std::cmp::Ordering::Equal,
+        Order::Name => names(),
+        Order::Folder => folded(a.dir, b.dir).then_with(names),
+        Order::Size => b.size.cmp(&a.size),
+        Order::Time => b.modified.cmp(&a.modified),
+    }
 }
 
 /// Keeps the `limit` best of `hits`, in no order.
@@ -1012,7 +1105,7 @@ impl<'t> Finds<'t> {
         *count += 1;
         held.push(hit);
         // Cut back now and then, not on every match.
-        if held.len() >= (2 * limit).max(256) {
+        if held.len() >= limit.saturating_mul(2).max(256) {
             best(held, limit);
         }
     }
@@ -1151,6 +1244,8 @@ fn scan<'t>(
             at: at as u32,
             by_name,
             close,
+            modified: node.modified,
+            size: folder.sizes[at],
         };
         if by_name && let Some((score, close)) = score(pattern, name, &mut idx, &mut chars, matcher) {
             finds.add(part, hit(score + NAME_BONUS, true, close), limit, keep);
@@ -1329,6 +1424,13 @@ fn score(
 }
 
 impl Tree {
+    /// How many entries a listing of the folder at `path` shows, when the index holds it: hidden
+    /// ones only with `all`.
+    fn shown_in(&self, path: &str, all: bool) -> Option<usize> {
+        let folder = self.dirs.get(path)?;
+        Some(folder.nodes.iter().filter(|node| all || !node.hidden).count())
+    }
+
     /// Drops a folder and everything under it.
     fn remove(&mut self, dir: &str) {
         let mut todo = vec![dir.to_owned()];
@@ -1997,21 +2099,32 @@ mod tests {
                 idx.sort_unstable();
                 idx.dedup();
                 Hit {
+                    c: node.dir.then(|| tree.shown_in(&path, all)).flatten(),
                     path,
                     dir: node.dir,
                     idx,
                     name: by_name,
+                    m: node.modified,
+                    s: tree.dirs[dir].sizes[at],
                 }
             })
             .collect();
         // The total rides along as one more hit, so a comparison checks it too.
-        hits.push(Hit {
+        hits.push(total_hit(total));
+        hits
+    }
+
+    /// A total, as one more hit, so a comparison of hits checks it too.
+    fn total_hit(total: usize) -> Hit {
+        Hit {
             path: format!("total {total}"),
             dir: false,
             idx: Vec::new(),
             name: false,
-        });
-        hits
+            m: 0,
+            s: 0,
+            c: None,
+        }
     }
 
     /// What `search` answers, in the shape `plain_search` gives it.
@@ -2019,12 +2132,7 @@ mod tests {
         let found = index.search(query, limit, all);
         let mut hits = found.hits;
         if !query.trim().is_empty() && limit > 0 {
-            hits.push(Hit {
-                path: format!("total {}", found.total),
-                dir: false,
-                idx: Vec::new(),
-                name: false,
-            });
+            hits.push(total_hit(found.total));
         }
         hits
     }
@@ -2265,6 +2373,109 @@ mod tests {
     }
 
     #[test]
+    fn the_pages_of_a_search_follow_on_from_one_another_in_every_order() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        synthetic(tmp.path(), 3000);
+        let index = Index::new(Root::new(tmp.path(), false).unwrap());
+        index.build();
+        let paths = |found: Found| found.hits.into_iter().map(|hit| hit.path).collect::<Vec<_>>();
+        for query in ["re", "repo", "img", "zqxj"] {
+            for order in [Order::Rank, Order::Name, Order::Folder, Order::Size, Order::Time] {
+                for reverse in [false, true] {
+                    let page = |offset, limit| Page {
+                        offset,
+                        limit,
+                        order,
+                        reverse,
+                    };
+                    let whole = index.search_page(query, page(0, usize::MAX), false);
+                    let total = whole.total;
+                    let whole = paths(whole);
+                    assert_eq!(whole.len(), total, "{query:?} {order:?}");
+                    let mut paged = Vec::new();
+                    for offset in (0..total + 37).step_by(37) {
+                        let found = index.search_page(query, page(offset, 37), false);
+                        assert_eq!(found.total, total, "{query:?} {order:?} at {offset}");
+                        paged.extend(paths(found));
+                    }
+                    assert_eq!(paged, whole, "{query:?} {order:?} {reverse}");
+                }
+            }
+        }
+        // The first page in rank order is what the palette is sent.
+        let first = index.search_page("repo", Page::first(60), false);
+        assert_eq!(paths(first), paths(index.search("repo", 60, false)));
+    }
+
+    #[test]
+    fn a_search_sorts_by_name_folder_size_and_time_and_tells_each() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let top = tmp.path();
+        let at = |seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
+        for (path, size, time) in [
+            ("b-report.txt", 30, 3_000),
+            ("A-report.md", 10, 1_000),
+            ("zz/c-report.rs", 20, 2_000),
+        ] {
+            fs::create_dir_all(top.join(path).parent().unwrap()).unwrap();
+            let file = fs::File::create(top.join(path)).unwrap();
+            file.set_len(size).unwrap();
+            file.set_modified(at(time)).unwrap();
+        }
+        fs::create_dir_all(top.join("reports/inside")).unwrap();
+        fs::write(top.join("reports/one.txt"), "").unwrap();
+        fs::write(top.join("reports/.hidden"), "").unwrap();
+        let index = Index::new(Root::new(top, true).unwrap());
+        index.build();
+        let sorted = |order, reverse| {
+            let page = Page {
+                offset: 0,
+                limit: 10,
+                order,
+                reverse,
+            };
+            let found = index.search_page("-report", page, false);
+            found.hits.into_iter().map(|hit| hit.path).collect::<Vec<_>>()
+        };
+        // Case does not count in a name, and a name's natural end comes first.
+        assert_eq!(
+            sorted(Order::Name, false),
+            ["A-report.md", "b-report.txt", "zz/c-report.rs"]
+        );
+        assert_eq!(
+            sorted(Order::Name, true),
+            ["zz/c-report.rs", "b-report.txt", "A-report.md"]
+        );
+        assert_eq!(
+            sorted(Order::Folder, true),
+            ["zz/c-report.rs", "b-report.txt", "A-report.md"]
+        );
+        assert_eq!(
+            sorted(Order::Size, false),
+            ["b-report.txt", "zz/c-report.rs", "A-report.md"]
+        );
+        assert_eq!(
+            sorted(Order::Time, false),
+            ["b-report.txt", "zz/c-report.rs", "A-report.md"]
+        );
+        assert_eq!(
+            sorted(Order::Time, true),
+            ["A-report.md", "zz/c-report.rs", "b-report.txt"]
+        );
+
+        let found = index.search_page("report", Page::first(10), false);
+        let hit = |path: &str| found.hits.iter().find(|hit| hit.path == path).unwrap();
+        assert_eq!(
+            (hit("b-report.txt").m, hit("b-report.txt").s, hit("b-report.txt").c),
+            (3_000, 30, None)
+        );
+        // A folder tells how many entries its listing shows: the hidden one only when hidden ones are searched.
+        assert_eq!((hit("reports").m, hit("reports").s, hit("reports").c), (0, 0, Some(2)));
+        let all = index.search_page("reports", Page::first(10), true);
+        assert_eq!(all.hits.iter().find(|hit| hit.path == "reports").unwrap().c, Some(3));
+    }
+
+    #[test]
     fn a_search_that_narrows_the_last_sees_what_changed_in_between() {
         let mut site = Watched::new(false);
         let same = |site: &Watched, query: &str| {
@@ -2297,7 +2508,11 @@ mod tests {
         synthetic(tmp.path(), 6000);
         let index = Index::new(Root::new(tmp.path(), false).unwrap());
         index.build();
-        assert!(index.search_unless("rep", 60, false, &AtomicBool::new(true)).is_none());
+        assert!(
+            index
+                .search_unless("rep", Page::first(60), false, &AtomicBool::new(true))
+                .is_none()
+        );
         assert!(index.last.lock().unwrap().is_none());
         assert_eq!(
             searched(&index, "repo", 60, false),
@@ -2375,7 +2590,17 @@ mod tests {
             } else {
                 String::new()
             };
-            println!("{query:>22} {total:>7} found  {plain}first {cold:7.1} ms  typed {typed:7.1} ms");
+            // A page of the matches by name, as the list of every match asks for it: every match is sorted.
+            let by_name = Page {
+                offset: 0,
+                limit: 200,
+                order: Order::Name,
+                reverse: false,
+            };
+            let sorted = time(&forget, &|| drop(index.search_page(query, by_name, false)));
+            println!(
+                "{query:>22} {total:>7} found  {plain}first {cold:7.1} ms  typed {typed:7.1} ms  by name {sorted:7.1} ms"
+            );
         }
     }
 

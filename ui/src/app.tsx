@@ -7,6 +7,7 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
 import { keyFor, pressOf } from "./keys";
+import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInfo } from "./matches";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { Prose, lookAhead, pagesAhead } from "./preview";
@@ -58,12 +59,20 @@ function Crumbs() {
     ...parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join("/") })),
   ];
   const parent = parts.slice(0, -1).join("/");
+  // Over the matches, the folder they are over is where back goes, and the query is the last crumb.
+  const finding = s.finding && s.matches;
   return (
     <nav class="crumbs" aria-label="Path">
-      {s.path && (
-        <a class="back" href={urls.view(parent, true)} aria-label="Up one folder" onClick={inPlace(() => store.up())}>
+      {finding ? (
+        <a class="back" href={urls.view(s.path, true)} aria-label="Close the matches" onClick={inPlace(() => store.leaveFind())}>
           <Icon name="left" />
         </a>
+      ) : (
+        s.path && (
+          <a class="back" href={urls.view(parent, true)} aria-label="Up one folder" onClick={inPlace(() => store.up())}>
+            <Icon name="left" />
+          </a>
+        )
       )}
       {trail.map((crumb, i) => (
         <>
@@ -73,6 +82,14 @@ function Crumbs() {
           </a>
         </>
       ))}
+      {finding && (
+        <>
+          <i>/</i>
+          <a href={location.href} onClick={inPlace(() => undefined)}>
+            Find “{finding.q}”
+          </a>
+        </>
+      )}
     </nav>
   );
 }
@@ -140,14 +157,26 @@ export function App() {
   const main = useRef<HTMLDivElement>(null);
   useSlide(main, s.path);
   const filterInput = useRef<HTMLInputElement>(null);
+  const queryInput = useRef<HTMLInputElement>(null);
   const [filtering, setFiltering] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
 
   const closeMenu = useCallback(() => setMenu(null), []);
   const focusFilter = useCallback(() => {
+    // Over the matches, what narrows them is their query.
+    if (store.s.finding) {
+      queryInput.current?.focus();
+      queryInput.current?.select();
+      return;
+    }
     setFiltering(true);
     requestAnimationFrame(() => filterInput.current?.focus());
   }, []);
+  const finding = s.finding && s.matches !== null;
+  const list = store.list();
+  const at = store.at();
+  // The matches take two slots, for their folders: the pane beside them the rest. With two in all, they take both.
+  const wide = finding && cut > 2;
 
   const here = store.here();
   const flippable = store.flippable();
@@ -156,15 +185,15 @@ export function App() {
   // What lies past the cursor, the way it is moving, is asked for before the cursor gets there: the previews
   // of the files, and the columns of the folders while no file has the full width.
   const columns = s.open === null;
-  const cursorWas = useRef(s.cursor);
+  const cursorWas = useRef(at);
   useLayoutEffect(() => {
-    const step = s.cursor >= cursorWas.current ? 1 : -1;
-    cursorWas.current = s.cursor;
+    const step = at >= cursorWas.current ? 1 : -1;
+    cursorWas.current = at;
     if (s.status !== "ready") return;
     const source = (entry: Entry) => store.isRaw(entry);
-    lookAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), columns ? (path) => store.leftIn(path) : null, source);
-    pagesAhead(s.entries, s.cursor, step, (entry) => store.stamp(entry), source);
-  }, [s.cursor, s.entries, s.status, columns, cut, s.hidden]);
+    lookAhead(list, at, step, (entry) => store.stamp(entry), columns ? (path) => store.leftIn(path) : null, source);
+    pagesAhead(list, at, step, (entry) => store.stamp(entry), source);
+  }, [at, s.entries, s.matches?.list, finding, s.status, columns, cut, s.hidden]);
 
   // A name cut short by an ellipsis is shown in full under the pointer. A name that fits has no tip to repeat it.
   useEffect(() => {
@@ -238,7 +267,7 @@ export function App() {
     const h = hover.current;
     clearTimeout(h.timer);
     h.held = -1;
-    if (index !== store.s.cursor) {
+    if (index !== store.at()) {
       h.byHover = index;
       store.moveTo(index);
     }
@@ -259,8 +288,8 @@ export function App() {
     const { s } = store;
     if (s.open || s.palette || s.help || s.doomed || s.status !== "ready") return;
     const index = indexOf(event);
-    if (index === null || !s.entries[index]) return;
-    if (index === s.cursor) {
+    if (index === null || !store.list()[index]) return;
+    if (index === store.at()) {
       clearTimeout(h.timer);
       h.held = -1;
       return;
@@ -290,13 +319,13 @@ export function App() {
   };
   const onListClick = (event: MouseEvent) => {
     const index = indexOf(event);
-    const entry = index === null ? undefined : s.entries[index];
+    const entry = index === null ? undefined : store.list()[index];
     if (index === null || !entry) return;
     // One click moves the cursor. A second opens, and so does the first on a phone, which has no keys to open with.
     // A cursor the pointer put there is not a click yet: the first click on it still only selects, as before.
     const placed = hover.current.byHover === index;
     hover.current.byHover = -1;
-    if (entry.dir || phone() || (index === s.cursor && !placed)) store.activate(index);
+    if (entry.dir || phone() || (index === store.at() && !placed)) store.activate(index);
     else store.moveTo(index);
   };
   const onListDoubleClick = (event: MouseEvent) => {
@@ -305,6 +334,8 @@ export function App() {
   };
 
   const renderCell = (index: number, cell: Cell) => {
+    const match = finding ? s.matches?.list[index] : undefined;
+    if (match) return <MatchRow match={match} index={index} cell={cell} on={index === at} key={index} />;
     const entry = s.entries[index];
     if (!entry) return null;
     const on = index === s.cursor;
@@ -338,6 +369,7 @@ export function App() {
           <span class="wm-mark" />
           {config.title}
         </a>
+        <TrailButton />
         <Crumbs />
         <div class="tools" onMouseDown={(event) => event.preventDefault()}>
           <button class="btn btn-line find" aria-label="Find anything" onClick={() => store.setPalette(true)}>
@@ -367,25 +399,37 @@ export function App() {
       </header>
       {config.header && <Prose class="note" html={config.header} />}
       <div class="main" ref={main} style={`--slots: ${cut}`}>
-        <section class="left" data-pane={s.path} onPointerMove={onListMove} onPointerLeave={onListLeave} onClick={onListClick} onDblClick={onListDoubleClick}>
-          <FolderBar
-            name={s.path ? nameOf(s.path) : config.root}
-            path={s.path}
-            count={s.status === "ready" ? s.all.length : undefined}
-            mtime={s.status === "ready" ? s.mtime : undefined}
-            doomed={here}
-          />
-          <Columns />
+        <section
+          class={finding ? (wide ? "left wide res" : "left res") : "left"}
+          data-pane={s.path}
+          onPointerMove={onListMove}
+          onPointerLeave={onListLeave}
+          onClick={onListClick}
+          onDblClick={onListDoubleClick}
+        >
+          {finding ? (
+            <MatchBar input={queryInput} />
+          ) : (
+            <FolderBar
+              name={s.path ? nameOf(s.path) : config.root}
+              path={s.path}
+              count={s.status === "ready" ? s.all.length : undefined}
+              mtime={s.status === "ready" ? s.mtime : undefined}
+              doomed={here}
+            />
+          )}
+          {finding ? <MatchColumns /> : <Columns />}
           <VList
             scroller={scroller}
-            count={s.entries.length}
-            cursor={s.cursor}
+            count={list.length}
+            cursor={at}
             caught={s.caught}
-            listKey={`${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
+            listKey={finding ? `find\n${s.matches?.q}\n${s.matches?.sort.key}${s.matches?.sort.rev}` : `${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
             render={renderCell}
-            empty={<Empty />}
+            empty={finding ? <MatchesEmpty /> : <Empty />}
+            onShown={finding ? (last) => store.more(last) : undefined}
           >
-            {s.readme && !s.filter && (
+            {!finding && s.readme && !s.filter && (
               <section class="readme">
                 <div class="readme-hd label">
                   <KindIcon kind="md" />
@@ -396,11 +440,11 @@ export function App() {
             )}
           </VList>
         </section>
-        <Side slots={cut} />
+        {(!finding || wide) && <Side slots={finding ? cut - 1 : cut} />}
       </div>
-      <footer class={filtering || s.filter ? "status filtering" : "status"}>
-        <span class={s.open || s.filter ? "mode loud" : "mode"}>{s.open ? "view" : s.filter ? "filter" : "browse"}</span>
-        <span class="info num">{s.status === "ready" ? info : ""}</span>
+      <footer class={!finding && (filtering || s.filter) ? "status filtering" : "status"}>
+        <span class={finding || s.open || s.filter ? "mode loud" : "mode"}>{finding ? "find" : s.open ? "view" : s.filter ? "filter" : "browse"}</span>
+        <span class="info num">{finding ? matchesInfo() : s.status === "ready" ? info : ""}</span>
         <label class="fil">
           /
           <input
@@ -434,6 +478,11 @@ export function App() {
           <span>
             <kbd>↵</kbd> open
           </span>
+          {!finding && !s.open && store.trail() && (
+            <span>
+              <kbd>esc</kbd> matches
+            </span>
+          )}
           {flippable && (
             <span>
               <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
@@ -445,21 +494,34 @@ export function App() {
             </span>
           )}
           <span>
-            <kbd>/</kbd> filter
+            <kbd>/</kbd> {finding ? "refine" : "filter"}
           </span>
           <span>
             <kbd>s</kbd> sort
           </span>
-          <span>
-            <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
-          </span>
-          <span>
-            <kbd>?</kbd> keys
-          </span>
+          {finding ? (
+            <>
+              <span>
+                <kbd>{MOD} K</kbd> palette
+              </span>
+              <span>
+                <kbd>esc</kbd> back
+              </span>
+            </>
+          ) : (
+            <>
+              <span>
+                <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
+              </span>
+              <span>
+                <kbd>?</kbd> keys
+              </span>
+            </>
+          )}
         </span>
         <button class="btn touch" onClick={focusFilter}>
           <Icon name="search" />
-          Filter
+          {finding ? "Refine" : "Filter"}
         </button>
       </footer>
       {s.palette && <Palette />}

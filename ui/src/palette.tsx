@@ -64,10 +64,12 @@ function commands(): Entry[] {
   const here = store.here();
   const flippable = store.flippable();
   const wrappable = store.wrappable();
-  // Both are missing when the server has deleting off.
+  // Both are missing when the server has deleting off, and over the matches: a match is deleted from its own folder.
   const deletes: Command[] = [];
-  if (config.delete && under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
-  if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
+  if (config.delete && !s.finding) {
+    if (under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
+    if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
+  }
   return [
     ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
     ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
@@ -104,7 +106,7 @@ function fuzzy(query: string, text: string): { score: number; idx: number[] } | 
 }
 
 /** Text with its matched characters marked. `idx` counts characters, and `from` is where `text` starts. */
-function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; from?: number }) {
+export function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; from?: number }) {
   if (!idx.length) return <>{text}</>;
   const hit = new Set(idx);
   const out: ComponentChildren[] = [];
@@ -121,10 +123,11 @@ function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; from?: n
   return <>{out}</>;
 }
 
-type Row = { command: Entry; idx: number[] } | { hit: Hit } | { recent: Changed };
+type Row = { command: Entry; idx: number[] } | { hit: Hit } | { recent: Changed } | { all: true };
 
 export function Palette() {
-  const [value, setValue] = useState("");
+  // Over the matches, the palette starts from their query.
+  const [value, setValue] = useState(() => (store.s.finding ? (store.s.matches?.q ?? "") : ""));
   const [selected, setSelected] = useState(0);
   // The last answer, kept while a newer query is on its way: the list shows it until the new one lands.
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -146,7 +149,10 @@ export function Palette() {
   const searching = !menu && !asCommand && query !== "";
   const asked = searching ? query : "";
 
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -195,6 +201,8 @@ export function Palette() {
   let rows: Row[];
   if (searching) {
     rows = (found?.hits ?? []).map((hit) => ({ hit }));
+    // The way to every match, below the best ones: see `Store.find`.
+    if (found?.total) rows.push({ all: true });
   } else if (menu) {
     rows = matching(menu.items);
   } else {
@@ -251,6 +259,7 @@ export function Palette() {
       command.run();
       return;
     }
+    if ("all" in row) return store.find(query);
     store.setPalette(false);
     if ("recent" in row) void store.go(row.recent.path, false);
     else void store.go(row.hit.path, row.hit.dir);
@@ -260,6 +269,7 @@ export function Palette() {
     const { key, ctrlKey } = event;
     if (key === "ArrowDown" || (ctrlKey && key === "n")) setSelected(Math.min(at + 1, rows.length - 1));
     else if (key === "ArrowUp" || (ctrlKey && key === "p")) setSelected(Math.max(at - 1, 0));
+    else if (key === "Enter" && (ctrlKey || event.metaKey) && searching) store.find(query);
     else if (key === "Enter") pick(at);
     else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);
@@ -271,6 +281,7 @@ export function Palette() {
   const matches = `${fmt.count(total)} ${total === 1 ? "match" : "matches"}`;
   // The group a row belongs to, which gets its label above the first row of the run.
   const groupOf = (row: Row): string => ("recent" in row ? "Recently changed" : "command" in row ? "Commands" : matches);
+  const allAt = rows.findIndex((row) => "all" in row);
   // Nothing matches only for the query typed: until its answer lands the list keeps the last one.
   const pending = searching && waiting(asked, answer);
 
@@ -305,6 +316,7 @@ export function Palette() {
         <div class="pal-list" ref={list}>
           {rows.length === 0 && !pending && <div class="pal-empty">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
+            if ("all" in row) return null;
             const common = { class: "pal-row", "aria-selected": index === at, onClick: () => pick(index) };
             const group = groupOf(row);
             const previous = rows[index - 1];
@@ -367,6 +379,18 @@ export function Palette() {
             );
           })}
         </div>
+        {allAt >= 0 && (
+          <div class="pal-all">
+            <div class="pal-row" role="option" aria-selected={allAt === at} onClick={() => pick(allAt)}>
+              <Icon name="list" />
+              <span class="nm trunc">Show all {matches} in the list</span>
+              <span class="kk">
+                <kbd>{MOD}</kbd>
+                <kbd>↵</kbd>
+              </span>
+            </div>
+          </div>
+        )}
         <div class="pal-foot">
           <span>
             <kbd>↑</kbd>
@@ -378,6 +402,11 @@ export function Palette() {
           {menu ? (
             <span>
               <kbd>esc</kbd> back
+            </span>
+          ) : allAt >= 0 ? (
+            <span>
+              <kbd>{MOD}</kbd>
+              <kbd>↵</kbd> all
             </span>
           ) : (
             <span>

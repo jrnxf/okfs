@@ -89,6 +89,13 @@ impl From<io::Error> for Kept {
     }
 }
 
+/// When a plain file was last written, and how many bytes it holds.
+#[derive(Debug, Clone, Copy)]
+pub struct Stamp {
+    pub modified: Option<SystemTime>,
+    pub size: u64,
+}
+
 /// One name found in a folder.
 #[derive(Debug, Clone)]
 pub struct Seen {
@@ -301,11 +308,14 @@ impl Root {
         })
     }
 
-    /// When the file `name` in the folder `dir` was last written. Only a plain file has
-    /// a time here: a link is not followed and has none, and neither has a folder.
-    pub fn modified(&self, dir: &Path, name: &str) -> Option<SystemTime> {
+    /// When the file `name` in the folder `dir` was last written, and its size. Only a plain
+    /// file has them here: a link is not followed and has neither, and neither has a folder.
+    pub fn stamp(&self, dir: &Path, name: &str) -> Option<Stamp> {
         let meta = fs::symlink_metadata(dir.join(name)).ok()?;
-        meta.is_file().then(|| meta.modified().ok()).flatten()
+        meta.is_file().then(|| Stamp {
+            modified: meta.modified().ok(),
+            size: meta.len(),
+        })
     }
 
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
@@ -425,7 +435,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn only_a_plain_file_has_a_time() {
+    fn only_a_plain_file_has_a_time_and_a_size() {
         use std::os::unix::fs::symlink;
         let (_tmp, root, _outside) = served_beside_outside();
         let served = root.dir();
@@ -433,9 +443,11 @@ mod tests {
         fs::write(served.join("file.txt"), "inside").unwrap();
         symlink(served.join("file.txt"), served.join("link.txt")).unwrap();
 
-        assert!(root.modified(served, "file.txt").is_some());
+        let stamp = root.stamp(served, "file.txt").unwrap();
+        assert!(stamp.modified.is_some());
+        assert_eq!(stamp.size, 6);
         for name in ["link.txt", "folder", "missing.txt"] {
-            assert!(root.modified(served, name).is_none(), "{name}");
+            assert!(root.stamp(served, name).is_none(), "{name}");
         }
     }
 
