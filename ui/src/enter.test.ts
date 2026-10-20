@@ -216,3 +216,43 @@ test("a step out draws the folder with the columns beside it: their answer has c
   expect(asked).toContain("follow=lib.rs");
   expect(had).toBe(true);
 });
+
+test("a folder's remembered spot holds only while the cursor stays on it: back in at once keeps it, moved off and back starts at the top", async () => {
+  const store = await at("code", "okfs");
+  await right(store);
+  store.moveTo(1);
+  expect(store.cur()?.name).toBe("src");
+  // ← then → with no move between: the same entry, and the folder's column leads on to it.
+  await left(store);
+  expect(store.cur()?.name).toBe("okfs");
+  expect(await shown(store)).toEqual(["src", "lib.rs"]);
+  await goesIn(store);
+  expect(store.cur()?.name).toBe("src");
+
+  // The cursor leaves the folder and comes back: the spot is forgotten, in the column too.
+  await left(store);
+  store.move(-1);
+  expect(store.cur()?.name).toBe("homelab");
+  store.move(1);
+  expect(store.cur()?.name).toBe("okfs");
+  expect(store.leftIn("code/okfs")).toBeUndefined();
+  expect(await shown(store)).toEqual(["docs", "a.md"]);
+  await goesIn(store);
+  expect(store.cur()?.name).toBe("docs");
+});
+
+test("moving off a folder also forgets the spots in the folders inside it", async () => {
+  const store = await at("code", "okfs");
+  await right(store);
+  store.moveTo(1);
+  await right(store);
+  store.moveTo(1);
+  expect(store.cur()?.name).toBe("main.rs");
+  await left(store);
+  await left(store);
+  expect(store.leftIn("code/okfs/src")).toBe("main.rs");
+  store.move(1);
+  store.move(-1);
+  expect(store.leftIn("code/okfs")).toBeUndefined();
+  expect(store.leftIn("code/okfs/src")).toBeUndefined();
+});

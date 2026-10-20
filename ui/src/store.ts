@@ -244,6 +244,8 @@ export class Store {
    * folder draws, so the column can lead on to it. See `leftIn`. `dir`: the entry is a folder.
    */
   private readonly remembered = new Map<string, { name: string; drawn: boolean; dir: boolean }>();
+  /** Where the cursor was, by folder and entry, when the last change was told: see `forgetLeft`. */
+  private placed: { path: string; at: string } | null = null;
   /** What the pointer picked in the columns beside the list. See `pick`. */
   private picks: Picks = NO_PICKS;
   /** Where the folder being shown really is: the path its changes on disk are told by. */
@@ -267,7 +269,30 @@ export class Store {
   private emit(): void {
     // A move of the cursor starts the columns of the folder it lands on afresh, even one the pointer picked in before.
     if (this.picks !== NO_PICKS && this.picks.root !== this.columnsRoot()) this.picks = NO_PICKS;
+    this.forgetLeft();
     for (const listener of this.listeners) listener();
+  }
+
+  /**
+   * A folder's remembered cursor holds only while the cursor stays on the folder in its parent: ← then → returns to
+   * the same entry, but once the cursor moves off the folder the next visit, and its columns, start at the top. The
+   * memory of what lies in the folder goes with it.
+   */
+  private forgetLeft(): void {
+    const { s } = this;
+    const cur = s.finding ? null : this.cur();
+    const now = cur ? { path: s.path, at: cur.path } : null;
+    const was = this.placed;
+    this.placed = now;
+    if (!was) return;
+    // The cursor stayed in the folder and moved off an entry, or the step out of a folder landed on another entry.
+    let gone: string | null = null;
+    if (now?.path === was.path) gone = now.at === was.at ? null : was.at;
+    else if (now !== null && was.path !== "" && parentOf(was.path) === now.path) gone = now.at === was.path ? null : was.path;
+    if (gone === null) return;
+    for (const path of [...this.remembered.keys()]) {
+      if (path === gone || path.startsWith(`${gone}/`)) this.remembered.delete(path);
+    }
   }
 
   cur(): Entry | null {
