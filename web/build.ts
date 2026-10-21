@@ -112,6 +112,16 @@ if (/<(body|head)\b|<\/(body|head)>/i.test(landing)) throw new Error("the landin
 
 let page = readFileSync(join(web, "src/landing.html"), "utf8");
 if (!page.includes("<!--okfs:data-->")) throw new Error("landing.html has no <!--okfs:data--> marker");
+// The page's own two faces, latin only, written into its stylesheet: the site is one file.
+const pageFonts: Record<string, string> = {
+  "mona-sans": "@fontsource-variable/mona-sans/files/mona-sans-latin-wdth-normal.woff2",
+  "fragment-mono": "@fontsource/fragment-mono/files/fragment-mono-latin-400-normal.woff2",
+};
+for (const [name, file] of Object.entries(pageFonts)) {
+  const marker = `{{page-font:${name}}}`;
+  if (!page.includes(marker)) throw new Error(`landing.html has no ${marker}`);
+  page = page.replaceAll(marker, `data:font/woff2;base64,${readFileSync(join(web, "node_modules", file)).toString("base64")}`);
+}
 const blocks = [
   `<script type="application/json" id="okfs-data">${json(data)}</script>`,
   `<script type="text/plain" id="okfs-answers">${answersGz}</script>`,

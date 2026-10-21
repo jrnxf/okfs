@@ -20,8 +20,11 @@ makes in the visitor's browser. Nothing is fetched while it runs, and the site i
   messages, so the site works wherever it is put, even where each frame gets an origin of its own (a
   sandbox, okfs serving the file). okfs reads its own address with `location` and `history`; `build.ts`
   points those reads at the frame's virtual address bar. No other change is made to okfs's page.
-- `src/landing.html`, `src/landing.js`, `src/runtime.js`: the page around okfs, with two designs, A "Aurora"
-  and B "Signal", switched in the nav, paired with drip's site.
+- `src/landing.html`, `src/landing.js`, `src/runtime.js`: the page around okfs. okfs fills the first screen,
+  with a status line under it that holds the counts and the things to try; the sections below each drive an
+  okfs of their own or ask its engine directly. Its two faces, Mona Sans and Fragment Mono, come from the
+  `@fontsource` packages in `package.json`, and `build.ts` writes them into the page.
+- `public/og.png`: the picture a link to the site shows, a screenshot of the page at 1200 by 630.
 - `demo/files/`: the demo's files with real contents: the tidewater text files, a zip, a PDF (made with
   `typst compile demo/survey.typ`), a 10 s film (two of the page's landscapes, panned and faded with ffmpeg,
   VP9) and a page. `demo/templates/`: one file of each kind whose preview the others borrow.
