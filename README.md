@@ -8,22 +8,7 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.webp"><img src="docs/screenshots/hero-light.webp" alt="okfs serving a folder: a dense file list on the left, the photo under the cursor on the right" width="100%"></picture>
 </p>
 
-`okfs` stands for "ok file server". It is one small binary. The page is compiled into it, so there is nothing to install beside it and nothing is fetched from another site while it runs.
-
-- A dense list on the left, and beside it what is under the cursor: a file is shown as soon as the cursor is on it, in the same pane. Hold `j` to flip through a folder: every file shows as the cursor passes it.
-- A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too. A phone has no space bar: there a tap opens the file over the list, with previous and next in a bar at its foot and download and delete behind a `...` button.
-- Markdown, an SVG drawing and JSON open as their source, as it is written, colored and never run. `r` flips them to what is made from them, and the choice holds for the files of that kind that follow, until you flip it back or leave the page. An HTML page opens as the page, and a CSV table opens as a table; `r` flips either to its source. Pictures, PDFs, video and audio have no source and are always shown as themselves. There is a button for it beside the file's name. The source of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
-- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the inside of its first entry in the next, or of the entry you were on when you last left it, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file. The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file, and a key that moves the cursor takes over until the pointer moves again. Going into the folder puts the cursor on the entry its column leads on to, whatever the sort. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out, with the cursor's highlight travelling from the row it was on to the row it lands on, so the eye can follow it.
-- Hidden files stay out of the way: dotfiles, and the folders left out of the search, such as `node_modules` and what a `.gitignore` names (see [A big folder](#a-big-folder)). `.`, or the eye button at the top, shows them and hides them again, and the browser remembers the choice. The counts beside each folder are of what is shown, so a folder says how many entries you will find in it, and the bar at the foot says how many are hidden. The search hides the same ones.
-- Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
-- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`. `Ctrl Enter` or `Cmd Enter`, or the row under its matches, lists every match in place of the folder: ranked, with the folder each is in, sortable by name, folder, size and time, and loaded a page at a time as you scroll. The query is in the address (`?find=`), so back, a reload and a shared link all work, and a folder or a file opened from the matches leads back to them.
-- The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
-- Themes: one CSS file each, five built in, light and dark.
-- Read only unless you say otherwise. Deleting is behind a flag, `--allow-delete`. There is no upload, no editing and no accounts.
-
-<p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/palette-dark.webp"><img src="docs/screenshots/palette-light.webp" alt="The palette finding files across the tree" width="49%"></picture>
-</p>
+`okfs` stands for "ok file server". It is one binary with the page compiled into it, so there is nothing to install beside it, and the page loads nothing from another site while it runs. Run it in a folder and the whole tree is a keyboard-driven browser: a dense list, a preview of whatever is under the cursor, and a search of every name in the tree.
 
 ## Install
 
@@ -36,21 +21,21 @@ nix profile install github:jrnxf/okfs   # or install it
 
 `nix profile upgrade okfs` brings an installed copy up to date.
 
-Each [release](https://github.com/jrnxf/okfs/releases) has an archive for Linux (x86-64 and arm64, static, so any C library) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`. It holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`. On x86-64 Linux, the release also has the binary on its own:
+Without nix, each [release](https://github.com/jrnxf/okfs/releases) has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, with a `.sha256` beside it. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
 
 ```sh
-gh release download --repo jrnxf/okfs --pattern 'okfs-x86_64-unknown-linux-gnu*'
-sha256sum -c okfs-x86_64-unknown-linux-gnu.sha256
-chmod +x okfs-x86_64-unknown-linux-gnu
+gh release download --repo jrnxf/okfs --pattern '*aarch64-apple-darwin.tar.gz*'
+tar -xzf okfs-*-aarch64-apple-darwin.tar.gz
+./okfs-*-aarch64-apple-darwin/okfs --version
 ```
 
-Without nix you need a Rust toolchain and [bun](https://bun.sh). Bun builds the page while cargo builds the binary.
+Or build it. You need a Rust toolchain and [bun](https://bun.sh): bun builds the page while cargo builds the binary.
 
 ```sh
-cargo install --path .    # from a checkout of this repository
+cargo install --git https://github.com/jrnxf/okfs
 ```
 
-To build without installing, the nix dev shell has both:
+To build from a checkout without installing, the nix dev shell has both tools:
 
 ```sh
 nix develop
@@ -59,12 +44,73 @@ cargo build --release    # the binary is target/release/okfs
 
 The engine that draws the first page of a PDF is about 6 MB of the binary. `cargo build --release --no-default-features` leaves it out: PDFs then open in the browser's viewer alone. Every other preview is the same.
 
+Platform notes:
+
+- There is no Windows build yet. The code has not been run there.
+- On a Mac, a binary downloaded with a browser is quarantined, and Gatekeeper refuses to open it because okfs is not signed. Download it with `gh` or `curl` as above, which leaves no quarantine mark, or clear the mark with `xattr -d com.apple.quarantine okfs`.
+- Watching a folder for changes uses inotify on Linux and FSEvents on a Mac. On a network share, where a watcher does not see what other machines change, use `--rescan` (see [A big folder](#a-big-folder)).
+- Shell completions: `okfs completions zsh` (or `bash`, `fish`) prints them. The release archive has them as files, and `okfs.1` is the manual page.
+
+## Quick start
+
+```sh
+okfs ~/photos               # serve a folder and open it in the browser
+okfs --bind 0.0.0.0 --qr    # let a phone on the same network in, with a QR code to scan
+okfs --help                 # every flag, with examples
+```
+
+okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the keys, and `Ctrl K` or `Cmd K` to find any file in the tree.
+
+## What it does
+
+- A dense list on the left, and beside it what is under the cursor: hold `j` and every file shows as the cursor passes it.
+- Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
+- A palette that finds any file in the whole tree at once, from an index kept in memory.
+- Columns that show what is inside the folder under the cursor, and the page follows the folder as files are added, removed or rewritten, with no reload.
+- Five built-in themes, light and dark, each one CSS file.
+- Read only unless you say otherwise. There is no upload, no editing and no accounts. Deleting is behind `--allow-delete`.
+- Loopback by default. Beyond it, only a link with a key that okfs prints gets in (see [Letting other machines in](#letting-other-machines-in)).
+
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/palette-dark.webp"><img src="docs/screenshots/palette-light.webp" alt="The palette finding files across the tree" width="49%"></picture>
+</p>
+
+## Why okfs
+
+okfs is for looking at a folder. Its previews, columns and search are made for flipping through many files quickly with the keyboard, and its defaults are safe: loopback only, read only, dotfiles hidden, a key beyond loopback.
+
+It does less than the tools that manage files, on purpose. It has no upload and no accounts, and it has no TLS of its own (see [Behind a proxy or a tunnel](#behind-a-proxy-or-a-tunnel)). For uploads, use dufs or copyparty. For a file manager with users, use File Browser Quantum. File Browser itself was archived in September 2026.
+
+| | okfs | `python -m http.server` | miniserve | dufs | copyparty |
+| --- | --- | --- | --- | --- | --- |
+| Default address | loopback only | all interfaces | all interfaces | all interfaces | all interfaces |
+| Beyond loopback | secret link | none | basic auth, optional | basic or digest auth, optional | accounts |
+| Writes | none; delete behind a flag | none | upload, optional | upload, edit, move and delete, each optional | upload, per account |
+| Previews | images, video, audio, PDF, Markdown, code, CSV, JSON, zip, HTML | none | none | none | thumbnails, audio spectrograms |
+| Search of the whole tree | instant, in memory | none | none | yes | yes, indexed |
+| Live updates | yes | none | none | none | not checked |
+| TLS | through a proxy | since Python 3.14 | yes | yes | yes |
+
+This is how each tool read on 2026-10-21, from its documentation. Check the project you are comparing before you rely on a cell.
+
+## The page
+
+These are the details behind the list above.
+
+- A dense list on the left, and beside it what is under the cursor: a file is shown as soon as the cursor is on it, in the same pane. Hold `j` to flip through a folder: every file shows as the cursor passes it.
+- A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too. A phone has no space bar: there a tap opens the file over the list, with previous and next in a bar at its foot and download and delete behind a `...` button.
+- Markdown, an SVG drawing and JSON open as their source, as it is written, colored and never run. `r` flips them to what is made from them, and the choice holds for the files of that kind that follow, until you flip it back or leave the page. An HTML page opens as the page, and a CSV table opens as a table; `r` flips either to its source. Pictures, PDFs, video and audio have no source and are always shown as themselves. There is a button for it beside the file's name. The source of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
+- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the inside of its first entry in the next, or of the entry you were on when you last left it, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file. The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file, and a key that moves the cursor takes over until the pointer moves again. Going into the folder puts the cursor on the entry its column leads on to, whatever the sort. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out, with the cursor's highlight travelling from the row it was on to the row it lands on, so the eye can follow it.
+- Hidden files stay out of the way: dotfiles, and the folders left out of the search, such as `node_modules` and what a `.gitignore` names (see [A big folder](#a-big-folder)). `.`, or the eye button at the top, shows them and hides them again, and the browser remembers the choice. The counts beside each folder are of what is shown, so a folder says how many entries you will find in it, and the bar at the foot says how many are hidden. The search hides the same ones.
+- A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`. `Ctrl Enter` or `Cmd Enter`, or the row under its matches, lists every match in place of the folder: ranked, with the folder each is in, sortable by name, folder, size and time, and loaded a page at a time as you scroll. The query is in the address (`?find=`), so back, a reload and a shared link all work, and a folder or a file opened from the matches leads back to them.
+- The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
+
 ## Use
 
 ```sh
 okfs                        # serve this folder at http://127.0.0.1:8080/
 okfs ~/photos --port 9000   # another folder, another port
-okfs --bind 0.0.0.0         # let other machines on the network in
+okfs --bind 0.0.0.0         # let other machines on the network in, with a key in the link
 okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 ```
 
@@ -80,23 +126,23 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | Flag | What it does |
 | --- | --- |
 | `[PATH]` | The folder to serve. Default: the current folder. |
-| `-b`, `--bind <ADDR>` | Address to listen on. Default `127.0.0.1`. |
-| `-p`, `--port <PORT>` | Port to listen on. Default `8080`. |
-| `--qr` | Print a QR code for the first address another device can use, in a terminal. Off by default. |
+| `-b`, `--bind <ADDR>` | Address to listen on: an IP address or `localhost`. Default `127.0.0.1`. Beyond loopback, a [key](#letting-other-machines-in) is asked for. |
+| `-p`, `--port <PORT>` | Port to listen on, `0` for any free one. Without it, `8080`, or the next free port after it. |
+| `--qr` | Print a QR code for the first address another device can use, in a terminal. It carries the key. Off by default. |
 | `--no-open` | Do not open the browser. It opens by default in a terminal, never as a service and never over SSH. |
 | `--index <FILE>` | Open a folder that holds a file of this name as that page: `--index index.html`. Off by default. See below. |
 | `--theme <NAME\|FILE>` | Theme a new visitor starts in: a built-in name or a theme file. |
-| `--css <FILE>` | Your own stylesheet, loaded after the theme. Class names are not a promise and may change. |
 | `--header <FILE.md>` | A Markdown note shown above every folder. |
 | `--title <TEXT>` | Name shown in the corner and the browser tab. Default `okfs`. |
 | `--accent <COLOR>` | Accent color in every theme, as hex: `"#2d6a4f"`. |
 | `-H`, `--hidden` | Serve dotfiles, and show hidden files to a browser that has made no choice with `.`. Without it, dotfiles are never sent, and `.` shows only the folders left out of the search. |
+| `--key` | Ask for the key on a loopback address too, as behind a tunnel that anyone can reach. |
+| `--no-key` | Let in anyone who reaches an address beyond loopback, with no key. For a proxy that signs people in itself. See [Letting other machines in](#letting-other-machines-in). |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
 | `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
 | `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
 </details>
-
 ### Keys
 
 | Key | Does |
@@ -108,6 +154,8 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `Backspace`, `-` | Up one folder |
 | `h` `l`, left and right arrows | Out of a folder and into one. With a file open, left goes back to the list it was opened from. |
 | `Home` `End` | First and last in the folder |
+| `PageDown` `PageUp` | Down and up by a page |
+| `y` | Copy a link to the file or folder under the cursor, with the key if there is one |
 | `/` | Filter this folder |
 | `Ctrl K`, `Cmd K` | Find anything in the tree. Start with `>` for commands. |
 | `s` | Change the sort |
@@ -116,6 +164,23 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `Esc` | Close the open file or the filter. In a folder entered from the matches, go back to them. |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
+### Addresses you can rely on
+
+These addresses are stable. Scripts, bookmarks and `curl` can use them:
+
+| Address | Gives |
+| --- | --- |
+| `/<path>` | In a browser, the page showing that file or folder. For a program that does not ask for HTML, such as `curl` or `wget`, the file itself. |
+| `/raw/<path>` | The file's bytes, with ranges. |
+| `/zip/<path>` | A folder as a zip stream. |
+| `/?find=<query>` | The page with the search for that query open. |
+
+```sh
+curl -O http://127.0.0.1:8080/notes/todo.md
+curl -o photos.zip http://127.0.0.1:8080/zip/photos
+```
+
+Everything under `/api/` is okfs's own channel to its page. It may change in any release, so do not build on it.
 
 ### A folder that is a small site
 
@@ -152,6 +217,26 @@ okfs --rescan 6h /mnt/archive
 ```
 
 Each of those reads also removes the cached thumbnails that have not been used for 30 days, which otherwise happens only when okfs starts.
+### Letting other machines in
+
+okfs listens on the loopback address, which only the machine it runs on can reach. `--bind 0.0.0.0` lets the network in, and from then on okfs asks for a key. It makes a random one each time it starts, and prints every address with the key on it:
+
+```text
+  at       http://192.168.1.20:8080/?key=...
+  key      on: anyone with one of these links can read every file shown
+```
+
+A request without the key is refused. A browser that opens the link is given a cookie that holds the key, and the key is taken out of the address bar; a program such as `curl` adds `?key=...` to each request. `--qr` prints a code for the same link, so a phone opens the folder by scanning it. The key is new at every start, so an old link stops working when okfs restarts.
+
+What the key does and does not do:
+
+- It stops anyone who can reach the address but does not have the link. It does not stop anyone who can watch the traffic. okfs speaks plain HTTP, so on open Wi-Fi, or on a network whose password others know, a program that captures packets reads the key and then every file. Treat the link as you would a password sent over plain HTTP. For anything beyond a network you trust, put a TLS proxy in front (see [Behind a proxy or a tunnel](#behind-a-proxy-or-a-tunnel)).
+- The cookie is `HttpOnly` and `SameSite=Strict`, which keeps scripts and other sites' pages from using it. A browser still sends a cookie to every port of the same host. Any other web service on the same machine, on any port, therefore receives the key from a browser that has opened okfs. Do not run okfs on a machine that also runs listeners you do not trust.
+- On a machine with other users, the link okfs opens in the browser is on that browser's command line while it starts, where another account can read it. Start okfs with `--no-open` and open the link yourself.
+- The key is not a login. Anyone who has the link has all of it: with `--allow-delete`, that includes deleting.
+- An HTML page from the served folder cannot load its own stylesheet, scripts or images while the key is on. It is sandboxed in an origin of its own, a browser sends it no cookie, and the key is not put in its address on purpose, so its requests for the folder's other files are refused. The page shows with no styling, and its links to other files fail. Without a key, the same page loads them.
+
+`--no-key` turns the key off. Use it only when something in front of okfs already decides who gets in, such as a proxy that signs people in, or on a network where everyone may read the folder. `--key` asks for the key on a loopback address too, for a tunnel that exposes it to anyone.
 
 ### Behind a proxy or a tunnel
 
@@ -163,7 +248,113 @@ okfs --allow-host files.example.com
 
 A name of your own on the network, such as `my-laptop.local`, needs `--allow-host` too. A plain address always works, as `--bind 0.0.0.0` prints it.
 
-This check is not a password. A program other than a browser can send any name it likes, so okfs behind a proxy that asks people to sign in is still open to anything that can reach its own address directly. Keep that address where only the proxy can reach it: listen on loopback with the proxy on the same machine, or let a firewall through to okfs's port from the proxy alone.
+The host check is not a password. A program other than a browser can send any name it likes, so okfs behind a proxy that asks people to sign in is still open to anything that can reach its own address directly. Keep that address where only the proxy can reach it: listen on loopback with the proxy on the same machine, or let a firewall through to okfs's port from the proxy alone. On loopback okfs asks for no key. If okfs has to listen beyond loopback behind a proxy that signs people in, pass `--no-key`, or the proxy's users are asked for a key they do not have.
+
+okfs has no TLS of its own. A proxy that ends TLS gives you https, and okfs then marks its key cookie `Secure` when the proxy sends `X-Forwarded-Proto: https`. A tunnel such as Cloudflare Tunnel or Tailscale Funnel does the same job without a proxy of your own: run okfs on loopback, name the tunnel's host with `--allow-host`, and add `--key` unless the tunnel signs people in.
+
+okfs cannot live under a path such as `example.com/files/`. Every address it uses starts at `/`, and there is no base-path option. Give it a host name of its own, such as `files.example.com`.
+
+### Run it for good
+
+okfs stops cleanly on SIGTERM as well as Ctrl-C, so a service manager can stop it. Run it on loopback, without opening a browser, and put the proxy in front.
+
+#### systemd
+
+`/etc/systemd/system/okfs.service`:
+
+```ini
+[Unit]
+Description=okfs file browser
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/okfs --no-open --bind 127.0.0.1 --port 8080 --allow-host files.example.com /srv/files
+DynamicUser=yes
+ReadOnlyPaths=/srv/files
+Environment=XDG_CACHE_HOME=/var/cache
+CacheDirectory=okfs
+NoNewPrivileges=yes
+ProtectHome=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`DynamicUser=yes` runs okfs as a user with no account, so the files in `/srv/files` must be readable by everyone. `CacheDirectory=okfs` gives it `/var/cache/okfs` for thumbnails and PDF pictures, and `XDG_CACHE_HOME` points okfs there. Then:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now okfs
+```
+
+#### launchd
+
+`~/Library/LaunchAgents/co.example.okfs.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>co.example.okfs</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/okfs</string>
+    <string>--no-open</string>
+    <string>--bind</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8080</string>
+    <string>/Users/user/files</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/co.example.okfs.plist
+```
+
+A service on a Mac reads only the folders it has been given access to. If `/Users/user/files` is under Documents, Desktop or Downloads, give the `okfs` binary Full Disk Access in System Settings first.
+
+#### Caddy
+
+```caddyfile
+files.example.com {
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+Caddy gets the certificate and passes the `Host` header on.
+
+#### nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name files.example.com;
+    # ssl_certificate and ssl_certificate_key here
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+`proxy_buffering off` and the long read timeout keep `/api/events`, the stream that tells the page about changes, open. Without them the page still works but stops following the folder.
+
+In both, start okfs with `--allow-host files.example.com`. To ask people to sign in, add that to the proxy (basic auth in Caddy or nginx, or an auth proxy), and keep okfs on loopback.
 
 ### Deleting
 
@@ -179,10 +370,9 @@ okfs deletes only what it shows. A folder that holds something it does not show,
 
 A folder is not removed in one step. If the disk refuses part way, for example at a subfolder okfs has no permission to change, okfs says that it stopped part way and shows what is left. What it removed before that point does not come back.
 
-okfs has no accounts, so with this flag anyone who can reach the address can delete. Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
+okfs has no accounts, so with this flag anyone who can reach the address and has its key can delete (anyone who can reach it, with `--no-key`). Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
 
 Deleting works only from the address okfs answers to. If you reach okfs through a proxy, a tunnel or a host name of your own, name it with `--allow-host`, also when okfs listens on `0.0.0.0`.
-
 ## Themes
 
 <table>
@@ -264,13 +454,15 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 
 - No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
 - Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-delete`. Thumbnails and the first pages of PDFs are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
-- HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder.
+- HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder, and while a key is on, it cannot load its stylesheet, scripts or images from the folder at all.
 - A PDF is drawn in a process of its own, which is handed the open file and no path, and is ended after 5 seconds. A PDF that is broken, or made to break a reader, costs that one picture: its preview is then the browser's viewer alone. PDFs over 64 MB are not drawn.
-- okfs has no accounts. Anyone who can reach the address can read every file in the folder.
+- Only dotfiles are withheld. A file that a `.gitignore` names is still listed, searched and served, as is every other file that is not a dotfile (see [A big folder](#a-big-folder): the ignore rules only decide what is searched and watched). A folder named in a `.gitignore` can be opened at its address. Put nothing in the served folder that you do not want a visitor to read, a `secrets.yml` listed in a `.gitignore` included, or move it out.
+- The page itself loads nothing from another site, but Markdown it renders can: an image in a README that points at a remote address is fetched by each visitor's browser from that address. A file in the folder can therefore make every visitor's browser contact a site of its choosing.
+- okfs has no accounts. On loopback, only programs on your machine can reach it. Beyond loopback, anyone with the key can read every file in the folder, and the key crosses plain HTTP (see [Letting other machines in](#letting-other-machines-in)). With `--no-key`, anyone who can reach the address can read every file.
 
 With `--allow-delete`:
 
-- Anyone who can reach the address can also delete every file and folder in it. There is no password in front of it and no way to get a file back. Use it where you would hand everyone on that network the folder itself.
+- Anyone who can reach the address with the key (or anyone at all, with `--no-key`) can also delete every file and folder in it. There is no password in front of it and no way to get a file back. Use it where you would hand everyone on that network the folder itself.
 - Only what okfs shows can go: never the served folder itself, and no dotfile unless you also pass `--hidden`. A folder that holds something okfs does not show, at any depth, is refused whole and nothing in it is removed.
 - Deleting never follows a symbolic link that sits in the folder. A link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted. A link that leads out of the served folder is not shown, so it is never removed. A delete therefore stays inside the served folder, as long as nothing else changes the folder while the delete runs.
 - Deleting is not hardened against another process on the same machine that rewrites the served folder while a delete runs, for example one that swaps a folder for a link at that moment. Do not use `--allow-delete` on a folder that local users you do not trust can write to.
