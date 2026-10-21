@@ -1,0 +1,11 @@
+{
+  "site": "harbor-mouth",
+  "start": "2026-09-30T09:15:00Z",
+  "seconds": 360,
+  "rate_hz": 48000,
+  "marked": {
+    "at_s": 214,
+    "note": "low, long call, 40-80 Hz",
+    "heard_by": "field team"
+  }
+}

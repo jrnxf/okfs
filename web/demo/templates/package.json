@@ -1,0 +1,20 @@
+{
+  "name": "@harbor/tides",
+  "version": "2.14.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@harbor/format": "workspace:*",
+    "@harbor/units": "workspace:*"
+  },
+  "devDependencies": {
+    "@harbor/testing": "workspace:*",
+    "typescript": "^6.0.2"
+  }
+}

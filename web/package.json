@@ -1,0 +1,12 @@
+{
+  "name": "okfs-web",
+  "private": true,
+  "scripts": {
+    "build": "./build.sh",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "bun": "1.4.2",
+    "wrangler": "4.151.3"
+  }
+}

@@ -1,0 +1,120 @@
+2026-10-20T06:00:59Z INFO  gauge_daemon: read buoy-12 raw_cm=144.2
+2026-10-20T06:01:38Z INFO  gauge_daemon: read headland raw_cm=152.5
+2026-10-20T06:02:24Z INFO  gauge_daemon: read headland raw_cm=103.6
+2026-10-20T06:02:55Z INFO  gauge_daemon: read buoy-19 raw_cm=157.7
+2026-10-20T06:04:09Z WARN  gauge_daemon: no reading from north-pier: timed out after 5s
+2026-10-20T06:05:27Z WARN  gauge_daemon: no reading from salt-marsh: timed out after 5s
+2026-10-20T06:06:38Z INFO  gauge_daemon: read headland raw_cm=288.3
+2026-10-20T06:07:41Z INFO  gauge_daemon: read east-channel raw_cm=156.0
+2026-10-20T06:08:25Z WARN  gauge_daemon: no reading from buoy-19: timed out after 5s
+2026-10-20T06:09:44Z WARN  gauge_daemon: no reading from salt-marsh: timed out after 5s
+2026-10-20T06:10:54Z INFO  gauge_daemon: read buoy-19 raw_cm=279.1
+2026-10-20T06:12:12Z INFO  gauge_daemon: read east-channel raw_cm=280.9
+2026-10-20T06:13:29Z INFO  gauge_daemon: read east-channel raw_cm=199.8
+2026-10-20T06:14:21Z INFO  gauge_daemon: read north-pier raw_cm=273.3
+2026-10-20T06:15:21Z INFO  gauge_daemon: read east-channel raw_cm=247.0
+2026-10-20T06:16:13Z INFO  gauge_daemon: read headland raw_cm=326.8
+2026-10-20T06:17:06Z INFO  gauge_daemon: read east-channel raw_cm=87.6
+2026-10-20T06:18:06Z INFO  gauge_daemon: read salt-marsh raw_cm=115.2
+2026-10-20T06:19:15Z INFO  gauge_daemon: read buoy-12 raw_cm=305.5
+2026-10-20T06:20:07Z INFO  gauge_daemon: read headland raw_cm=92.4
+2026-10-20T06:21:01Z INFO  gauge_daemon: read buoy-12 raw_cm=300.0
+2026-10-20T06:21:58Z INFO  gauge_daemon: read north-pier raw_cm=276.2
+2026-10-20T06:23:14Z INFO  gauge_daemon: read buoy-12 raw_cm=168.4
+2026-10-20T06:24:44Z INFO  gauge_daemon: read headland raw_cm=102.9
+2026-10-20T06:25:22Z INFO  gauge_daemon: read east-channel raw_cm=219.5
+2026-10-20T06:26:21Z INFO  gauge_daemon: read buoy-19 raw_cm=283.2
+2026-10-20T06:27:21Z INFO  gauge_daemon: read east-channel raw_cm=208.1
+2026-10-20T06:27:59Z INFO  gauge_daemon: read north-pier raw_cm=275.8
+2026-10-20T06:29:15Z INFO  gauge_daemon: read buoy-19 raw_cm=262.4
+2026-10-20T06:29:53Z INFO  gauge_daemon: read east-channel raw_cm=283.1
+2026-10-20T06:30:36Z INFO  gauge_daemon: read salt-marsh raw_cm=117.5
+2026-10-20T06:31:38Z INFO  gauge_daemon: read buoy-19 raw_cm=148.0
+2026-10-20T06:32:42Z INFO  gauge_daemon: read east-channel raw_cm=76.4
+2026-10-20T06:33:59Z INFO  gauge_daemon: read buoy-12 raw_cm=238.9
+2026-10-20T06:35:21Z WARN  gauge_daemon: no reading from buoy-12: timed out after 5s
+2026-10-20T06:36:43Z WARN  gauge_daemon: no reading from east-channel: timed out after 5s
+2026-10-20T06:37:47Z INFO  gauge_daemon: read buoy-19 raw_cm=197.8
+2026-10-20T06:39:12Z INFO  gauge_daemon: read east-channel raw_cm=224.3
+2026-10-20T06:40:31Z INFO  gauge_daemon: read east-channel raw_cm=98.2
+2026-10-20T06:41:40Z INFO  gauge_daemon: read buoy-19 raw_cm=76.7
+2026-10-20T06:42:53Z WARN  gauge_daemon: no reading from buoy-19: timed out after 5s
+2026-10-20T06:43:58Z INFO  gauge_daemon: read north-pier raw_cm=298.5
+2026-10-20T06:44:31Z INFO  gauge_daemon: read east-channel raw_cm=134.8
+2026-10-20T06:45:50Z INFO  gauge_daemon: read buoy-19 raw_cm=182.1
+2026-10-20T06:46:21Z INFO  gauge_daemon: read buoy-12 raw_cm=147.9
+2026-10-20T06:47:23Z WARN  gauge_daemon: no reading from east-channel: timed out after 5s
+2026-10-20T06:48:37Z INFO  gauge_daemon: read buoy-12 raw_cm=197.2
+2026-10-20T06:49:58Z INFO  gauge_daemon: read buoy-19 raw_cm=314.2
+2026-10-20T06:51:12Z WARN  gauge_daemon: no reading from salt-marsh: timed out after 5s
+2026-10-20T06:52:41Z WARN  gauge_daemon: no reading from east-channel: timed out after 5s
+2026-10-20T06:54:04Z INFO  gauge_daemon: read east-channel raw_cm=172.5
+2026-10-20T06:54:59Z INFO  gauge_daemon: read salt-marsh raw_cm=79.6
+2026-10-20T06:55:44Z INFO  gauge_daemon: read north-pier raw_cm=117.4
+2026-10-20T06:56:33Z INFO  gauge_daemon: read east-channel raw_cm=313.7
+2026-10-20T06:57:44Z INFO  gauge_daemon: read east-channel raw_cm=128.3
+2026-10-20T06:58:22Z INFO  gauge_daemon: read east-channel raw_cm=261.6
+2026-10-20T06:58:58Z INFO  gauge_daemon: read buoy-12 raw_cm=104.0
+2026-10-20T07:00:10Z INFO  gauge_daemon: read east-channel raw_cm=250.7
+2026-10-20T07:01:12Z INFO  gauge_daemon: read salt-marsh raw_cm=173.7
+2026-10-20T07:02:04Z INFO  gauge_daemon: read north-pier raw_cm=255.0
+2026-10-20T07:02:35Z INFO  gauge_daemon: read buoy-19 raw_cm=183.8
+2026-10-20T07:03:50Z INFO  gauge_daemon: read buoy-12 raw_cm=149.5
+2026-10-20T07:04:59Z INFO  gauge_daemon: read buoy-19 raw_cm=319.4
+2026-10-20T07:05:36Z INFO  gauge_daemon: read north-pier raw_cm=82.7
+2026-10-20T07:06:23Z INFO  gauge_daemon: read east-channel raw_cm=133.0
+2026-10-20T07:07:01Z INFO  gauge_daemon: read headland raw_cm=281.1
+2026-10-20T07:07:47Z INFO  gauge_daemon: read east-channel raw_cm=204.9
+2026-10-20T07:08:49Z INFO  gauge_daemon: read headland raw_cm=148.3
+2026-10-20T07:09:36Z INFO  gauge_daemon: read headland raw_cm=109.5
+2026-10-20T07:11:03Z INFO  gauge_daemon: read salt-marsh raw_cm=313.4
+2026-10-20T07:12:13Z INFO  gauge_daemon: read salt-marsh raw_cm=82.6
+2026-10-20T07:13:37Z INFO  gauge_daemon: read north-pier raw_cm=131.4
+2026-10-20T07:14:14Z INFO  gauge_daemon: read north-pier raw_cm=151.6
+2026-10-20T07:15:19Z INFO  gauge_daemon: read salt-marsh raw_cm=227.9
+2026-10-20T07:15:51Z WARN  gauge_daemon: no reading from headland: timed out after 5s
+2026-10-20T07:16:36Z INFO  gauge_daemon: read east-channel raw_cm=130.7
+2026-10-20T07:17:17Z INFO  gauge_daemon: read salt-marsh raw_cm=229.7
+2026-10-20T07:18:20Z INFO  gauge_daemon: read salt-marsh raw_cm=180.3
+2026-10-20T07:19:33Z INFO  gauge_daemon: read salt-marsh raw_cm=153.7
+2026-10-20T07:20:04Z INFO  gauge_daemon: read north-pier raw_cm=64.1
+2026-10-20T07:21:20Z WARN  gauge_daemon: no reading from buoy-19: timed out after 5s
+2026-10-20T07:22:02Z WARN  gauge_daemon: no reading from buoy-12: timed out after 5s
+2026-10-20T07:22:47Z INFO  gauge_daemon: read north-pier raw_cm=237.7
+2026-10-20T07:23:58Z INFO  gauge_daemon: read headland raw_cm=193.7
+2026-10-20T07:25:21Z INFO  gauge_daemon: read buoy-19 raw_cm=143.1
+2026-10-20T07:26:04Z INFO  gauge_daemon: read salt-marsh raw_cm=113.6
+2026-10-20T07:27:30Z INFO  gauge_daemon: read buoy-12 raw_cm=327.1
+2026-10-20T07:28:03Z INFO  gauge_daemon: read north-pier raw_cm=79.1
+2026-10-20T07:29:20Z INFO  gauge_daemon: read buoy-12 raw_cm=104.1
+2026-10-20T07:29:55Z INFO  gauge_daemon: read buoy-19 raw_cm=241.0
+2026-10-20T07:30:43Z INFO  gauge_daemon: read headland raw_cm=139.1
+2026-10-20T07:31:42Z INFO  gauge_daemon: read east-channel raw_cm=132.6
+2026-10-20T07:32:12Z INFO  gauge_daemon: read salt-marsh raw_cm=319.7
+2026-10-20T07:33:17Z INFO  gauge_daemon: read east-channel raw_cm=69.3
+2026-10-20T07:34:43Z INFO  gauge_daemon: read east-channel raw_cm=156.3
+2026-10-20T07:35:13Z INFO  gauge_daemon: read buoy-12 raw_cm=82.7
+2026-10-20T07:36:00Z WARN  gauge_daemon: no reading from headland: timed out after 5s
+2026-10-20T07:36:42Z INFO  gauge_daemon: read buoy-19 raw_cm=269.6
+2026-10-20T07:37:17Z INFO  gauge_daemon: read north-pier raw_cm=98.8
+2026-10-20T07:38:24Z INFO  gauge_daemon: read buoy-12 raw_cm=66.1
+2026-10-20T07:39:13Z INFO  gauge_daemon: read north-pier raw_cm=218.1
+2026-10-20T07:40:16Z INFO  gauge_daemon: read headland raw_cm=301.1
+2026-10-20T07:41:36Z INFO  gauge_daemon: read salt-marsh raw_cm=254.6
+2026-10-20T07:42:37Z INFO  gauge_daemon: read salt-marsh raw_cm=255.5
+2026-10-20T07:43:48Z INFO  gauge_daemon: read north-pier raw_cm=282.7
+2026-10-20T07:45:03Z WARN  gauge_daemon: no reading from headland: timed out after 5s
+2026-10-20T07:46:00Z WARN  gauge_daemon: no reading from east-channel: timed out after 5s
+2026-10-20T07:47:28Z WARN  gauge_daemon: no reading from buoy-19: timed out after 5s
+2026-10-20T07:48:34Z INFO  gauge_daemon: read headland raw_cm=217.7
+2026-10-20T07:50:01Z INFO  gauge_daemon: read north-pier raw_cm=68.4
+2026-10-20T07:50:39Z INFO  gauge_daemon: read north-pier raw_cm=161.7
+2026-10-20T07:51:37Z WARN  gauge_daemon: no reading from north-pier: timed out after 5s
+2026-10-20T07:52:47Z INFO  gauge_daemon: read headland raw_cm=203.5
+2026-10-20T07:53:32Z INFO  gauge_daemon: read salt-marsh raw_cm=60.9
+2026-10-20T07:54:53Z INFO  gauge_daemon: read headland raw_cm=311.8
+2026-10-20T07:56:20Z WARN  gauge_daemon: no reading from north-pier: timed out after 5s
+2026-10-20T07:57:32Z WARN  gauge_daemon: no reading from north-pier: timed out after 5s
+2026-10-20T07:58:49Z INFO  gauge_daemon: read salt-marsh raw_cm=278.5
+2026-10-20T08:00:13Z INFO  gauge_daemon: read east-channel raw_cm=256.9
+2026-10-20T08:00:56Z INFO  gauge_daemon: read headland raw_cm=235.5

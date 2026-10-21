@@ -1,0 +1,35 @@
+{
+  "datum": "chart",
+  "units": "metres",
+  "gauges": [
+    {
+      "id": "north-pier",
+      "name": "North Pier",
+      "offset_cm": 12,
+      "depth_m": 4.5,
+      "active": true
+    },
+    {
+      "id": "east-channel",
+      "name": "East Channel",
+      "offset_cm": 0,
+      "depth_m": 7.2,
+      "active": true
+    },
+    {
+      "id": "salt-marsh",
+      "name": "Salt Marsh",
+      "offset_cm": -3,
+      "depth_m": 1.8,
+      "active": true
+    },
+    {
+      "id": "headland",
+      "name": "Headland",
+      "offset_cm": 5,
+      "depth_m": 11.0,
+      "active": false
+    }
+  ],
+  "sample_every_minutes": 10
+}

@@ -1,0 +1,32 @@
+{
+  "station": "north-pier",
+  "month": "2026-09",
+  "days": 30,
+  "missing": [],
+  "high_m": {
+    "max": 3.48,
+    "mean": 3.21
+  },
+  "low_m": {
+    "min": 0.44,
+    "mean": 0.67
+  },
+  "range_m": {
+    "max": 3.04,
+    "mean": 2.54
+  },
+  "battery": {
+    "start": 0.91,
+    "end": 0.78
+  },
+  "events": [
+    {
+      "date": "2026-09-18",
+      "what": "spring tide"
+    },
+    {
+      "date": "2026-09-24",
+      "what": "swell from the south-west"
+    }
+  ]
+}
