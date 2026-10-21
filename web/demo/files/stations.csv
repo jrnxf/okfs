@@ -1,0 +1,121 @@
+date,station,high_m,low_m,range_m,sea
+2026-06-01,North Pier,3.49,0.51,2.98,breeze
+2026-06-01,East Channel,3.27,0.66,2.61,calm
+2026-06-01,Salt Marsh,3.13,0.88,2.25,calm
+2026-06-01,Headland,2.94,0.93,2.01,calm
+2026-06-02,North Pier,3.52,0.52,3.00,calm
+2026-06-02,East Channel,3.37,0.68,2.69,fog
+2026-06-02,Salt Marsh,3.18,0.79,2.38,breeze
+2026-06-02,Headland,3.04,0.89,2.15,calm
+2026-06-03,North Pier,3.63,0.46,3.16,calm
+2026-06-03,East Channel,3.40,0.65,2.75,calm
+2026-06-03,Salt Marsh,3.21,0.72,2.49,breeze
+2026-06-03,Headland,3.08,0.93,2.15,swell
+2026-06-04,North Pier,3.67,0.50,3.17,swell
+2026-06-04,East Channel,3.44,0.57,2.87,fog
+2026-06-04,Salt Marsh,3.34,0.72,2.63,calm
+2026-06-04,Headland,3.14,0.82,2.32,calm
+2026-06-05,North Pier,3.73,0.47,3.26,calm
+2026-06-05,East Channel,3.56,0.55,3.01,swell
+2026-06-05,Salt Marsh,3.36,0.69,2.67,breeze
+2026-06-05,Headland,3.15,0.86,2.29,calm
+2026-06-06,North Pier,3.75,0.38,3.37,calm
+2026-06-06,East Channel,3.52,0.54,2.98,fog
+2026-06-06,Salt Marsh,3.35,0.67,2.68,calm
+2026-06-06,Headland,3.17,0.78,2.39,breeze
+2026-06-07,North Pier,3.74,0.36,3.38,fog
+2026-06-07,East Channel,3.61,0.52,3.08,swell
+2026-06-07,Salt Marsh,3.38,0.72,2.66,swell
+2026-06-07,Headland,3.17,0.78,2.39,fog
+2026-06-08,North Pier,3.75,0.43,3.32,swell
+2026-06-08,East Channel,3.61,0.53,3.07,calm
+2026-06-08,Salt Marsh,3.44,0.65,2.79,swell
+2026-06-08,Headland,3.17,0.78,2.39,calm
+2026-06-09,North Pier,3.69,0.38,3.32,swell
+2026-06-09,East Channel,3.56,0.54,3.02,fog
+2026-06-09,Salt Marsh,3.42,0.69,2.72,fog
+2026-06-09,Headland,3.23,0.78,2.44,calm
+2026-06-10,North Pier,3.71,0.43,3.28,breeze
+2026-06-10,East Channel,3.54,0.55,2.99,breeze
+2026-06-10,Salt Marsh,3.33,0.71,2.62,breeze
+2026-06-10,Headland,3.20,0.88,2.33,fog
+2026-06-11,North Pier,3.69,0.49,3.20,breeze
+2026-06-11,East Channel,3.50,0.60,2.91,calm
+2026-06-11,Salt Marsh,3.26,0.76,2.49,fog
+2026-06-11,Headland,3.16,0.92,2.24,calm
+2026-06-12,North Pier,3.60,0.49,3.12,calm
+2026-06-12,East Channel,3.46,0.67,2.79,breeze
+2026-06-12,Salt Marsh,3.21,0.74,2.46,fog
+2026-06-12,Headland,3.10,0.87,2.23,swell
+2026-06-13,North Pier,3.56,0.57,2.98,fog
+2026-06-13,East Channel,3.37,0.63,2.74,swell
+2026-06-13,Salt Marsh,3.21,0.77,2.44,fog
+2026-06-13,Headland,3.02,0.94,2.09,calm
+2026-06-14,North Pier,3.50,0.59,2.90,calm
+2026-06-14,East Channel,3.30,0.70,2.60,breeze
+2026-06-14,Salt Marsh,3.09,0.85,2.24,calm
+2026-06-14,Headland,2.89,0.94,1.95,calm
+2026-06-15,North Pier,3.39,0.58,2.81,calm
+2026-06-15,East Channel,3.15,0.77,2.38,calm
+2026-06-15,Salt Marsh,2.99,0.93,2.06,breeze
+2026-06-15,Headland,2.80,1.00,1.79,swell
+2026-06-16,North Pier,3.28,0.62,2.66,fog
+2026-06-16,East Channel,3.14,0.77,2.37,swell
+2026-06-16,Salt Marsh,2.98,0.90,2.08,calm
+2026-06-16,Headland,2.78,1.06,1.73,swell
+2026-06-17,North Pier,3.24,0.72,2.52,calm
+2026-06-17,East Channel,3.01,0.86,2.16,calm
+2026-06-17,Salt Marsh,2.85,0.94,1.91,swell
+2026-06-17,Headland,2.66,1.08,1.58,swell
+2026-06-18,North Pier,3.15,0.77,2.38,swell
+2026-06-18,East Channel,3.03,0.90,2.12,calm
+2026-06-18,Salt Marsh,2.77,1.06,1.71,calm
+2026-06-18,Headland,2.68,1.19,1.49,calm
+2026-06-19,North Pier,3.09,0.76,2.34,calm
+2026-06-19,East Channel,2.98,0.94,2.04,calm
+2026-06-19,Salt Marsh,2.75,1.09,1.67,breeze
+2026-06-19,Headland,2.63,1.21,1.42,breeze
+2026-06-20,North Pier,3.08,0.83,2.25,fog
+2026-06-20,East Channel,2.92,0.92,2.00,calm
+2026-06-20,Salt Marsh,2.70,1.11,1.60,fog
+2026-06-20,Headland,2.57,1.16,1.41,breeze
+2026-06-21,North Pier,3.02,0.80,2.21,fog
+2026-06-21,East Channel,2.92,0.94,1.98,calm
+2026-06-21,Salt Marsh,2.75,1.03,1.71,calm
+2026-06-21,Headland,2.48,1.17,1.31,calm
+2026-06-22,North Pier,3.04,0.84,2.20,fog
+2026-06-22,East Channel,2.84,0.95,1.90,fog
+2026-06-22,Salt Marsh,2.65,1.10,1.55,fog
+2026-06-22,Headland,2.51,1.26,1.25,calm
+2026-06-23,North Pier,3.07,0.78,2.30,breeze
+2026-06-23,East Channel,2.87,0.95,1.91,breeze
+2026-06-23,Salt Marsh,2.69,1.12,1.57,calm
+2026-06-23,Headland,2.47,1.23,1.24,fog
+2026-06-24,North Pier,3.13,0.74,2.39,calm
+2026-06-24,East Channel,2.90,0.89,2.01,breeze
+2026-06-24,Salt Marsh,2.76,1.10,1.65,breeze
+2026-06-24,Headland,2.52,1.20,1.32,fog
+2026-06-25,North Pier,3.13,0.77,2.36,fog
+2026-06-25,East Channel,2.88,0.94,1.95,breeze
+2026-06-25,Salt Marsh,2.80,1.00,1.79,calm
+2026-06-25,Headland,2.55,1.22,1.33,fog
+2026-06-26,North Pier,3.13,0.71,2.41,calm
+2026-06-26,East Channel,3.00,0.85,2.16,breeze
+2026-06-26,Salt Marsh,2.80,0.99,1.81,calm
+2026-06-26,Headland,2.58,1.15,1.43,breeze
+2026-06-27,North Pier,3.18,0.68,2.49,calm
+2026-06-27,East Channel,3.06,0.82,2.24,swell
+2026-06-27,Salt Marsh,2.87,0.97,1.89,calm
+2026-06-27,Headland,2.64,1.17,1.48,calm
+2026-06-28,North Pier,3.29,0.70,2.60,fog
+2026-06-28,East Channel,3.12,0.80,2.32,calm
+2026-06-28,Salt Marsh,2.91,0.98,1.93,calm
+2026-06-28,Headland,2.79,1.05,1.74,calm
+2026-06-29,North Pier,3.38,0.61,2.77,fog
+2026-06-29,East Channel,3.22,0.75,2.47,fog
+2026-06-29,Salt Marsh,3.03,0.94,2.08,calm
+2026-06-29,Headland,2.86,1.09,1.77,calm
+2026-06-30,North Pier,3.48,0.53,2.94,breeze
+2026-06-30,East Channel,3.29,0.71,2.58,calm
+2026-06-30,Salt Marsh,3.05,0.89,2.17,calm
+2026-06-30,Headland,2.89,0.95,1.93,swell

@@ -1,0 +1,37 @@
+.gauge-dial {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.gauge-dial .track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 10;
+}
+
+.gauge-dial .fill {
+  fill: none;
+  stroke: var(--sea);
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: d 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.gauge-dial .needle {
+  stroke: var(--fg);
+  stroke-width: 2;
+}
+
+.gauge-dial figcaption {
+  display: grid;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-dial .fill {
+    transition: none;
+  }
+}

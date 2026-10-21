@@ -114,6 +114,17 @@ impl Root {
         Ok(Self { dir, hidden })
     }
 
+    /// A served folder whose path is already canonical, for WASI, whose std has no `canonicalize`.
+    /// The demo site's index serves a folder held in memory, with no links in it (see web/).
+    #[cfg(target_os = "wasi")]
+    pub fn new_canonical(dir: &Path, hidden: bool) -> io::Result<Self> {
+        let dir = dir.to_path_buf();
+        if !dir.is_dir() {
+            return Err(io::Error::new(io::ErrorKind::NotADirectory, "not a folder"));
+        }
+        Ok(Self { dir, hidden })
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }

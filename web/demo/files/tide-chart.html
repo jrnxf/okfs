@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tide chart - North Pier</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f3ec; --fg: #1d2a36; --sea: #2f6fb5; --sand: #d8c9a6; --muted: #6b7785; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f1720; --fg: #e3eaf2; --sea: #6fb0f0; --sand: #4a4030; --muted: #8a99a8; } }
+  body { margin: 0; font: 15px/1.5 Georgia, "Times New Roman", serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 48px; }
+  h1 { font-weight: 400; font-size: 34px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p.sub { margin: 0 0 24px; color: var(--muted); }
+  svg { width: 100%; height: auto; display: block; }
+  .now { font: 600 13px/1 ui-monospace, Menlo, monospace; fill: var(--fg); }
+  table { width: 100%; border-collapse: collapse; margin-top: 24px; font-variant-numeric: tabular-nums; }
+  td, th { padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); text-align: left; }
+  th { font-weight: 400; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>North Pier</h1>
+  <p class="sub">Predicted tide for the next 48 hours, metres above chart datum.</p>
+  <svg id="chart" viewBox="0 0 720 300" role="img" aria-label="Tide curve for the next two days"></svg>
+  <table><thead><tr><th>When</th><th>Water</th><th>Height</th></tr></thead><tbody id="turns"></tbody></table>
+</main>
+<script>
+  const M2 = 28.9841042, S2 = 30, K1 = 15.0410686;
+  const h = (t) => 1.92 + 1.40 * Math.cos((M2 * t - 118) * Math.PI / 180) + 0.47 * Math.cos((S2 * t - 161) * Math.PI / 180) + 0.08 * Math.cos((K1 * t - 63) * Math.PI / 180);
+  const start = Date.now() / 3.6e6 % 24, W = 720, H = 300, pad = 28, span = 48;
+  const x = (t) => pad + (t / span) * (W - pad * 2), y = (v) => H - pad - (v / 4) * (H - pad * 2);
+  let d = "", turns = [], prev = h(start - 0.05), here = h(start);
+  for (let i = 0; i <= 480; i++) {
+    const t = i / 10, v = h(start + t);
+    d += `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`;
+    const next = h(start + t + 0.1);
+    if (i && (v > prev) !== (next > v)) turns.push({ t, v, high: v > prev });
+    prev = v;
+  }
+  const svg = document.getElementById("chart");
+  svg.innerHTML = `
+    <rect x="0" y="${y(0)}" width="${W}" height="${pad}" fill="var(--sand)"/>
+    <path d="${d} L${x(span)},${y(0)} L${x(0)},${y(0)} Z" fill="var(--sea)" opacity="0.18"/>
+    <path d="${d}" fill="none" stroke="var(--sea)" stroke-width="2.5"/>
+    <line x1="${x(0)}" x2="${x(0)}" y1="${pad}" y2="${y(0)}" stroke="var(--fg)" stroke-dasharray="3 4"/>
+    <circle cx="${x(0)}" cy="${y(here)}" r="5" fill="var(--fg)"><animate attributeName="r" values="5;8;5" dur="2s" repeatCount="indefinite"/></circle>
+    <text class="now" x="${x(0) + 10}" y="${y(here) - 10}">now ${here.toFixed(2)} m</text>`;
+  const rows = turns.map(({ t, v, high }) => {
+    const at = new Date(Date.now() + t * 3.6e6);
+    return `<tr><td>${at.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}</td><td>${high ? "High" : "Low"}</td><td>${v.toFixed(2)} m</td></tr>`;
+  });
+  document.getElementById("turns").innerHTML = rows.join("");
+</script>
+</body>
+</html>

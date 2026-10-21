@@ -1,0 +1,3 @@
+[tasks.chart]
+command = "python3"
+args = ["src/plot.py"]

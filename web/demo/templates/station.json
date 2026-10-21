@@ -1,0 +1,33 @@
+{
+  "id": "north-pier",
+  "name": "North Pier",
+  "lat": 50.71842,
+  "lon": -3.52617,
+  "offset_cm": 12,
+  "depth_m": 4.5,
+  "datum": "chart",
+  "logger": {
+    "model": "TG-200",
+    "serial": "TG2-04417",
+    "firmware": "3.8.1"
+  },
+  "since": "2009-03-01",
+  "constituents": {
+    "M2": {
+      "amplitude": 1.402,
+      "phase": 118.4
+    },
+    "S2": {
+      "amplitude": 0.471,
+      "phase": 161.0
+    },
+    "K1": {
+      "amplitude": 0.081,
+      "phase": 62.7
+    },
+    "O1": {
+      "amplitude": 0.064,
+      "phase": 331.2
+    }
+  }
+}
