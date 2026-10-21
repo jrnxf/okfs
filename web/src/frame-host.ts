@@ -155,7 +155,24 @@ addEventListener(
 
 address.__vlisten.add((url) => post({ t: "nav", url }));
 for (const type of ["pointerdown", "wheel", "touchstart"]) addEventListener(type, () => post({ t: "touch" }), { passive: true, capture: true });
-addEventListener("keydown", (event) => event.isTrusted && post({ t: "key", key: event.key, repeat: event.repeat }), true);
+// Each key as it is pressed, before okfs takes it. `idle` says Escape has nothing here to close: no dialog or menu,
+// no file or matches open, no text being typed.
+addEventListener(
+  "keydown",
+  (event) => {
+    if (!event.isTrusted) return;
+    const typing = Boolean((event.target as Element | null)?.closest?.("input, textarea, select, [contenteditable]"));
+    const { pathname, search } = address.__vloc;
+    const idle = !typing && !document.querySelector('[role="dialog"], [role="menu"]') && pathname.endsWith("/") && !new URLSearchParams(search).has("find");
+    post({ t: "key", key: event.key, repeat: event.repeat, chord: event.ctrlKey || event.metaKey || event.altKey, typing, idle });
+  },
+  true,
+);
+// okfs's scheme as it changes, by `t` or by its own menu: the page around it follows.
+new MutationObserver(() => post({ t: "scheme", scheme: document.documentElement.dataset.scheme })).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ["data-scheme"],
+});
 
 /** okfs's page has drawn: the page around it can drive it now. */
 export function started(): void {

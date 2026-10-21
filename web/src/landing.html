@@ -116,19 +116,29 @@
     @keyframes breathe { from { opacity: .55; } to { opacity: 1; } }
   }
 
-  .note {
-    position: absolute; left: 18px; bottom: 44px; z-index: 3; max-width: 340px; padding: 14px 34px 14px 16px; background: var(--ink); color: var(--bg);
-    font: 15px/1.4 var(--sans); box-shadow: 0 18px 40px -16px rgba(0, 0, 0, .5); transition: opacity .3s, transform .3s var(--ease);
+  /* The tutorial: one hint at a time, each asking for one real thing in okfs, gone once skipped or done. */
+  .tut {
+    position: absolute; right: 18px; bottom: 44px; z-index: 3; width: min(340px, calc(100% - 36px)); padding: 14px 16px 12px; background: var(--ink); color: var(--bg);
+    font: 15px/1.45 var(--sans); box-shadow: 0 18px 40px -16px rgba(0, 0, 0, .5);
   }
-  .note b { font-weight: 700; }
-  .note kbd { font: 600 12px/1 var(--mono); padding: 2px 5px; border: 1px solid currentColor; border-radius: 3px; }
-  .note .x { position: absolute; top: 4px; right: 4px; border: 0; background: none; color: inherit; opacity: .6; cursor: pointer; font-size: 18px; line-height: 1; width: 30px; height: 30px; }
-  .note .x:hover { opacity: 1; }
-  .note.gone { opacity: 0; transform: translateY(8px); pointer-events: none; }
-  .note .driving { display: none; margin-top: 8px; font: 13px/1 var(--mono); opacity: .8; }
-  .note .driving.on { display: block; }
-  .note .tap { display: none; }
-  @media (pointer: coarse) { .note .click { display: none; } .note .tap { display: inline; } }
+  .tut:focus { outline: none; }
+  .tut-n { display: block; margin-bottom: 8px; font: 12px/1 var(--mono); opacity: .65; }
+  .tut-say { margin: 0; text-wrap: pretty; }
+  .tut-say b { font-weight: 700; }
+  .tut kbd { font: 600 12px/1 var(--mono); padding: 2px 5px; border: 1px solid currentColor; border-radius: 3px; white-space: nowrap; }
+  .tut-do { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
+  .tut-do button { border: 1px solid transparent; background: none; color: inherit; font: 600 13px/1 var(--sans); padding: 8px 12px; cursor: pointer; }
+  .tut-do .skip { opacity: .7; }
+  .tut-do .skip:hover { opacity: 1; }
+  .tut-do .next { border-color: currentColor; }
+  .tut-do .next:hover { background: var(--bg); color: var(--ink); }
+  @media (pointer: coarse) { .tut-do button { padding: 12px 16px; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .tut:not([hidden]) { animation: tut-in .24s var(--ease); }
+    @keyframes tut-in { from { opacity: 0; transform: translateY(6px); } }
+  }
+  .again { flex: none; border: 0; background: none; padding: 8px 4px; cursor: pointer; color: var(--ink-2); font: 13px/1 var(--mono); white-space: nowrap; }
+  .again:hover { color: var(--ink); }
 
   /* The status line, as an editor draws one: a mode, the path, the counts, and the keys to try. */
   .status { flex: none; display: flex; align-items: stretch; height: 34px; font: 12.5px/34px var(--mono); background: var(--bg); border-top: 1px solid var(--rule); white-space: nowrap; }
@@ -282,7 +292,7 @@
     .real { padding-bottom: 64px; }
     .meta { margin-bottom: 64px; }
     .links { margin: -40px 0 64px; }
-    .note { right: 12px; left: 12px; bottom: 12px; max-width: none; }
+    .tut { right: 12px; left: 12px; bottom: 12px; width: auto; }
   }
   /* A phone: one column of okfs, and the status line in two rows: the counts, then the keys in a grid. */
   @media (width <= 760px) {
@@ -329,6 +339,7 @@
     <span class="sp"></span>
     <nav aria-label="Sections"><a href="#search">Features</a><a href="#how">How this page works</a><a href="#install">Install</a></nav>
     <div class="install"><code>nix run github:jrnxf/okfs</code><button type="button" class="copy" data-copy="nix run github:jrnxf/okfs">Copy</button></div>
+    <button type="button" class="again" id="tut-again" hidden>Show tutorial</button>
     <a class="ib" href="https://github.com/jrnxf/okfs" aria-label="okfs on GitHub"><svg class="icon"><use href="#i-gh"/></svg></a>
     <button type="button" class="ib" id="theme" aria-label="Switch between dark and light"><svg class="icon sun"><use href="#i-sun"/></svg><svg class="icon moon"><use href="#i-moon"/></svg></button>
   </header>
@@ -345,9 +356,10 @@
       </div>
       <div class="base"></div>
     </div>
-    <div class="note" id="note"><button type="button" class="x" aria-label="Hide this note">×</button>
-      <b>This is okfs, running in your tab.</b> Its index, compiled to WebAssembly, reads a made-up folder of <span id="note-count">300,000</span> entries. <span class="click">Click in, then hold <kbd>j</kbd>.</span><span class="tap">Tap a file to open it.</span>
-      <div class="driving" id="driving" aria-hidden="true">driving itself: <span id="driving-key">j</span></div>
+    <div class="tut" id="tut" role="region" aria-label="Tutorial" tabindex="-1" hidden>
+      <span class="tut-n" id="tut-n"></span>
+      <p class="tut-say" id="tut-say" aria-live="polite"></p>
+      <div class="tut-do"><button type="button" class="skip" id="tut-skip" title="Skip the tutorial (Esc)">Skip</button><button type="button" class="next" id="tut-next">Next</button></div>
     </div>
   </main>
 
