@@ -1,4 +1,4 @@
-// The page around okfs: okfs itself on the first screen with its self-driving tour and the status line under
+// The page around okfs: okfs itself on the first screen with a short tutorial over it and the status line under
 // it, the sections that drive an okfs of their own or ask its engine directly, and the scheme.
 import { boot } from "./runtime.js";
 
@@ -30,13 +30,14 @@ const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">"
 // ---------- the page's own controls ----------
 
 const schemeListeners = new Set();
-$("#theme").addEventListener("click", () => {
-  const next = scheme() === "dark" ? "light" : "dark";
+/** The page's scheme, and every okfs's with it. `from` is the okfs that changed first, which is not told again. */
+function setScheme(next, from) {
   html.dataset.theme = next;
   store.set("theme", next);
   $('meta[name="theme-color"]').setAttribute("content", next === "dark" ? "#0c0c0d" : "#e8e7e2");
-  schemeListeners.forEach((fn) => fn(next));
-});
+  schemeListeners.forEach((fn) => fn(next, from));
+}
+$("#theme").addEventListener("click", () => setScheme(scheme() === "dark" ? "light" : "dark"));
 
 let toastTimer;
 function toast(text) {
@@ -71,8 +72,109 @@ for (const b of $$("[data-copy]")) {
   });
 }
 
-const note = $("#note");
-$(".x", note).addEventListener("click", () => note.classList.add("gone"));
+// ---------- the tutorial ----------
+
+/**
+ * A few hints over okfs, one at a time. Each asks for one real thing and gives way to the next when okfs says it
+ * was done: a key pressed, an address it went to, a search, a scheme. Skip, Esc or the last hint ends it for good,
+ * on this browser; after the last, a short note says so and fades by itself. "Show tutorial" in the bar starts it
+ * again. `free` hands the keys to okfs once it ends.
+ */
+function makeTutorial({ free }) {
+  const box = $("#tut");
+  const again = $("#tut-again");
+  const kb = (...keys) => keys.map((k) => `<kbd>${k}</kbd>`).join(" or ");
+  const moved = (e) => ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key) && !e.typing && !e.chord;
+  // Moves between folders, from the address okfs went to: in, back up, or to a file.
+  const into = (e) => e.to?.endsWith("/") && e.to.length > e.from.length && e.to.startsWith(e.from);
+  const out = (e) => e.to?.endsWith("/") && e.to !== e.from && e.from.startsWith(e.to);
+  const file = (e) => e.to !== undefined && !e.to.endsWith("/");
+  const hello = "<b>This is okfs, running in your tab.</b>";
+  const steps = matchMedia("(pointer: coarse)").matches
+    ? [
+        [`${hello} Tap a folder to open it.`, into],
+        ["Tap the arrow at the top left to go back up.", out],
+        ["Tap a file to open it.", file],
+        ["Tap the magnifier and type any name. It searches the whole folder.", (e) => e.search],
+        ["Tap the sun or moon at the top right to switch between dark and light.", (e) => e.scheme],
+      ]
+    : [
+        [`${hello} Press ${kb("j", "↓")} to move down the list.`, moved],
+        [`Press ${kb("l", "Enter")} to open the folder under the cursor.`, into],
+        [`Press ${kb("h", "←")} to go back up.`, out],
+        [`Move down to a file and press ${kb("Enter")} to open it.`, file],
+        [`Press ${kb(/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K")} and type any name. It searches the whole folder.`, (e) => e.search],
+        [`Press ${kb("t")} to switch between dark and light.`, (e) => e.scheme],
+      ];
+  const last = matchMedia("(pointer: coarse)").matches ? "That is all. The folder is yours to look around." : `That is all. Press ${kb("?")} in okfs for every key.`;
+  let at = -1;
+  let here = "/";
+  let fading;
+
+  function show(i) {
+    if (i === steps.length) return finish();
+    clearTimeout(fading);
+    at = i;
+    $("#tut-n").textContent = `${i + 1} of ${steps.length}`;
+    $("#tut-say").innerHTML = steps[i][0];
+    $("#tut-do").hidden = false;
+    box.classList.remove("fin", "out");
+    box.hidden = false;
+    again.hidden = true;
+  }
+  function close() {
+    clearTimeout(fading);
+    box.hidden = true;
+    box.classList.remove("fin", "out");
+    again.hidden = false;
+  }
+  function end() {
+    at = -1;
+    store.set("tutorial", "done");
+    const had = box.contains(document.activeElement);
+    close();
+    if (had) free();
+  }
+  /** The last hint is done: a note that says so, which nothing has to close and which lets clicks through. */
+  function finish() {
+    end();
+    $("#tut-n").textContent = "Done";
+    $("#tut-say").innerHTML = last;
+    $("#tut-do").hidden = true;
+    box.classList.add("fin");
+    box.hidden = false;
+    again.hidden = true;
+    fading = setTimeout(() => {
+      box.classList.add("out");
+      fading = setTimeout(close, reduced ? 0 : 400);
+    }, 3500);
+  }
+  /** Something happened in okfs: the hint on show is done if it asked for that. */
+  function heard(e) {
+    if (e.key === "Escape" && e.idle && at >= 0) return end();
+    if (at >= 0 && at < steps.length && steps[at][1](e)) show(at + 1);
+  }
+
+  $("#tut-next").addEventListener("click", () => show(at + 1));
+  $("#tut-skip").addEventListener("click", end);
+  again.addEventListener("click", () => {
+    show(0);
+    box.focus();
+  });
+
+  return {
+    start: () => (store.get("tutorial") === "done" ? (again.hidden = false) : show(0)),
+    on: () => at >= 0,
+    end,
+    heard,
+    went(path) {
+      const to = path.split("?")[0];
+      const from = here;
+      here = to;
+      if (to !== from) heard({ from, to });
+    },
+  };
+}
 
 // ---------- what shows while okfs starts ----------
 
@@ -95,13 +197,9 @@ $("#bones").append(say);
 // ---------- driving okfs from outside its frame ----------
 
 /** Presses, holds and types into okfs's page in a frame, the way a person would, by messages to it. */
-function driver(handle, { onKey } = {}) {
-  const shown = (key, ctrl) => onKey?.(ctrl ? `⌃${key.toUpperCase()}` : key);
+function driver(handle) {
   return {
-    key(key, opts = {}) {
-      shown(key, opts.ctrl);
-      return handle.call("key", key, opts);
-    },
+    key: (key, opts = {}) => handle.call("key", key, opts),
     hold: (key, ms, every = 50) => handle.call("hold", key, ms, every),
     down: (key, repeat) => handle.call("down", key, repeat),
     up: (key) => handle.call("up", key),
@@ -177,7 +275,7 @@ async function main() {
   const frames = new Map();
 
   /** Mounts okfs in a container, opening at `start` with the page's scheme. A second mount replaces the first. */
-  function mountIn(container, start, { pathEl, title, onKey, onTouch } = {}) {
+  function mountIn(container, start, { pathEl, title, onKey, onNav, onReq, onScheme } = {}) {
     const old = frames.get(container);
     const sep = start.includes("?") ? "&" : "?";
     const at = start.includes("scheme=") ? start : `${start}${sep}scheme=${scheme()}`;
@@ -189,9 +287,11 @@ async function main() {
         nav: (m) => {
           path = prettyPath(typeof m === "string" ? m : m.url);
           if (pathEl) pathEl.textContent = path;
+          onNav?.(path);
         },
-        key: (m) => !m.repeat && onKey?.(m.key),
-        touch: () => onTouch?.(),
+        key: (m) => !m.repeat && onKey?.(m.key, m),
+        req: (m) => onReq?.(m.url),
+        scheme: (m) => onScheme?.(m.scheme),
         toast: (m) => toast(m.text),
       },
     });
@@ -206,19 +306,48 @@ async function main() {
   }
 
   // Each frame follows the page's scheme: okfs's own `t` flips it.
-  schemeListeners.add((next) => {
-    for (const { drive } of frames.values()) void drive.scheme(next);
+  schemeListeners.add((next, from) => {
+    for (const { handle, drive } of frames.values()) if (handle !== from) void drive.scheme(next);
   });
 
   // ---- the first screen ----
-  let touched = false;
-  function stopTour() {
-    touched = true;
-    $("#driving").classList.remove("on");
-  }
   const heroView = $("#view");
-  const hero = mountIn(heroView, "/", { pathEl: $("#path"), title: "okfs serving the demo folder tidewater", onTouch: () => stopTour(), onKey: () => stopTour() });
-  void hero.handle.whenReady().then(() => setTimeout(() => $("#bones").classList.add("gone"), 250));
+  const tutorial = makeTutorial({ free: () => hero.handle.frame.focus() });
+  const hero = mountIn(heroView, "/", {
+    pathEl: $("#path"),
+    title: "okfs serving the demo folder tidewater",
+    onKey: (key, m) => tutorial.heard({ key, ...m }),
+    onNav: (path) => tutorial.went(path),
+    onReq: (url) => {
+      const q = new URL(url, "http://okfs.demo").searchParams.get("q") ?? "";
+      if (url.startsWith("/api/search") && q.trim()) tutorial.heard({ search: true });
+    },
+    // okfs's own `t` or its menu changed its scheme: the page follows, and with it every other okfs.
+    onScheme: (value) => (value === "dark" || value === "light") && value !== scheme() && setScheme(value, hero.handle),
+  });
+  schemeListeners.add(() => tutorial.heard({ scheme: true }));
+  void hero.handle.whenReady().then(() => {
+    setTimeout(() => $("#bones").classList.add("gone"), 250);
+    tutorial.start();
+  });
+
+  let heroVisible = true;
+  new IntersectionObserver(([e]) => (heroVisible = e.intersectionRatio > 0.3), { threshold: [0, 0.3, 0.6, 1] }).observe(heroView);
+
+  // A key pressed on the page with nothing on it focused goes to okfs while okfs is on screen, so the hints
+  // work without a click in first. The focus moves into okfs with it: the keys after go straight there.
+  const OKFS_KEYS = new Set(["j", "k", "h", "l", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter", "Home", "End", "/", ".", "t", "?"]);
+  addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || !heroVisible) return;
+    if (e.key === "Escape" && tutorial.on() && !e.target.closest?.("input, textarea, select")) return void tutorial.end();
+    const free = e.target === document.body || e.target === html || ($("#tut").contains(e.target) && e.key !== "Enter" && e.key !== " ");
+    const find = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k";
+    if (!free || !(find || (!e.ctrlKey && !e.metaKey && !e.altKey && OKFS_KEYS.has(e.key)))) return;
+    e.preventDefault();
+    hero.handle.frame.focus();
+    void hero.drive.key(find ? "k" : e.key, { ctrl: find });
+    tutorial.heard({ key: e.key, chord: find, typing: false });
+  });
 
   // The numbers in the status line.
   backend.onStatus((s) => {
@@ -231,7 +360,6 @@ async function main() {
     if (s.ready) {
       $("#st-walk").textContent = `${(s.walkMs / 1000).toFixed(2)} s`;
       $("#f-count").textContent = fmt(s.indexed);
-      $("#note-count").textContent = fmt(s.indexed);
     }
   });
   // Every search okfs's page makes is a search in the engine: show its time.
@@ -247,84 +375,10 @@ async function main() {
     return out;
   };
 
-  // ---- okfs drives itself until someone takes over ----
-  const driving = $("#driving");
-  const drivingKey = $("#driving-key");
-  let heroVisible = true;
-  new IntersectionObserver(([e]) => (heroVisible = e.intersectionRatio > 0.3), { threshold: [0, 0.3, 0.6, 1] }).observe(heroView);
-  // The note says the tour is driving: never for what a visitor started.
-  const showKey = (k) => {
-    if (touched) return;
-    drivingKey.textContent = k;
-    driving.classList.add("on");
-  };
-  const heroDrive = driver(hero.handle, { onKey: showKey });
-
-  async function step(fn, wait) {
-    while (!heroVisible && !touched) await sleep(300);
-    if (touched) throw new Error("stopped");
-    fn();
-    await sleep(wait);
-    if (touched) throw new Error("stopped");
-  }
-  async function tour() {
-    // Not with reduced motion, and not on a touch screen: the palette's input would bring up the keyboard.
-    const touch = matchMedia("(pointer: coarse)").matches || innerWidth < 760;
-    if (reduced || touch || new URLSearchParams(location.search).get("tour") === "0") return;
-    await hero.handle.whenReady();
-    await sleep(1600);
-    const d = heroDrive;
-    try {
-      for (;;) {
-        await d.go("/");
-        await sleep(900);
-        d.key("Home");
-        await sleep(500);
-        for (let i = 0; i < 6; i++) await step(() => d.key("j"), 330);
-        await step(() => d.key("l"), 900);
-        await step(() => d.key("j"), 900);
-        await step(() => showKey("j held"), 0);
-        await d.hold("j", 1300, 60);
-        if (touched) throw new Error("stopped");
-        await step(() => {}, 1800);
-        await step(() => d.key("k", { ctrl: true }), 600);
-        showKey("tide");
-        await d.type("tide", 120);
-        if (touched) throw new Error("stopped");
-        await step(() => {}, 1700);
-        showKey(".rs");
-        await d.type(" rs", 140);
-        if (touched) throw new Error("stopped");
-        await step(() => {}, 1500);
-        await step(() => d.key("Enter"), 2200);
-        await step(() => d.key("Escape"), 700);
-        await step(() => d.key("k", { ctrl: true }), 500);
-        showKey("north pier");
-        await d.type("north pier 2024", 80);
-        if (touched) throw new Error("stopped");
-        await step(() => {}, 900);
-        await step(() => d.key("Enter", { ctrl: true }), 2600);
-        await step(() => d.key("j"), 350);
-        await step(() => d.key("j"), 350);
-        await step(() => d.key("j"), 1500);
-        await step(() => d.key("Escape"), 900);
-        await step(() => d.go("/harbor/"), 1100);
-        await step(() => d.key("."), 1800);
-        await step(() => d.key("."), 900);
-        driving.classList.remove("on");
-        await step(() => {}, 1200);
-      }
-    } catch {
-      driving.classList.remove("on");
-    }
-  }
-  void tour();
-
+  const heroDrive = hero.drive;
   for (const [b, run] of chipButtons) {
     b.disabled = false;
     b.addEventListener("click", async () => {
-      stopTour();
-      note.classList.add("gone");
       b.classList.add("running");
       try {
         await heroDrive.closeAll();
@@ -373,7 +427,6 @@ async function main() {
   hits.addEventListener("click", (e) => {
     const li = e.target.closest("li[data-path]");
     if (!li) return;
-    stopTour();
     void heroDrive.go(`/${li.dataset.path.split("/").map(encodeURIComponent).join("/")}${li.dataset.dir === "1" ? "/" : ""}`);
     scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
   });

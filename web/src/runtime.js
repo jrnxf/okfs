@@ -112,6 +112,7 @@ export async function boot() {
         reply({ t: "assets", assets: await assets });
         break;
       case "req": {
+        entry.on.req?.(msg);
         const answer = await backend.answer(msg.url);
         reply({ t: "res", id: msg.id, ...answer });
         break;
