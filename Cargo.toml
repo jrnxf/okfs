@@ -55,6 +55,11 @@ zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"], optional = true }
 
+# musl's allocator serializes every thread on one lock, which the parallel walk and the previews hit hard:
+# the static Linux builds allocate with mimalloc instead.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1.52"
+
 [dev-dependencies]
 http-body-util = "0.1.5"
 tempfile = "3.27.0"
