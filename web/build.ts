@@ -1,10 +1,13 @@
-// Builds the site into one page, dist/index.html: okfs's page from ui/src, okfs's index from src/ compiled to
-// WebAssembly (build.sh builds it first), what bake.mjs recorded from a real okfs, the demo's own files, and the
-// landing page around them. Run through build.sh, which puts the tools in place.
+// Builds the site into dist: the front page, dist/index.html, and the demo, dist/demo/index.html. The demo is one
+// page holding okfs's page from ui/src, okfs's index from src/ compiled to WebAssembly (build.sh builds it first),
+// what bake.mjs recorded from a real okfs, the demo's own files, and the page around them. The front page runs the
+// same okfs from the same data, which it fetches as one file beside it. Run through build.sh, which puts the tools
+// in place.
 //
 //   bun run build.ts <engine.wasm> <out-dir>
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { BunPlugin } from "bun";
 
@@ -49,6 +52,7 @@ const frameMain = await bundle("src/demo-main.tsx", [virtualAddress], "esm");
 const worker = await bundle("src/worker.js");
 const pictures = await bundle("src/pictures-worker.js");
 const landing = await bundle("src/landing.js");
+const site = await bundle("src/site.js");
 
 // okfs's stylesheet, as ui/build.ts makes it, with the latin fonts only (the demo folder is plain latin).
 const FONTS = ["geist-latin-wght-normal", "geist-mono-latin-wght-normal", "newsreader-latin-opsz-normal", "newsreader-latin-opsz-italic"];
@@ -122,17 +126,42 @@ for (const [name, file] of Object.entries(pageFonts)) {
   if (!page.includes(marker)) throw new Error(`landing.html has no ${marker}`);
   page = page.replaceAll(marker, `data:font/woff2;base64,${readFileSync(join(web, "node_modules", file)).toString("base64")}`);
 }
+// The blocks the demo carries inline. The front page fetches the same ones as one JSON file, named by its hash.
+const dataBlocks: [string, string, string][] = [
+  ["okfs-data", "application/json", json(data)],
+  ["okfs-answers", "text/plain", answersGz],
+  ["okfs-wasm", "text/plain", wasmGz],
+  ["okfs-worker", "text/plain", packed(worker)],
+  ["okfs-pictures", "text/plain", packed(pictures)],
+  ["okfs-frame-boot", "text/plain", packed(frameBoot)],
+  ["okfs-frame-main", "text/plain", packed(frameMain)],
+];
 const blocks = [
-  `<script type="application/json" id="okfs-data">${json(data)}</script>`,
-  `<script type="text/plain" id="okfs-answers">${answersGz}</script>`,
-  `<script type="text/plain" id="okfs-wasm">${wasmGz}</script>`,
-  `<script type="text/plain" id="okfs-worker">${packed(worker)}</script>`,
-  `<script type="text/plain" id="okfs-pictures">${packed(pictures)}</script>`,
-  `<script type="text/plain" id="okfs-frame-boot">${packed(frameBoot)}</script>`,
-  `<script type="text/plain" id="okfs-frame-main">${packed(frameMain)}</script>`,
+  ...dataBlocks.map(([id, type, text]) => `<script type="${type}" id="${id}">${text}</script>`),
   `<script>${safe(landing)}</script>`,
 ].join("\n");
 page = page.replace("<!--okfs:data-->", () => blocks);
-mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, "index.html"), page);
-console.log(`built ${join(outDir, "index.html")}: ${(page.length / 1e6).toFixed(2)} MB (engine ${(wasm.length / 1e3).toFixed(0)} KB)`);
+
+// The front page: its script, the data file's name, and its two faces as files beside it.
+if (/<(body|head)\b|<\/(body|head)>/i.test(site)) throw new Error("the site script holds a <body> or <head> tag");
+const dataJson = JSON.stringify(Object.fromEntries(dataBlocks.map(([id, type, text]) => [id, { type, text }])));
+const dataFile = `okfs-demo.${createHash("sha256").update(dataJson).digest("hex").slice(0, 12)}.json`;
+let front = readFileSync(join(web, "src/site.html"), "utf8");
+for (const marker of ["{{okfs-data}}", "<!--okfs:site-->"]) if (!front.includes(marker)) throw new Error(`site.html has no ${marker}`);
+front = front.replaceAll("{{okfs-data}}", `/${dataFile}`).replace("<!--okfs:site-->", () => `<script>${safe(site)}</script>`);
+const siteFonts: Record<string, string> = {
+  "fraunces.woff2": "@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2",
+  "ibm-plex-mono-400.woff2": "@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2",
+  "ibm-plex-mono-500.woff2": "@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2",
+  "ibm-plex-mono-600.woff2": "@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-600-normal.woff2",
+};
+for (const name of Object.keys(siteFonts)) if (!front.includes(`/fonts/${name}`)) throw new Error(`site.html does not use /fonts/${name}`);
+
+mkdirSync(join(outDir, "demo"), { recursive: true });
+mkdirSync(join(outDir, "fonts"), { recursive: true });
+writeFileSync(join(outDir, "demo/index.html"), page);
+writeFileSync(join(outDir, "index.html"), front);
+writeFileSync(join(outDir, dataFile), dataJson);
+for (const [name, file] of Object.entries(siteFonts)) copyFileSync(join(web, "node_modules", file), join(outDir, "fonts", name));
+console.log(`built ${join(outDir, "demo/index.html")}: ${(page.length / 1e6).toFixed(2)} MB (engine ${(wasm.length / 1e3).toFixed(0)} KB)`);
+console.log(`built ${join(outDir, "index.html")}: ${(front.length / 1e3).toFixed(0)} KB, with ${dataFile}: ${(dataJson.length / 1e6).toFixed(2)} MB`);
