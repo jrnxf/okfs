@@ -5,6 +5,7 @@
 import { urls } from "../../ui/src/api";
 import { sourceOf } from "./media.js";
 import { address } from "./frame-address";
+import { setScheme } from "../../ui/src/theme";
 
 type Bytes = { type: string; bytes: ArrayBuffer };
 type Assets = {
@@ -168,11 +169,16 @@ addEventListener(
   },
   true,
 );
-// okfs's scheme as it changes, by `t` or by its own menu: the page around it follows.
-new MutationObserver(() => post({ t: "scheme", scheme: document.documentElement.dataset.scheme })).observe(document.documentElement, {
-  attributes: true,
-  attributeFilter: ["data-scheme"],
-});
+// okfs's scheme as it changes by `t` or by its own menu, for the page around it to follow. A scheme the page set is
+// not told back: an echo landing after the page had moved on would turn it back, and the two would flip each other
+// forever.
+let told = document.documentElement.dataset.scheme;
+new MutationObserver(() => {
+  const scheme = document.documentElement.dataset.scheme;
+  if (scheme === told) return;
+  told = scheme;
+  post({ t: "scheme", scheme });
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-scheme"] });
 
 /** okfs's page has drawn: the page around it can drive it now. */
 export function started(): void {
@@ -235,8 +241,10 @@ async function drive(op: string, args: unknown[]): Promise<unknown> {
       if (paletteOpen()) press("Escape");
       return;
     case "scheme": {
-      const want = args[0] as string;
-      if (document.documentElement.dataset.scheme !== want) press("t");
+      // Set, not flipped: two in a row leave the second, however late the first lands.
+      const want = args[0] === "light" ? "light" : "dark";
+      told = want;
+      setScheme(want);
       return;
     }
     case "selected":

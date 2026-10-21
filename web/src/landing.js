@@ -30,11 +30,12 @@ const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">"
 // ---------- the page's own controls ----------
 
 const schemeListeners = new Set();
-function setScheme(next) {
+/** The page's scheme, and every okfs's with it. `from` is the okfs that changed first, which is not told again. */
+function setScheme(next, from) {
   html.dataset.theme = next;
   store.set("theme", next);
   $('meta[name="theme-color"]').setAttribute("content", next === "dark" ? "#0c0c0d" : "#e8e7e2");
-  schemeListeners.forEach((fn) => fn(next));
+  schemeListeners.forEach((fn) => fn(next, from));
 }
 $("#theme").addEventListener("click", () => setScheme(scheme() === "dark" ? "light" : "dark"));
 
@@ -76,7 +77,8 @@ for (const b of $$("[data-copy]")) {
 /**
  * A few hints over okfs, one at a time. Each asks for one real thing and gives way to the next when okfs says it
  * was done: a key pressed, an address it went to, a search, a scheme. Skip, Esc or the last hint ends it for good,
- * on this browser; "Show tutorial" in the bar starts it again. `free` hands the keys to okfs once it ends.
+ * on this browser; after the last, a short note says so and fades by itself. "Show tutorial" in the bar starts it
+ * again. `free` hands the keys to okfs once it ends.
  */
 function makeTutorial({ free }) {
   const box = $("#tut");
@@ -107,25 +109,45 @@ function makeTutorial({ free }) {
   const last = matchMedia("(pointer: coarse)").matches ? "That is all. The folder is yours to look around." : `That is all. Press ${kb("?")} in okfs for every key.`;
   let at = -1;
   let here = "/";
+  let fading;
 
   function show(i) {
+    if (i === steps.length) return finish();
+    clearTimeout(fading);
     at = i;
-    const done = i === steps.length;
-    if (done) store.set("tutorial", "done");
-    $("#tut-n").textContent = done ? "Done" : `${i + 1} of ${steps.length}`;
-    $("#tut-say").innerHTML = done ? last : steps[i][0];
-    $("#tut-next").textContent = done ? "Close" : "Next";
-    $("#tut-skip").hidden = done;
+    $("#tut-n").textContent = `${i + 1} of ${steps.length}`;
+    $("#tut-say").innerHTML = steps[i][0];
+    $("#tut-do").hidden = false;
+    box.classList.remove("fin", "out");
     box.hidden = false;
     again.hidden = true;
+  }
+  function close() {
+    clearTimeout(fading);
+    box.hidden = true;
+    box.classList.remove("fin", "out");
+    again.hidden = false;
   }
   function end() {
     at = -1;
     store.set("tutorial", "done");
     const had = box.contains(document.activeElement);
-    box.hidden = true;
-    again.hidden = false;
+    close();
     if (had) free();
+  }
+  /** The last hint is done: a note that says so, which nothing has to close and which lets clicks through. */
+  function finish() {
+    end();
+    $("#tut-n").textContent = "Done";
+    $("#tut-say").innerHTML = last;
+    $("#tut-do").hidden = true;
+    box.classList.add("fin");
+    box.hidden = false;
+    again.hidden = true;
+    fading = setTimeout(() => {
+      box.classList.add("out");
+      fading = setTimeout(close, reduced ? 0 : 400);
+    }, 3500);
   }
   /** Something happened in okfs: the hint on show is done if it asked for that. */
   function heard(e) {
@@ -133,7 +155,7 @@ function makeTutorial({ free }) {
     if (at >= 0 && at < steps.length && steps[at][1](e)) show(at + 1);
   }
 
-  $("#tut-next").addEventListener("click", () => (at < steps.length ? show(at + 1) : end()));
+  $("#tut-next").addEventListener("click", () => show(at + 1));
   $("#tut-skip").addEventListener("click", end);
   again.addEventListener("click", () => {
     show(0);
@@ -284,8 +306,8 @@ async function main() {
   }
 
   // Each frame follows the page's scheme: okfs's own `t` flips it.
-  schemeListeners.add((next) => {
-    for (const { drive } of frames.values()) void drive.scheme(next);
+  schemeListeners.add((next, from) => {
+    for (const { handle, drive } of frames.values()) if (handle !== from) void drive.scheme(next);
   });
 
   // ---- the first screen ----
@@ -301,7 +323,7 @@ async function main() {
       if (url.startsWith("/api/search") && q.trim()) tutorial.heard({ search: true });
     },
     // okfs's own `t` or its menu changed its scheme: the page follows, and with it every other okfs.
-    onScheme: (value) => (value === "dark" || value === "light") && value !== scheme() && setScheme(value),
+    onScheme: (value) => (value === "dark" || value === "light") && value !== scheme() && setScheme(value, hero.handle),
   });
   schemeListeners.add(() => tutorial.heard({ scheme: true }));
   void hero.handle.whenReady().then(() => {

@@ -133,6 +133,9 @@
   .tut-do .next { border-color: currentColor; }
   .tut-do .next:hover { background: var(--bg); color: var(--ink); }
   @media (pointer: coarse) { .tut-do button { padding: 12px 16px; } }
+  .tut-do[hidden] { display: none; }
+  .tut.fin { pointer-events: none; transition: opacity .4s; }
+  .tut.out { opacity: 0; }
   @media (prefers-reduced-motion: no-preference) {
     .tut:not([hidden]) { animation: tut-in .24s var(--ease); }
     @keyframes tut-in { from { opacity: 0; transform: translateY(6px); } }
@@ -258,6 +261,9 @@
   .toast.on { opacity: 1; transform: translate(-50%, 0); }
 
   @media (width <= 1320px) { .okbar .what { display: none; } }
+  /* "Show tutorial" takes the room the line about okfs had, and in a narrower window the section links'. */
+  @media (width <= 1520px) { .okbar:has(.again:not([hidden])) .what { display: none; } }
+  @media (width <= 1000px) { .okbar:has(.again:not([hidden])) nav { display: none; } }
   @media (width <= 1180px) {
     .themes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .themes li:nth-child(3) button { border-right: 0; }
@@ -359,7 +365,7 @@
     <div class="tut" id="tut" role="region" aria-label="Tutorial" tabindex="-1" hidden>
       <span class="tut-n" id="tut-n"></span>
       <p class="tut-say" id="tut-say" aria-live="polite"></p>
-      <div class="tut-do"><button type="button" class="skip" id="tut-skip" title="Skip the tutorial (Esc)">Skip</button><button type="button" class="next" id="tut-next">Next</button></div>
+      <div class="tut-do" id="tut-do"><button type="button" class="skip" id="tut-skip" title="Skip the tutorial (Esc)">Skip</button><button type="button" class="next" id="tut-next">Next</button></div>
     </div>
   </main>
 
