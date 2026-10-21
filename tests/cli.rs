@@ -374,3 +374,116 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
     assert!(!ended.success());
     assert!(error.contains("invalid value 'tcsh'"), "{error}");
 }
+
+/// okfs in a terminal of its own, through `script`, as it opens the browser only from a terminal.
+/// The browser is a script that writes down what it was started with. Stopped when dropped.
+#[cfg(target_os = "linux")]
+struct InTerminal {
+    child: Child,
+    /// What okfs printed, as it prints it.
+    said: std::sync::mpsc::Receiver<String>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for InTerminal {
+    fn drop(&mut self) {
+        // okfs goes with its terminal.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The browser okfs opens is started with a command line that every account on the machine can
+/// read, so it gets a code that works once, never the key.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_browser_okfs_opens_gets_a_one_time_code_and_never_the_key() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new().unwrap();
+    let served = tmp.path().join("served");
+    fs::create_dir_all(served.join("docs")).unwrap();
+    fs::write(served.join("docs/note.txt"), "note").unwrap();
+    let opened = tmp.path().join("opened");
+    let browser = tmp.path().join("browser");
+    fs::write(
+        &browser,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n", opened.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&browser, fs::Permissions::from_mode(0o755)).unwrap();
+    let okfs = format!(
+        "'{}' --bind 127.0.0.1 --key --port 0 '{}'",
+        env!("CARGO_BIN_EXE_okfs"),
+        served.display()
+    );
+    let mut child = Command::new("script")
+        .args(["-qefc", &okfs, "/dev/null"])
+        .env("BROWSER", &browser)
+        .env("XDG_CACHE_HOME", tmp.path().join("cache"))
+        .env_remove("SSH_CONNECTION")
+        .env_remove("SSH_TTY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("script, from util-linux, runs okfs in a terminal");
+    let lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let (send, said) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in lines.map_while(Result::ok) {
+            let _ = send.send(line);
+        }
+    });
+    let okfs = InTerminal { child, said };
+
+    let link = loop {
+        let line = okfs
+            .said
+            .recv_timeout(Duration::from_secs(10))
+            .expect("okfs printed its address");
+        if let Some(link) = line.trim().strip_prefix("at") {
+            break link.trim().to_owned();
+        }
+    };
+    // The link printed for people is unchanged: it carries the key.
+    let (at, key) = link.split_once("/?key=").expect("the printed link carries the key");
+    let port: u16 = at.rsplit(':').next().unwrap().parse().unwrap();
+
+    let since = Instant::now();
+    let started = loop {
+        if let Ok(started) = fs::read_to_string(&opened) {
+            break started;
+        }
+        assert!(
+            since.elapsed() < Duration::from_secs(10),
+            "okfs never opened the browser"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        !started.contains(key),
+        "the browser was started with the key: {started}"
+    );
+    let code = started
+        .trim()
+        .strip_prefix(&format!("http://127.0.0.1:{port}/?once="))
+        .unwrap_or_else(|| panic!("the browser was started with no one-time code: {started}"));
+    assert_eq!(code.len(), key.len());
+
+    let host = format!("127.0.0.1:{port}");
+    let navigate = "Sec-Fetch-Mode: navigate\r\n";
+    let (status, answer) = ask(port, &host, &format!("/?once={code}"), navigate);
+    assert_eq!(status, 200, "{answer}");
+    assert!(
+        answer.contains(&format!("set-cookie: okfs-key-{port}={key};")),
+        "{answer}"
+    );
+    // Spent: whoever reads the browser's command line from now on finds a code that opens nothing.
+    let (status, answer) = ask(port, &host, &format!("/?once={code}"), navigate);
+    assert_eq!(status, 401, "{answer}");
+    assert!(!answer.contains(key), "{answer}");
+    assert_eq!(ask(port, &host, &format!("/api/list?path=docs&once={code}"), "").0, 401);
+    // The key itself still opens it.
+    assert_eq!(ask(port, &host, &format!("/api/list?path=docs&key={key}"), "").0, 200);
+}

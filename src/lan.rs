@@ -77,6 +77,15 @@ pub fn link(ip: IpAddr, port: u16, key: Option<&str>) -> String {
     }
 }
 
+/// `http://host:port/?once=`, for the browser okfs opens itself with a one-time code.
+pub fn link_once(ip: IpAddr, port: u16, code: &str) -> String {
+    format!(
+        "http://{}/?{}={code}",
+        SocketAddr::new(ip, port),
+        crate::key::ONCE_PARAM
+    )
+}
+
 /// The first address a phone could scan: one that is not loopback.
 pub fn scan_target(addresses: &[IpAddr]) -> Option<IpAddr> {
     addresses
@@ -209,6 +218,10 @@ mod tests {
         assert_eq!(
             link("::1".parse().unwrap(), 9000, Some("k")),
             "http://[::1]:9000/?key=k"
+        );
+        assert_eq!(
+            link_once("::1".parse().unwrap(), 9000, "c0de"),
+            "http://[::1]:9000/?once=c0de"
         );
     }
 

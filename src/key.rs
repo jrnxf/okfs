@@ -1,9 +1,14 @@
 //! The key in the link. On an address beyond loopback okfs makes a random key when it starts,
 //! prints its addresses with `?key=` on them, and answers only a request that brings the key:
 //! in its address, or in the cookie a browser is given the first time it comes with one.
+//!
+//! The browser okfs opens itself gets a one-time code in place of the key, as other accounts on the
+//! machine can read the command that opens it.
 
 use std::fmt;
 use std::hint::black_box;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use axum::http::header::{self, HeaderMap};
 
@@ -12,6 +17,12 @@ const BYTES: usize = 16;
 
 /// The name of the key in an address's query.
 pub const PARAM: &str = "key";
+
+/// The name of a one-time code in an address's query.
+pub const ONCE_PARAM: &str = "once";
+
+/// How long a one-time code lets a browser in, if no browser has used it first.
+pub const ONCE_LIFE: Duration = Duration::from_secs(60);
 
 /// What okfs says it wants when it refuses a request, in `WWW-Authenticate`. The page reads it to
 /// tell okfs's own refusal from that of a proxy in front, which signs people in in its own way.
@@ -24,9 +35,7 @@ pub struct Key(String);
 impl Key {
     /// A new key, from the operating system's random source.
     pub fn new() -> Result<Self, String> {
-        let mut bytes = [0; BYTES];
-        getrandom::fill(&mut bytes).map_err(|error| format!("cannot make a key: {error}"))?;
-        Ok(Self(base64url(&bytes)))
+        Ok(Self(random()?))
     }
 
     /// A key of this text, such as one a test chooses.
@@ -49,6 +58,55 @@ impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Key(..)")
     }
+}
+
+/// A code that lets one browser in once, in place of the key: the browser okfs opens itself. A
+/// browser's command line can be read by every account on the machine, for as long as the browser
+/// runs. The code in it is spent by the first request that brings it, and dies unspent after its
+/// life, so what is left there lets no one in.
+pub struct Once {
+    code: String,
+    made: Instant,
+    life: Duration,
+    spent: AtomicBool,
+}
+
+impl Once {
+    /// A new code, from the operating system's random source, that lasts `life` from now.
+    pub fn new(life: Duration) -> Result<Self, String> {
+        Ok(Self {
+            code: random()?,
+            made: Instant::now(),
+            life,
+            spent: AtomicBool::new(false),
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.code
+    }
+
+    /// Whether `given` is this code, still alive and not yet spent. True once at most: a right
+    /// answer spends it.
+    pub fn take(&self, given: &str) -> bool {
+        same(self.code.as_bytes(), given.as_bytes())
+            && self.made.elapsed() < self.life
+            && !self.spent.swap(true, Ordering::SeqCst)
+    }
+}
+
+/// Never printed by accident, in a log or a panic.
+impl fmt::Debug for Once {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Once(..)")
+    }
+}
+
+/// 128 random bits from the operating system, as text an address carries as it is.
+fn random() -> Result<String, String> {
+    let mut bytes = [0; BYTES];
+    getrandom::fill(&mut bytes).map_err(|error| format!("cannot make a key: {error}"))?;
+    Ok(base64url(&bytes))
 }
 
 /// Whether two secrets are the same, comparing every byte whatever the first difference: how long
@@ -169,6 +227,30 @@ mod tests {
             );
         }
         assert_eq!(format!("{first:?}"), "Key(..)");
+    }
+
+    #[test]
+    fn a_one_time_code_lets_in_once_and_never_again() {
+        let once = Once::new(ONCE_LIFE).unwrap();
+        let code = once.as_str().to_owned();
+        assert_eq!(code.len(), 22);
+        assert_ne!(code, Once::new(ONCE_LIFE).unwrap().as_str());
+        // A wrong code spends nothing.
+        assert!(!once.take("wrong"));
+        assert!(!once.take(&code[1..]));
+        assert!(once.take(&code));
+        assert!(!once.take(&code));
+        assert!(!once.take(&code));
+        assert_eq!(format!("{once:?}"), "Once(..)");
+    }
+
+    #[test]
+    fn a_one_time_code_dies_unspent_after_its_life() {
+        let once = Once::new(Duration::from_millis(50)).unwrap();
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(!once.take(once.as_str()));
+        let dead = Once::new(Duration::ZERO).unwrap();
+        assert!(!dead.take(dead.as_str()));
     }
 
     #[test]

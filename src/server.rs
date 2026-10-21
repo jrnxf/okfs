@@ -26,7 +26,7 @@ use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::{Index, Order, Page};
-use crate::key::{self, Key};
+use crate::key::{self, Key, Once};
 use crate::live::Change;
 use crate::paths::{self, Kept, NoEntry, Resolved, Root, Unshown};
 use crate::pdf::{self, Drawer};
@@ -90,6 +90,9 @@ pub struct Options {
     /// The key every request has to bring, in its address or its cookie: see `key`. okfs makes
     /// one at an address beyond loopback, unless told not to.
     pub key: Option<Key>,
+    /// A code that lets one browser in once in place of the key, for the browser okfs opens itself:
+    /// see `key::Once`. Only with a key.
+    pub once: Option<Arc<Once>>,
 }
 
 impl Default for Options {
@@ -107,6 +110,7 @@ impl Default for Options {
             pdf_limit: pdf::LIMIT,
             allow_delete: false,
             key: None,
+            once: None,
         }
     }
 }
@@ -318,23 +322,36 @@ fn admit(app: &App, request: &Request) -> Option<Response> {
     let key = app.options.key.as_ref()?;
     let headers = request.headers();
     let cookie = key::cookie_name(host);
-    let given = keys_in(request.uri().query());
+    let query = request.uri().query();
+    let given = values_in(query, key::PARAM);
+    let codes = values_in(query, key::ONCE_PARAM);
     let by_address = given.iter().any(|given| key.matches(given));
-    if !by_address && !key::cookies(headers, &cookie).any(|value| key.matches(value)) {
+    // A code is spent by the first request that brings it, whatever else that request brings.
+    let by_code = app
+        .options
+        .once
+        .as_ref()
+        .is_some_and(|once| codes.iter().any(|code| once.take(code)));
+    if !by_address && !by_code && !key::cookies(headers, &cookie).any(|value| key.matches(value)) {
         return Some(needs_key(headers));
+    }
+    let set = || key::set_cookie(&cookie, key, key::over_https(headers));
+    // A code is traded for the cookie that holds the key, and for nothing else: it lets in no
+    // request beyond the one that hands the cookie over.
+    if by_code {
+        return Some(landing(&without_key(request.uri()), Some(set())));
     }
     // A browser comes once with the key in its address. It is taken out, so that the address bar,
     // the history and a link copied from either do not show it, and the browser keeps it in a
     // cookie instead. curl and the like come with it every time, and are answered at once.
-    if given.is_empty() || !navigates(request) {
+    if (given.is_empty() && codes.is_empty()) || !navigates(request) {
         return None;
     }
-    let set = by_address.then(|| key::set_cookie(&cookie, key, key::over_https(headers)));
-    Some(landing(&without_key(request.uri()), set))
+    Some(landing(&without_key(request.uri()), by_address.then(set)))
 }
 
-/// The values of `key` in a query, decoded.
-fn keys_in(query: Option<&str>) -> Vec<String> {
+/// The values of `name` in a query, decoded.
+fn values_in(query: Option<&str>, name: &str) -> Vec<String> {
     let decode = |text: &str| {
         percent_decode_str(&text.replace('+', " "))
             .decode_utf8_lossy()
@@ -344,22 +361,26 @@ fn keys_in(query: Option<&str>) -> Vec<String> {
         .unwrap_or("")
         .split('&')
         .filter_map(|pair| {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (decode(name) == key::PARAM).then(|| decode(value))
+            let (pair_name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (decode(pair_name) == name).then(|| decode(value))
         })
         .collect()
 }
 
-/// The address a request asked for, without its key: the same path, and the rest of its query in
-/// its order. It is always a path on this server: one that starts with two slashes, or a slash and
-/// a backslash, would read as another host.
+/// The address a request asked for, without its key or code: the same path, and the rest of its
+/// query in its order. It is always a path on this server: one that starts with two slashes, or a
+/// slash and a backslash, would read as another host.
 fn without_key(uri: &Uri) -> String {
     let path = uri.path().trim_start_matches(['/', '\\']).replace('\\', "%5C");
     let rest: Vec<&str> = uri
         .query()
         .unwrap_or("")
         .split('&')
-        .filter(|pair| !pair.is_empty() && keys_in(Some(pair)).is_empty())
+        .filter(|pair| {
+            !pair.is_empty()
+                && values_in(Some(pair), key::PARAM).is_empty()
+                && values_in(Some(pair), key::ONCE_PARAM).is_empty()
+        })
         .collect();
     let mut to = format!("/{path}");
     if !rest.is_empty() {
