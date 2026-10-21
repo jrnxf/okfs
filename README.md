@@ -1,4 +1,6 @@
-<h1 align="center">okfs</h1>
+<h1 align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo/okfs-dark.svg"><img src="docs/logo/okfs-light.svg" alt="okfs" width="300"></picture>
+</h1>
 
 <p align="center">A web file browser. Run it in a folder and flip through every file inside.</p>
 

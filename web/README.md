@@ -25,7 +25,7 @@ makes in the visitor's browser. Nothing is fetched while it runs, and the site i
   status line under it that holds the counts and the things to try; the sections below each drive an
   okfs of their own or ask its engine directly. Its two faces, Mona Sans and Fragment Mono, come from the
   `@fontsource` packages in `package.json`, and `build.ts` writes them into the page.
-- `public/og.png`: the picture a link to the site shows, a screenshot of the page at 1200 by 630.
+- `public/og.png`: the picture a link to the site shows, okfs's logo and its line at 1200 by 630.
 - `demo/files/`: the demo's files with real contents: the tidewater text files, a zip, a PDF (made with
   `typst compile demo/survey.typ`), a 10 s film (two of the page's landscapes, panned and faded with ffmpeg,
   VP9) and a page. `demo/templates/`: one file of each kind whose preview the others borrow.
