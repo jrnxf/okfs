@@ -36,7 +36,7 @@ test("a proxy in front of okfs that cannot reach it is not an answer of okfs's",
   for (const status of [502, 503, 504]) {
     setDown(false);
     answering(status);
-    await expect(call("/api/preview?path=a.txt")).rejects.toBeInstanceOf(NoAnswer);
+    await expect(call("/api/previews?p=a.txt")).rejects.toBeInstanceOf(NoAnswer);
     expect(isDown()).toBe(true);
   }
 });
@@ -45,7 +45,7 @@ test("a request given up on purpose says nothing about okfs", async () => {
   answering("nothing");
   const abort = new AbortController();
   abort.abort();
-  const failed = await call("/api/preview?path=a.txt", { signal: abort.signal }).catch((error: unknown) => error);
+  const failed = await call("/api/previews?p=a.txt", { signal: abort.signal }).catch((error: unknown) => error);
   expect(failed).not.toBeInstanceOf(NoAnswer);
   expect(isDown()).toBe(false);
 });
