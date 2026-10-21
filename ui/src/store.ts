@@ -1092,9 +1092,15 @@ export class Store {
     }, NOTICE_MS);
   }
 
-  /** The page's own address for the open file or the entry under the cursor, unless one is given, to share it. */
+  /**
+   * The page's own address for the open file or the entry under the cursor, unless one is given, to share it. With
+   * the key, when okfs asks for one: this browser keeps it in a cookie, and whoever is sent the link has none.
+   */
   linkTo(entry: Pick<Entry, "path" | "dir"> | null = this.s.open ?? this.cur()): string | null {
-    return entry ? new URL(urls.view(entry.path, entry.dir), location.href).href : null;
+    if (!entry) return null;
+    const link = new URL(urls.view(entry.path, entry.dir), location.href);
+    if (config.key) link.searchParams.set("key", config.key);
+    return link.href;
   }
 
   /** Copies the link to the open file or the entry under the cursor, and says whether it did. */

@@ -133,6 +133,8 @@ export const urls = {
   picture: (path: string) => `/api/picture?path=${encodeURIComponent(path)}`,
   /** The stream of changes to the served folder. */
   events: "/api/events",
+  /** A small answer, to learn whether okfs is there and takes the page's key. */
+  probe: "/assets/favicon.svg",
   /** One entry, for deleting it. */
   entry: (path: string) => `/api/entry?path=${encodeURIComponent(path)}`,
   raw: (path: string) => `/raw/${encode(path)}`,

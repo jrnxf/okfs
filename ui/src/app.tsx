@@ -11,7 +11,7 @@ import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInf
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { Prose, lookAhead, pagesAhead } from "./preview";
-import { NOT_ANSWERING, useDown } from "./reach";
+import { NEEDS_KEY, NOT_ANSWERING, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
 import { EMPTY_FOLDER, FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
@@ -120,13 +120,19 @@ function pageOf(list: HTMLElement | null): number {
   return Math.max(1, Math.floor(list.clientHeight / row) - 1);
 }
 
+/** What the foot of the page says for each reason okfs cannot be reached. */
+const UNREACHED = {
+  [NOT_ANSWERING]: `${NOT_ANSWERING}. Retrying…`,
+  [NEEDS_KEY]: `${NEEDS_KEY}: open the address okfs printed`,
+};
+
 /**
- * A quiet word at the foot of the page: that okfs is not answering, for as long as it does not, or what was just
- * done. It is always in the page, so a screen reader hears it change.
+ * A quiet word at the foot of the page: that okfs is not answering or refuses the key, for as long as it does, or
+ * what was just done. It is always in the page, so a screen reader hears it change.
  */
 function Notice() {
   const down = useDown();
-  const text = down ? `${NOT_ANSWERING}. Retrying…` : store.s.notice;
+  const text = down ? UNREACHED[down] : store.s.notice;
   return (
     <div class={down ? "notice down" : "notice"} role="status">
       {text ? <span class="trunc">{text}</span> : null}

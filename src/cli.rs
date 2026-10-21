@@ -12,6 +12,7 @@ use clap_complete::Shell;
 
 use crate::every;
 use crate::index::{Follow, Index};
+use crate::key::Key;
 use crate::lan::{self, Scan};
 use crate::paths::Root;
 use crate::server::{self, App, Options, ThemeChoice};
@@ -22,8 +23,9 @@ Examples:
   okfs                            serve this folder at http://127.0.0.1:8080/
   okfs ~/photos --port 9000       serve another folder on another port
   okfs --port 0                   serve on any free port
-  okfs --bind 0.0.0.0             let other machines on the network in
+  okfs --bind 0.0.0.0             let other machines on the network in, with the key in the link
   okfs --bind 0.0.0.0 --qr        and print a QR code a phone can scan to open it
+  okfs --bind 0.0.0.0 --no-key    behind a proxy that signs people in itself
   okfs --no-open                  serve without opening the browser
   okfs --index index.html         open a folder that holds an index.html as that page
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
@@ -33,7 +35,8 @@ Examples:
   okfs --rescan 6h                read the whole tree again every 6 hours instead of watching it
   okfs completions zsh            print the completions for a shell
 
-Everything is read only unless you pass --allow-delete. There is no upload and no editing.";
+Everything is read only unless you pass --allow-delete. There is no upload and no editing.
+Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.";
 
 /// A web file browser. Run it in a folder and flip through every file inside.
 #[derive(Parser)]
@@ -98,6 +101,15 @@ struct Serve {
     /// Let anyone who can reach the address delete files and folders. Off by default
     #[arg(long)]
     allow_delete: bool,
+
+    /// Let in anyone who reaches an address beyond loopback, with no key in the link. For a proxy in
+    /// front that signs people in itself
+    #[arg(long, conflicts_with = "key")]
+    no_key: bool,
+
+    /// Ask for the key on a loopback address too, as behind a tunnel that anyone can reach
+    #[arg(long)]
+    key: bool,
 
     /// Read the whole tree again this often instead of watching it for changes: --rescan 6h.
     /// For a tree too big to watch, or a network share that other machines write to
@@ -292,6 +304,12 @@ fn serve(args: Serve) -> Result<(), String> {
         return Err(format!("--header {} is not a file", header.display()));
     }
 
+    // Beyond loopback, anyone on the network could otherwise read the folder.
+    let key = if args.key || (!args.no_key && !args.bind.is_loopback()) {
+        Some(Key::new()?)
+    } else {
+        None
+    };
     let options = Options {
         title: args.title,
         theme,
@@ -304,6 +322,7 @@ fn serve(args: Serve) -> Result<(), String> {
         cache: dirs::cache_dir().map(|dir| dir.join("okfs").join("thumbs")),
         drawer: this_program(),
         pdf_limit: crate::pdf::LIMIT,
+        key: key.clone(),
     };
     let theme_name = match &options.theme {
         ThemeChoice::BuiltIn(name) => name.clone(),
@@ -334,9 +353,16 @@ fn serve(args: Serve) -> Result<(), String> {
             println!("  port     {}, as {PORT} is busy", address.port());
         }
         let addresses = lan::addresses(address.ip(), &lan::found());
+        let key = key.as_ref().map(Key::as_str);
         for (index, ip) in addresses.iter().enumerate() {
             let label = if index == 0 { "at" } else { "" };
-            println!("  {label:<8} {}", lan::link(*ip, address.port()));
+            println!("  {label:<8} {}", lan::link(*ip, address.port(), key));
+        }
+        let can = if args.allow_delete { "read and delete" } else { "read" };
+        if key.is_some() {
+            println!("  key      on: anyone with one of these links can {can} every file shown");
+        } else if !args.bind.is_loopback() {
+            println!("  open to  anyone who can reach these addresses can {can} every file shown");
         }
         println!("  theme    {theme_name}");
         if args.qr {
@@ -344,6 +370,7 @@ fn serve(args: Serve) -> Result<(), String> {
                 address.ip(),
                 &addresses,
                 address.port(),
+                key,
                 std::io::stdout().is_terminal(),
             ) {
                 Scan::Code(lines) => {
@@ -360,7 +387,7 @@ fn serve(args: Serve) -> Result<(), String> {
         if should_open(args.no_open, std::io::stdout().is_terminal(), ssh)
             && let Some(ip) = addresses.first()
         {
-            let link = lan::link(*ip, address.port());
+            let link = lan::link(*ip, address.port(), key);
             if let Err(error) = webbrowser::open(&link) {
                 println!("  open     could not open the browser: {error}");
             }

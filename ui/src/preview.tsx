@@ -8,7 +8,7 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, decodedByServer, hasSource } from "./kinds";
-import { NOT_ANSWERING, NoAnswer, useDown } from "./reach";
+import { NoAnswer, type Unreached, useDown } from "./reach";
 import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
 import type { Entry } from "./store";
 
@@ -425,8 +425,8 @@ interface Loaded<T> {
   url: string;
   data?: T;
   failed?: boolean;
-  /** It failed because okfs did not answer: the file may be fine. */
-  unanswered?: boolean;
+  /** It failed because okfs did not answer, or refused the key, and which: the file may be fine. */
+  unanswered?: Unreached;
 }
 
 /**
@@ -474,7 +474,7 @@ export function useLoaded<T>(address: string | null, wait?: number): Loaded<T> {
         (error: unknown) => {
           // A request that was cancelled or pushed out says nothing about the file.
           if (here && !abort.signal.aborted && answers.get(url) === undefined && !flights.has(url)) {
-            setState({ url, failed: true, unanswered: error instanceof NoAnswer });
+            setState({ url, failed: true, unanswered: error instanceof NoAnswer ? error.why : undefined });
           }
         },
       );
@@ -590,7 +590,8 @@ export function useStarted(path: string, eager: boolean): boolean {
   return go;
 }
 
-function Card({ entry, line }: { entry: Entry; line: string }) {
+/** `unreached` says the line is why okfs cannot be reached, and not something about the file. */
+function Card({ entry, line, unreached }: { entry: Entry; line: string; unreached?: boolean }) {
   return (
     <div class="pv-center">
       <div class="pv-card">
@@ -600,8 +601,8 @@ function Card({ entry, line }: { entry: Entry; line: string }) {
           {LABEL[entry.kind]} · {fmt.size(entry.size)}
         </span>
         <span>{line}</span>
-        {/* Nothing downloads while okfs does not answer. */}
-        {line !== NOT_ANSWERING && (
+        {/* Nothing downloads while okfs cannot be reached. */}
+        {!unreached && (
           <a class="btn btn-line" href={urls.raw(entry.path)} download>
             <Icon name="download" />
             Download
@@ -651,7 +652,7 @@ function Picture({ entry, stamp, report }: Shown) {
   useEffect(() => {
     if (!down) setBroken("");
   }, [down]);
-  if (broken === src) return <Card entry={entry} line={down ? NOT_ANSWERING : "This image could not be shown"} />;
+  if (broken === src) return <Card entry={entry} line={down ?? "This image could not be shown"} unreached={!!down} />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
   // That is for a moment only. Past it the old picture would sit under the new name, so it is hidden, and the
   // thumbnail of the right file stands in until the picture arrives.
@@ -709,7 +710,7 @@ function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiti
   useEffect(() => {
     if (!down) setBroken("");
   }, [down]);
-  if (broken === src) return <Card entry={entry} line={down ? NOT_ANSWERING : "This browser cannot play this file"} />;
+  if (broken === src) return <Card entry={entry} line={down ?? "This browser cannot play this file"} unreached={!!down} />;
   const center = waiting ? "pv-center pv-wait" : "pv-center";
   const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
   const onError = () => {
@@ -1064,7 +1065,7 @@ function Zip({ entry, report }: { entry: Entry; report: Report }) {
   useEffect(() => {
     if (total !== undefined && url === urls.archive(entry.path)) report(entry.path, [`${fmt.count(total)} ${total === 1 ? "entry" : "entries"}`]);
   }, [entry.path, total, url, report]);
-  if (failed) return <Card entry={entry} line={unanswered ? NOT_ANSWERING : "This archive could not be read"} />;
+  if (failed) return <Card entry={entry} line={unanswered ?? "This archive could not be read"} unreached={!!unanswered} />;
   if (!data) return null;
   return (
     <>
@@ -1178,7 +1179,7 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
     }
   }, [entry.path, data, url, whole, report]);
 
-  if (failed) return <Card entry={entry} line={unanswered ? NOT_ANSWERING : "This file could not be read"} />;
+  if (failed) return <Card entry={entry} line={unanswered ?? "This file could not be read"} unreached={!!unanswered} />;
   if (!data) return null;
   switch (data.kind) {
     case "none":

@@ -29,6 +29,8 @@ export interface Config {
   pdf?: boolean;
   /** True with `--hidden`: dotfiles are served, and a browser with no choice of its own shows hidden entries. */
   hidden?: boolean;
+  /** The key okfs asks for, for the links the page hands out. Absent when it asks for none. */
+  key?: string;
 }
 
 const read = (page: Document): Partial<Config> => JSON.parse(page.getElementById("okfs-config")?.textContent ?? "{}");

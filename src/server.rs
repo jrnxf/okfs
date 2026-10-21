@@ -26,6 +26,7 @@ use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::{Index, Order, Page};
+use crate::key::{self, Key};
 use crate::live::Change;
 use crate::paths::{self, Kept, NoEntry, Resolved, Root, Unshown};
 use crate::pdf::{self, Drawer};
@@ -86,6 +87,9 @@ pub struct Options {
     /// Let visitors delete entries. Off unless asked for: okfs has no accounts, so
     /// with this on anyone who can reach the address can delete.
     pub allow_delete: bool,
+    /// The key every request has to bring, in its address or its cookie: see `key`. okfs makes
+    /// one at an address beyond loopback, unless told not to.
+    pub key: Option<Key>,
 }
 
 impl Default for Options {
@@ -102,6 +106,7 @@ impl Default for Options {
             drawer: None,
             pdf_limit: pdf::LIMIT,
             allow_delete: false,
+            key: None,
         }
     }
 }
@@ -254,7 +259,7 @@ fn query_flag<'de, D: serde::Deserializer<'de>>(from: D) -> Result<bool, D::Erro
 }
 
 /// Splits a host, as a request names it, into its name and its port.
-fn split_host(host: &str) -> (&str, Option<&str>) {
+pub(crate) fn split_host(host: &str) -> (&str, Option<&str>) {
     if let Some(v6) = host.strip_prefix('[') {
         let (name, rest) = v6.split_once(']').unwrap_or((v6, ""));
         return (name, rest.strip_prefix(':'));
@@ -284,24 +289,176 @@ pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
         || allowed.iter().any(|allowed| allowed.eq_ignore_ascii_case(name))
 }
 
-/// Runs before every route: checks the Host name and marks every answer as not to be sniffed.
+/// Runs before every route: checks the Host name and the key, and marks every answer as not to be
+/// sniffed.
 async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    if app.options.check_host {
-        let host = request_host(request.headers(), request.uri());
-        if !host_allowed(host, &app.options.allow_hosts) {
-            let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
-            let message = format!(
-                "okfs does not answer to the name {name:?}.\nTo allow it, start okfs with: --allow-host {name}\n"
-            );
-            return (StatusCode::FORBIDDEN, message).into_response();
-        }
-    }
-    let mut response = next.run(request).await;
+    let mut response = match admit(&app, &request) {
+        Some(refused) => refused,
+        None => next.run(request).await,
+    };
     let headers = response.headers_mut();
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("same-origin"));
+    headers
+        .entry(header::REFERRER_POLICY)
+        .or_insert(HeaderValue::from_static("same-origin"));
     response
 }
+
+/// What a request is answered with in place of the route it asks for: a refusal for a host name
+/// okfs does not answer to or a request without the key, or the step that takes the key out of a
+/// browser's address. `None` lets it through.
+fn admit(app: &App, request: &Request) -> Option<Response> {
+    let host = request_host(request.headers(), request.uri());
+    if app.options.check_host && !host_allowed(host, &app.options.allow_hosts) {
+        let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
+        let message =
+            format!("okfs does not answer to the name {name:?}.\nTo allow it, start okfs with: --allow-host {name}\n");
+        return Some((StatusCode::FORBIDDEN, message).into_response());
+    }
+    let key = app.options.key.as_ref()?;
+    let headers = request.headers();
+    let cookie = key::cookie_name(host);
+    let given = keys_in(request.uri().query());
+    let by_address = given.iter().any(|given| key.matches(given));
+    if !by_address && !key::cookies(headers, &cookie).any(|value| key.matches(value)) {
+        return Some(needs_key(headers));
+    }
+    // A browser comes once with the key in its address. It is taken out, so that the address bar,
+    // the history and a link copied from either do not show it, and the browser keeps it in a
+    // cookie instead. curl and the like come with it every time, and are answered at once.
+    if given.is_empty() || !navigates(request) {
+        return None;
+    }
+    let set = by_address.then(|| key::set_cookie(&cookie, key, key::over_https(headers)));
+    Some(landing(&without_key(request.uri()), set))
+}
+
+/// The values of `key` in a query, decoded.
+fn keys_in(query: Option<&str>) -> Vec<String> {
+    let decode = |text: &str| {
+        percent_decode_str(&text.replace('+', " "))
+            .decode_utf8_lossy()
+            .into_owned()
+    };
+    query
+        .unwrap_or("")
+        .split('&')
+        .filter_map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (decode(name) == key::PARAM).then(|| decode(value))
+        })
+        .collect()
+}
+
+/// The address a request asked for, without its key: the same path, and the rest of its query in
+/// its order. It is always a path on this server: one that starts with two slashes, or a slash and
+/// a backslash, would read as another host.
+fn without_key(uri: &Uri) -> String {
+    let path = uri.path().trim_start_matches(['/', '\\']).replace('\\', "%5C");
+    let rest: Vec<&str> = uri
+        .query()
+        .unwrap_or("")
+        .split('&')
+        .filter(|pair| !pair.is_empty() && keys_in(Some(pair)).is_empty())
+        .collect();
+    let mut to = format!("/{path}");
+    if !rest.is_empty() {
+        to = format!("{to}?{}", rest.join("&"));
+    }
+    to
+}
+
+/// True for a browser going to an address, as opposed to a script or a program asking for it.
+fn navigates(request: &Request) -> bool {
+    if request.method() != Method::GET && request.method() != Method::HEAD {
+        return false;
+    }
+    match request.headers().get("sec-fetch-mode") {
+        Some(mode) => mode == "navigate",
+        // A browser too old to say so still asks for a page.
+        None => wants_html(request.headers()),
+    }
+}
+
+/// The answer that takes the key out of a browser's address: a page that goes on to `to` at once,
+/// with the cookie that holds the key. It is not a redirect. A browser that came from a link on
+/// another site sends no SameSite=Strict cookie on the redirect that follows, and the page there
+/// would be refused. A refresh is the page's own step, which the cookie goes with, and it takes the
+/// address with the key out of the history too.
+fn landing(to: &str, set_cookie: Option<String>) -> Response {
+    let to = escape_html(to);
+    let html = format!(
+        "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"color-scheme\" content=\"light dark\">\n\
+         <meta http-equiv=\"refresh\" content=\"0; url={to}\">\n<title>okfs</title>\n<a href=\"{to}\">Continue</a>\n"
+    );
+    let mut response = (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::CONTENT_SECURITY_POLICY, "default-src 'none'"),
+            // The next request would name this address, key and all.
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        html,
+    )
+        .into_response();
+    if let Some(cookie) = set_cookie.and_then(|cookie| HeaderValue::from_str(&cookie).ok()) {
+        response.headers_mut().insert(header::SET_COOKIE, cookie);
+    }
+    response
+}
+
+/// What a request without the key gets: a page for a browser, a line for anything else. Either
+/// says only that a key is needed, and nothing of what is served.
+fn needs_key(headers: &HeaderMap) -> Response {
+    let (kind, body) = if wants_html(headers) {
+        ("text/html; charset=utf-8", NEEDS_KEY_PAGE)
+    } else {
+        ("text/plain; charset=utf-8", NEEDS_KEY_TEXT)
+    };
+    (
+        StatusCode::UNAUTHORIZED,
+        [
+            (header::WWW_AUTHENTICATE, key::SCHEME),
+            (header::CONTENT_TYPE, kind),
+            (header::CACHE_CONTROL, "no-store"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'",
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+const NEEDS_KEY_TEXT: &str = "This link needs its key. Use an address okfs printed when it started: it ends in ?key=\n";
+
+const NEEDS_KEY_PAGE: &str = r#"<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>okfs</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box;
+    font: 15px/1.5 system-ui, sans-serif; background: #fbfbfa; color: #1b1b1a; }
+  main { max-width: 26rem; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+  p { margin: 0; color: #5f5f5c; }
+  code { font: 13px ui-monospace, monospace; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #161616; color: #ececea; }
+    p { color: #a3a3a0; }
+  }
+</style>
+<main>
+  <h1>This link needs its key</h1>
+  <p>Open an address okfs printed when it started, which ends in <code>?key=</code>, or scan its code again. A key from
+  an earlier start no longer works.</p>
+</main>
+</html>
+"#;
 
 /// Runs work that blocks, at most a few at a time.
 async fn heavy<T: Send + 'static>(app: &App, work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
@@ -1076,6 +1233,9 @@ struct Config {
     pdf: bool,
     /// True with `--hidden`: dotfiles are served, and a new visitor starts with hidden entries shown.
     hidden: bool,
+    /// The key, when okfs asks for one, for the links the page hands out. Left out when it does not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
 }
 
 fn theme_infos(app: &App) -> Vec<ThemeInfo> {
@@ -1182,6 +1342,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
         delete: app.options.allow_delete,
         pdf: app.drawer.is_some(),
         hidden: app.root.hidden(),
+        key: app.options.key.as_ref().map(|key| key.as_str().to_owned()),
     };
     // Inside a script element, only "<" could end the block early.
     let config = serde_json::to_string(&config)
