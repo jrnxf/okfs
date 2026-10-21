@@ -3,12 +3,13 @@
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use serde::Serialize;
 use tokio::sync::mpsc::Sender;
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::write::FullFileOptions;
+use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
 use crate::paths::{self, Root};
 
@@ -18,6 +19,8 @@ const MAX_ENTRIES: usize = 5000;
 const CHUNK: usize = 64 * 1024;
 /// Sizes from here up need the 64-bit zip format.
 const ZIP64_FROM: u64 = u32::MAX as u64;
+/// The extra field that holds a modified time in seconds since 1970, in UTC.
+const UNIX_TIME_FIELD: u16 = 0x5455;
 /// Formats that are already compressed: stored as they are, which is much faster.
 const PACKED: [&str; 24] = [
     "jpg", "jpeg", "png", "gif", "webp", "avif", "heic", "mp4", "mov", "mkv", "webm", "mp3", "m4a", "flac", "ogg",
@@ -94,14 +97,42 @@ pub fn stream(root: &Root, abs: &Path, out: Sender<io::Result<Bytes>>) {
     }
 }
 
+/// Options that date an entry when `modified` was: in local time, which is all the zip format itself
+/// holds, and to the second in UTC in an extra field that unzip tools prefer when it is there. An
+/// entry with no time, or one the format cannot hold, keeps the format's first day, 1980-01-01.
+fn dated(modified: Option<SystemTime>) -> FullFileOptions<'static, 'static> {
+    let mut options = FullFileOptions::default();
+    let Some(modified) = modified else { return options };
+    if let Some(local) = jiff::Timestamp::try_from(modified)
+        .ok()
+        .map(|at| at.to_zoned(jiff::tz::TimeZone::system()).datetime())
+        .and_then(|local| DateTime::try_from(local).ok())
+    {
+        options = options.last_modified_time(local);
+    }
+    let seconds = modified.duration_since(UNIX_EPOCH).ok().map(|since| since.as_secs());
+    if let Some(seconds) = seconds.and_then(|seconds| u32::try_from(seconds).ok()) {
+        // Flags (bit 0: a modified time follows), then the time.
+        let mut field = vec![1];
+        field.extend_from_slice(&seconds.to_le_bytes());
+        // Small and well formed, so it is always taken.
+        let _ = options.add_extra_field(UNIX_TIME_FIELD, field, false);
+    }
+    options
+}
+
+/// Each folder is an entry of its own, written before what it holds, so that it keeps its time when it
+/// is unpacked too.
 fn write(root: &Root, top: &Path, pipe: Pipe) -> io::Result<()> {
     let mut zip = ZipWriter::new_stream(pipe);
     let mut todo = vec![String::new()];
     while let Some(dir) = todo.pop() {
-        let mut seen = root.scan(&top.join(&dir))?;
+        let at = top.join(&dir);
+        let mut seen = root.scan(&at)?;
         seen.sort_by(|a, b| paths::natural_cmp(&a.name, &b.name));
-        if seen.is_empty() && !dir.is_empty() {
-            zip.add_directory(dir.as_str(), SimpleFileOptions::default())
+        if !dir.is_empty() {
+            let modified = std::fs::metadata(&at).and_then(|meta| meta.modified()).ok();
+            zip.add_directory(dir.as_str(), dated(modified))
                 .map_err(io::Error::other)?;
         }
         for entry in seen.iter().rev().filter(|e| e.dir && !e.link) {
@@ -119,7 +150,7 @@ fn write(root: &Root, top: &Path, pipe: Pipe) -> io::Result<()> {
             } else {
                 CompressionMethod::Deflated
             };
-            let options = SimpleFileOptions::default()
+            let options = dated(meta.modified().ok())
                 .compression_method(method)
                 .large_file(meta.len() >= ZIP64_FROM)
                 .unix_permissions(0o644);

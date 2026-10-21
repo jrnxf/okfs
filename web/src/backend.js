@@ -161,7 +161,8 @@ export async function createBackend({ wasm, worker: workerUrl, baked, now }) {
   async function answer(input) {
     const url = new URL(input, `${ORIGIN}/`);
     const q = url.searchParams;
-    const flag = (name) => (q.has(name) ? 1 : undefined);
+    // A yes or no, as okfs reads one: 1 or true.
+    const flag = (name) => (["1", "true"].includes(q.get(name) ?? "") ? 1 : undefined);
     const num = (name) => (q.has(name) ? Number(q.get(name)) : undefined);
     switch (url.pathname) {
       case "/api/list": {
@@ -171,14 +172,10 @@ export async function createBackend({ wasm, worker: workerUrl, baked, now }) {
         else withReadme(listing);
         return json(JSON.stringify(listing));
       }
-      case "/api/preview": {
-        const found = previewOf(q.get("path") ?? "", { source: q.has("raw"), first: q.has("lines") });
-        return found ? json(JSON.stringify(found)) : missing();
-      }
       case "/api/previews": {
         const out = {};
         for (const path of q.getAll("p")) {
-          const found = previewOf(path, { source: q.has("raw"), first: q.has("lines") });
+          const found = previewOf(path, { source: Boolean(flag("raw")), first: q.has("lines") });
           if (found) out[path] = found;
         }
         return json(JSON.stringify(out));
@@ -189,14 +186,13 @@ export async function createBackend({ wasm, worker: workerUrl, baked, now }) {
         return json(text);
       }
       case "/api/recent": {
-        const { text } = await ask("recent", q.has("all"));
+        const { text } = await ask("recent", Boolean(flag("all")));
         return json(text);
       }
       case "/api/archive": {
         const found = baked.archive[q.get("path") ?? ""] ?? baked.archive["survey-2026.zip"];
         return json(JSON.stringify(found));
       }
-      case "/api/thumb":
       case "/api/picture":
         return { status: 200, body: "", headers: {} };
       default:

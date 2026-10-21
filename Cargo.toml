@@ -28,12 +28,15 @@ ammonia = "4.2.3"
 axum = "0.8.9"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
+clap_complete = "4.6.11"
+clap_mangen = "0.2.33"
 csv = "1.4.0"
 dirs = "7.0.0"
 futures-util = "0.3.34"
 hayro = { version = "0.8.0", optional = true }
 httpdate = "1.0.3"
 ignore = "0.4"
+jiff = "0.2.38"
 if-addrs = { version = "0.15.0", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico"] }
 mime_guess = "2.0.5"
@@ -50,7 +53,7 @@ tokio-util = { version = "0.7.20", features = ["io"] }
 tower-http = { version = "0.7.1", features = ["compression-gzip", "compression-br"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
 webbrowser = "1.2.4"
-zip = { version = "9.0.2", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.2", default-features = false, features = ["deflate", "jiff-02"] }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"], optional = true }
