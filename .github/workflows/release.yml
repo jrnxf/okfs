@@ -260,8 +260,13 @@ jobs:
           repository: jrnxf/homebrew-tap
           ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
 
-      # The binary mode reads the release's okfs-<target> assets and their .sha256 files.
-      - run: scripts/bump-formula.sh --binary okfs "$TAG"
+      # The binary mode downloads each asset from the release and checks it against its .sha256.
+      - run: |
+          scripts/bump-formula.sh okfs "$TAG" \
+            macos-arm=okfs-aarch64-apple-darwin \
+            macos-intel=okfs-x86_64-apple-darwin \
+            linux-arm=okfs-aarch64-unknown-linux-musl \
+            linux-intel=okfs-x86_64-unknown-linux-musl
 
       - run: |
           if git diff --quiet; then
