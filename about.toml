@@ -1,0 +1,24 @@
+# cargo-about's settings for the Rust notices attached to each release (.github/workflows/release.yml).
+# A dependency under a license missing here fails the release build, so a new license is a choice.
+accepted = [
+    # In order of preference, for a crate that offers a choice.
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "MPL-2.0",
+]
+# The release targets: their dependencies differ (rustix on Unix, mimalloc on musl, FSEvents on macOS).
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+# Only what is compiled into the binary.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

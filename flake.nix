@@ -60,6 +60,7 @@
               fileset = pkgs.lib.fileset.unions [
                 ./Cargo.toml
                 ./Cargo.lock
+                ./THIRD_PARTY.md
                 ./build.rs
                 ./src
                 ./themes

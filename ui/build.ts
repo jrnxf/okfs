@@ -1,4 +1,4 @@
-// Builds the page into dist/: two scripts, one stylesheet, the fonts and the HTML shell.
+// Builds the page into dist/: two scripts, one stylesheet, the fonts, the third-party notices and the HTML shell.
 // The Rust build embeds everything in dist/ into the binary.
 import { cp, mkdir, rm } from "node:fs/promises";
 
@@ -45,6 +45,9 @@ const fonts = [
 for (const font of fonts) {
   await cp(`node_modules/@fontsource-variable/${font}`, `${out}/fonts/${font.split("/").pop()}`);
 }
+
+// The fonts' licenses, and the other notices for what the binary bundles, travel with it.
+await cp("../THIRD_PARTY.md", `${out}/THIRD_PARTY.md`);
 
 await cp("index.html", `${out}/index.html`);
 await cp("src/favicon.svg", `${out}/favicon.svg`);
