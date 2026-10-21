@@ -34,7 +34,7 @@ nix profile install github:jrnxf/okfs   # or install it
 
 `nix profile upgrade okfs` brings an installed copy up to date.
 
-On x86-64 Linux, each [release](https://github.com/jrnxf/okfs/releases) has the binary on its own, built on Ubuntu 24.04, so it runs on any system with glibc 2.39 or newer:
+Each [release](https://github.com/jrnxf/okfs/releases) has an archive for Linux (x86-64 and arm64, static, so any C library) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`. It holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`. On x86-64 Linux, the release also has the binary on its own:
 
 ```sh
 gh release download --repo jrnxf/okfs --pattern 'okfs-x86_64-unknown-linux-gnu*'
