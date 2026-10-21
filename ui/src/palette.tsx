@@ -81,6 +81,7 @@ function commands(): Entry[] {
     },
     { title: s.hidden ? "Hide hidden files" : "Show hidden files", key: ".", run: () => store.setHidden() },
     { title: "Theme", menu: themeMenu },
+    ...(under ? [{ title: `Copy link to this ${under.dir ? "folder" : "file"}`, key: "y", run: () => void store.copyLink(under) }] : []),
     { title: "Go to the top folder", run: () => void store.showDir("") },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
     ...deletes,

@@ -8,6 +8,7 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, decodedByServer, hasSource } from "./kinds";
+import { NOT_ANSWERING, NoAnswer, useDown } from "./reach";
 import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
 import type { Entry } from "./store";
 
@@ -424,6 +425,8 @@ interface Loaded<T> {
   url: string;
   data?: T;
   failed?: boolean;
+  /** It failed because okfs did not answer: the file may be fine. */
+  unanswered?: boolean;
 }
 
 /**
@@ -468,9 +471,11 @@ export function useLoaded<T>(address: string | null, wait?: number): Loaded<T> {
         (data) => {
           if (here) setState({ url, data });
         },
-        () => {
+        (error: unknown) => {
           // A request that was cancelled or pushed out says nothing about the file.
-          if (here && !abort.signal.aborted && answers.get(url) === undefined && !flights.has(url)) setState({ url, failed: true });
+          if (here && !abort.signal.aborted && answers.get(url) === undefined && !flights.has(url)) {
+            setState({ url, failed: true, unanswered: error instanceof NoAnswer });
+          }
         },
       );
     const timer =
@@ -595,10 +600,13 @@ function Card({ entry, line }: { entry: Entry; line: string }) {
           {LABEL[entry.kind]} · {fmt.size(entry.size)}
         </span>
         <span>{line}</span>
-        <a class="btn btn-line" href={urls.raw(entry.path)} download>
-          <Icon name="download" />
-          Download
-        </a>
+        {/* Nothing downloads while okfs does not answer. */}
+        {line !== NOT_ANSWERING && (
+          <a class="btn btn-line" href={urls.raw(entry.path)} download>
+            <Icon name="download" />
+            Download
+          </a>
+        )}
       </div>
     </div>
   );
@@ -638,7 +646,12 @@ function Picture({ entry, stamp, report }: Shown) {
     const timer = setTimeout(() => setLate(src), PICTURE_KEEP);
     return () => clearTimeout(timer);
   }, [src, ready]);
-  if (broken === src) return <Card entry={entry} line="This image could not be shown" />;
+  // A picture that failed while okfs did not answer is asked for again once it does.
+  const down = useDown();
+  useEffect(() => {
+    if (!down) setBroken("");
+  }, [down]);
+  if (broken === src) return <Card entry={entry} line={down ? NOT_ANSWERING : "This image could not be shown"} />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
   // That is for a moment only. Past it the old picture would sit under the new name, so it is hidden, and the
   // thumbnail of the right file stands in until the picture arrives.
@@ -691,7 +704,12 @@ function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiti
   useLayoutEffect(() => {
     if (settled) hush();
   }, [settled]);
-  if (broken === src) return <Card entry={entry} line="This browser cannot play this file" />;
+  // A file that failed while okfs did not answer is asked for again once it does.
+  const down = useDown();
+  useEffect(() => {
+    if (!down) setBroken("");
+  }, [down]);
+  if (broken === src) return <Card entry={entry} line={down ? NOT_ANSWERING : "This browser cannot play this file"} />;
   const center = waiting ? "pv-center pv-wait" : "pv-center";
   const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
   const onError = () => {
@@ -1040,13 +1058,13 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
 }
 
 function Zip({ entry, report }: { entry: Entry; report: Report }) {
-  const { data, failed, url } = useLoaded<Archive>(urls.archive(entry.path));
+  const { data, failed, unanswered, url } = useLoaded<Archive>(urls.archive(entry.path));
   const rested = useSettled(entry.path, WHOLE_REST);
   const total = data?.total;
   useEffect(() => {
     if (total !== undefined && url === urls.archive(entry.path)) report(entry.path, [`${fmt.count(total)} ${total === 1 ? "entry" : "entries"}`]);
   }, [entry.path, total, url, report]);
-  if (failed) return <Card entry={entry} line="This archive could not be read" />;
+  if (failed) return <Card entry={entry} line={unanswered ? NOT_ANSWERING : "This archive could not be read"} />;
   if (!data) return null;
   return (
     <>
@@ -1147,7 +1165,7 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
   const cut = head.url === start && head.data?.kind === "code" && head.data.more === true;
   const wanted = cut && (rested || answers.has(whole));
   const rest = useLoaded<TextPreview>(wanted ? whole : start, wanted ? 0 : undefined);
-  const { data, failed, url: from } = wanted && rest.url === whole && rest.data ? rest : head;
+  const { data, failed, unanswered, url: from } = wanted && rest.url === whole && rest.data ? rest : head;
   // A preview is known by the file's address whichever part is shown, so the pane keeps its scroll
   // position when the whole file takes the place of its start.
   const url = from.replace(/&lines=\d+$/, "");
@@ -1160,7 +1178,7 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
     }
   }, [entry.path, data, url, whole, report]);
 
-  if (failed) return <Card entry={entry} line="This file could not be read" />;
+  if (failed) return <Card entry={entry} line={unanswered ? NOT_ANSWERING : "This file could not be read"} />;
   if (!data) return null;
   switch (data.kind) {
     case "none":

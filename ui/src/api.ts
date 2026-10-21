@@ -1,6 +1,7 @@
 // The server's endpoints, as the page sees them.
 
 import { showsHidden } from "./hidden";
+import { call } from "./reach";
 
 export interface Item {
   n: string;
@@ -175,7 +176,7 @@ export class HttpError extends Error {
 }
 
 export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { signal });
+  const response = await call(url, { signal });
   if (!response.ok) throw new HttpError(response.status);
   return (await response.json()) as T;
 }
@@ -194,7 +195,7 @@ export class DeleteError extends Error {
 /** Deletes a file, a link, or a folder with everything in it. Fails with a `DeleteError`. */
 export async function deleteEntry(path: string): Promise<void> {
   // The header marks the request as the page's own: the server refuses a delete without it.
-  const response = await fetch(urls.entry(path), { method: "DELETE", headers: { "x-okfs": "delete" } });
+  const response = await call(urls.entry(path), { method: "DELETE", headers: { "x-okfs": "delete" } });
   if (response.ok) return;
   const body: { error?: unknown; partial?: unknown } = await response.json().catch(() => ({}));
   const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;

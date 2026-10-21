@@ -94,6 +94,13 @@ body.open .ph .only-open { display: inline-flex; }
 .status kbd { height: 1.55em; min-width: 1.55em; border-bottom-width: var(--line-w); }
 .status .touch { display: none; }
 
+/* A quiet word over the foot of the page, out of the layout: that okfs is not answering, or what was just done. */
+.notice { position: fixed; z-index: 40; left: 50%; bottom: calc(28px * var(--density) + 10px); transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--surface); color: var(--fg); border: var(--border); border-radius: var(--radius); box-shadow: var(--shadow); font-size: var(--text-s); white-space: nowrap; pointer-events: none; animation: notice-in 160ms var(--ease-out); }
+.notice:empty { display: none; }
+.notice.down::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; animation: notice-wait 1.6s ease-in-out infinite; }
+@keyframes notice-in { from { opacity: 0; transform: translate(-50%, 4px); } }
+@keyframes notice-wait { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .notice, .notice.down::before { animation: none; } }
 .empty .hint { color: var(--faint); font-size: var(--text-s); }
 
 /* The matches of a search in the list's place: two slots wide, for the folder each is in, or all of them when the
@@ -154,6 +161,7 @@ body.open .ph .only-open { display: inline-flex; }
   .status { height: calc(44px * var(--density)); padding-bottom: env(safe-area-inset-bottom); }
   .status .hints, .status .mode { display: none; }
   .status .touch { display: inline-flex; height: 32px; }
+  .notice { bottom: calc(44px * var(--density) + env(safe-area-inset-bottom) + 10px); }
   .tools .touch { display: inline-flex; }
   /* no keys to hint at here, and the count needs the room */
   .pal-foot span:not(.num, .sp) { display: none; }

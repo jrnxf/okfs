@@ -41,7 +41,7 @@ beforeEach(() => {
   asked.length = 0;
 });
 
-const host: KeyHost = { filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined };
+const host: KeyHost = { filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined, page: () => 4 };
 
 /** A store showing a folder that holds `names`, in that order, with the cursor on the first. A name ending in `/` is a folder. */
 function showing(...names: string[]) {
@@ -182,4 +182,60 @@ test("the choice the one-folder view kept is ignored, and its key does nothing",
     // Nothing is written back.
     expect([...saved]).toEqual([["okfs.pane", kept]]);
   }
+});
+
+test("page down and page up move a page of rows in a folder, and stop at its ends", () => {
+  const store = showing(...Array.from({ length: 10 }, (_, i) => `file-${i}.txt`));
+  keys.keyFor(store, host, press("PageDown"))?.();
+  expect(store.s.cursor).toBe(4);
+  keys.keyFor(store, host, press("PageDown"))?.();
+  keys.keyFor(store, host, press("PageDown"))?.();
+  expect(store.s.cursor).toBe(9);
+  keys.keyFor(store, host, press("PageUp"))?.();
+  expect(store.s.cursor).toBe(5);
+  keys.keyFor(store, host, press("PageUp"))?.();
+  keys.keyFor(store, host, press("PageUp"))?.();
+  expect(store.s.cursor).toBe(0);
+  // A page is what the list has on screen: a taller list moves further.
+  keys.keyFor(store, { ...host, page: () => 7 }, press("PageDown"))?.();
+  expect(store.s.cursor).toBe(7);
+
+  // An open file keeps them, to scroll a page of itself.
+  store.activate();
+  expect(store.s.open?.name).toBe("file-7.txt");
+  expect(keys.keyFor(store, host, press("PageDown"))).toBeUndefined();
+  expect(keys.keyFor(store, host, press("PageUp"))).toBeUndefined();
+});
+
+test("page down and page up move a page of rows over the matches too", () => {
+  const store = showing("notes.md");
+  const list = Array.from({ length: 10 }, (_, i) => {
+    const hit = { path: `deep/file-${i}.txt`, dir: false, idx: [], name: true, m: 1, s: 10 };
+    return { entry: stores.matchEntry(hit, i), hit };
+  });
+  store.s.matches = { q: "file", list, total: list.length, took: 1, sort: { key: "rank", rev: false }, cursor: 0, ready: true };
+  store.s.finding = true;
+  keys.keyFor(store, host, press("PageDown"))?.();
+  expect(store.s.matches.cursor).toBe(4);
+  keys.keyFor(store, host, press("PageUp"))?.();
+  expect(store.s.matches.cursor).toBe(0);
+});
+
+test("y copies the page's own address for what is under the cursor, in a folder and over the matches", () => {
+  const store = showing("inner/", "notes.md");
+  const copied: (string | undefined)[] = [];
+  store.copyLink = async (entry = store.s.open ?? store.cur()) => void copied.push(entry?.path);
+  keys.keyFor(store, host, press("y"))?.();
+  store.moveTo(1);
+  keys.keyFor(store, host, press("y"))?.();
+  expect(copied).toEqual(["inner", "notes.md"]);
+
+  // A file's address, a folder's with its slash, and one behind `/-/` where its name is the server's own.
+  expect(store.linkTo({ path: "notes.md", dir: false })).toBe("http://localhost/notes.md");
+  expect(store.linkTo({ path: "inner", dir: true })).toBe("http://localhost/inner/");
+  expect(store.linkTo({ path: "api/a b.txt", dir: false })).toBe("http://localhost/-/api/a%20b.txt");
+
+  store.s.matches = { q: "x", list: [], total: 0, took: 1, sort: { key: "rank", rev: false }, cursor: 0, ready: true };
+  store.s.finding = true;
+  expect(keys.keyFor(store, host, press("y"))).toBeDefined();
 });
