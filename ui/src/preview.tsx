@@ -3,7 +3,7 @@
 
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Archive, type TextPreview, getJson, pathOf, urls } from "./api";
+import { type Archive, type TextPreview, getAnswer, getJson, pathOf, urls } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
@@ -151,7 +151,7 @@ function ask<T>(url: string): Promise<T> {
     flight.abort.abort();
   }
   const flight = { abort: new AbortController(), done: Promise.resolve() as Promise<unknown> };
-  flight.done = getJson<T>(url, flight.abort.signal)
+  flight.done = getAnswer<T>(url, flight.abort.signal)
     .then((data) => {
       // An answer to a request that was dropped describes a file that has changed since.
       if (flights.get(url)?.abort === flight.abort) remember(url, data);

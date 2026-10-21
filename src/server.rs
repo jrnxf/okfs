@@ -69,7 +69,6 @@ pub struct Options {
     pub theme: ThemeChoice,
     /// An opaque color, already checked.
     pub accent: Option<String>,
-    pub css: Option<PathBuf>,
     pub header: Option<PathBuf>,
     /// From `--index`: a folder holding a file of this name opens as that page.
     pub index: Option<String>,
@@ -95,7 +94,6 @@ impl Default for Options {
             title: "okfs".to_owned(),
             theme: ThemeChoice::BuiltIn("default".to_owned()),
             accent: None,
-            css: None,
             header: None,
             index: None,
             allow_hosts: Vec::new(),
@@ -206,7 +204,6 @@ pub fn router(app: Arc<App>) -> Router {
     let packed = Router::new()
         .route("/api/list", get(list))
         .route("/api/entry", delete(delete_entry))
-        .route("/api/preview", get(preview_file))
         .route("/api/previews", get(preview_many))
         .route("/api/search", get(search))
         .route("/api/recent", get(recent))
@@ -221,8 +218,7 @@ pub fn router(app: Arc<App>) -> Router {
     // and a change has to leave the moment it is written.
     let plain = Router::new()
         .route("/api/events", get(events))
-        .route("/api/thumb", get(thumbnail))
-        .route("/api/picture", get(whole_picture))
+        .route("/api/picture", get(picture))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
         .route("/zip", get(zip_folder))
@@ -240,6 +236,21 @@ fn fail(status: StatusCode, message: &str) -> Response {
 
 fn not_found() -> Response {
     fail(StatusCode::NOT_FOUND, "not found")
+}
+
+/// A yes or no in a query: `1` or `true` for yes, `0`, `false` or nothing for no.
+fn yes(value: &str) -> Option<bool> {
+    match value {
+        "1" | "true" => Some(true),
+        "" | "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Reads a yes or no in a query with `yes`. Another value is refused.
+fn query_flag<'de, D: serde::Deserializer<'de>>(from: D) -> Result<bool, D::Error> {
+    let value = String::deserialize(from)?;
+    yes(&value).ok_or_else(|| serde::de::Error::custom(format!("{value:?} is not 1, true, 0 or false")))
 }
 
 /// Splits a host, as a request names it, into its name and its port.
@@ -321,7 +332,8 @@ struct ListQuery {
     #[serde(default)]
     follow: String,
     /// Send hidden entries too: see `Index::hides`.
-    all: Option<u8>,
+    #[serde(default, deserialize_with = "query_flag")]
+    all: bool,
 }
 
 /// Levels sent under a listing, at most.
@@ -503,7 +515,7 @@ async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Re
         .map(|limit| if depth > 0 { limit.min(MAX_COLUMN) } else { limit });
     let work = move || {
         let follow: Vec<&str> = query.follow.split('/').filter(|name| !name.is_empty()).collect();
-        list_folder(&worker, &query.path, limit, depth, &follow, query.all.is_some())
+        list_folder(&worker, &query.path, limit, depth, &follow, query.all)
     };
     match tokio::task::spawn_blocking(work).await {
         Ok(Some(listing)) => Json(listing).into_response(),
@@ -538,17 +550,6 @@ async fn events(State(app): State<Arc<App>>) -> Response {
         .into_response()
 }
 
-#[derive(Deserialize)]
-struct PreviewQuery {
-    #[serde(default)]
-    path: String,
-    /// Send only this many lines of source code. The page asks for a screen of them
-    /// first, and for the whole file once the cursor rests on it.
-    lines: Option<usize>,
-    /// Send the text as it is written, as source code, whatever the file is.
-    raw: Option<u8>,
-}
-
 /// Files previewed in one answer, at most.
 const MAX_PREVIEWS: usize = 64;
 
@@ -576,22 +577,11 @@ async fn build_preview(app: &App, path: &str, form: preview::Form) -> Option<std
     )
 }
 
-async fn preview_file(State(app): State<Arc<App>>, Query(query): Query<PreviewQuery>) -> Response {
-    let form = preview::Form {
-        first: query.lines,
-        source: query.raw.is_some(),
-    };
-    match build_preview(&app, &query.path, form).await {
-        None => not_found(),
-        Some(Ok(preview)) => Json(preview).into_response(),
-        Some(Err(_)) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the file could not be read"),
-    }
-}
-
-/// The previews of several files in one answer, by path: `?lines=80&p=a.rs&p=b.rs`, with `raw=1` for
-/// each as it is written.
-/// The page asks this way for what lies ahead of a moving cursor. A file that is
-/// missing or cannot be read is left out.
+/// The previews of files, by path: `?p=a.rs&p=b.rs`. A file that is missing or cannot be read is
+/// left out. `lines=80` sends only the first 80 lines of source code: the page asks for a screen of
+/// them first, and for the whole file once the cursor rests on it. `raw=1` sends each as it is
+/// written, as source code, whatever the file is. The page asks for one file this way, and for
+/// several at once for what lies ahead of a moving cursor.
 async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
     let mut lines = None;
     let mut source = false;
@@ -603,7 +593,10 @@ async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
             .into_owned();
         match name {
             "lines" => lines = value.parse().ok(),
-            "raw" => source = true,
+            "raw" => match yes(&value) {
+                Some(raw) => source = raw,
+                None => return fail(StatusCode::BAD_REQUEST, "raw is not 1, true, 0 or false"),
+            },
             "p" if paths.len() < MAX_PREVIEWS => paths.push(value),
             _ => {}
         }
@@ -619,13 +612,16 @@ async fn preview_many(State(app): State<Arc<App>>, uri: Uri) -> Response {
 }
 
 #[derive(Deserialize)]
-struct ThumbQuery {
+struct PictureQuery {
     #[serde(default)]
     path: String,
+    /// How wide, for a thumbnail. Without it, an image comes whole.
     w: Option<u32>,
 }
 
-async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>) -> Response {
+/// A picture of a file: a thumbnail `w` wide, or without `w` the whole image, as a PNG or a JPEG. That
+/// is how a format a browser cannot show, such as TIFF, is shown. A PDF's picture is its first page.
+async fn picture(State(app): State<Arc<App>>, Query(query): Query<PictureQuery>) -> Response {
     let Some(found) = app.root.resolve(&query.path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
@@ -641,22 +637,15 @@ async fn thumbnail(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>)
             Some(Err(_)) => return StatusCode::NO_CONTENT.into_response(),
             made => made,
         }
-    } else {
-        let w = thumb::width(query.w.unwrap_or(thumb::WIDTHS[1]));
+    } else if let Some(w) = query.w {
+        let w = thumb::width(w);
         let worker = Arc::clone(&app);
         heavy(&app, move || worker.thumbs.get(&found.abs, w, &found.meta)).await
+    } else {
+        let worker = Arc::clone(&app);
+        heavy(&app, move || worker.thumbs.picture(&found.abs, &found.meta)).await
     };
-    made_response(made, "a thumbnail")
-}
-
-/// An image whole, as a PNG or a JPEG: how a format a browser cannot show, such as TIFF, is shown.
-async fn whole_picture(State(app): State<Arc<App>>, Query(query): Query<ThumbQuery>) -> Response {
-    let Some(found) = app.root.resolve(&query.path).filter(|found| found.meta.is_file()) else {
-        return not_found();
-    };
-    let worker = Arc::clone(&app);
-    let made = heavy(&app, move || worker.thumbs.picture(&found.abs, &found.meta)).await;
-    made_response(made, "a picture")
+    made_response(made, if query.w.is_some() { "a thumbnail" } else { "a picture" })
 }
 
 fn made_response(made: Option<Result<thumb::Made, thumb::Refused>>, what: &str) -> Response {
@@ -724,15 +713,18 @@ struct SearchQuery {
     #[serde(default)]
     sort: Order,
     /// Turns the order around.
-    rev: Option<u8>,
+    #[serde(default, deserialize_with = "query_flag")]
+    rev: bool,
     /// Search hidden entries too: see `Index::hides`.
-    all: Option<u8>,
+    #[serde(default, deserialize_with = "query_flag")]
+    all: bool,
 }
 
 #[derive(Deserialize)]
 struct RecentQuery {
     /// Hidden files too: see `Index::hides`.
-    all: Option<u8>,
+    #[serde(default, deserialize_with = "query_flag")]
+    all: bool,
 }
 
 async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -> Response {
@@ -746,9 +738,9 @@ async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -
         offset: query.offset.unwrap_or(0),
         limit,
         order: query.sort,
-        reverse: query.rev.is_some(),
+        reverse: query.rev,
     };
-    match tokio::task::spawn_blocking(move || index.search_unless(&query.q, page, query.all.is_some(), &flag)).await {
+    match tokio::task::spawn_blocking(move || index.search_unless(&query.q, page, query.all, &flag)).await {
         Ok(Some(found)) => Json(found).into_response(),
         Ok(None) | Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the search failed"),
     }
@@ -758,7 +750,7 @@ async fn search(State(app): State<Arc<App>>, Query(query): Query<SearchQuery>) -
 /// only what the search route may show and decides how many there are.
 async fn recent(State(app): State<Arc<App>>, Query(query): Query<RecentQuery>) -> Response {
     let index = Arc::clone(&app.index);
-    match tokio::task::spawn_blocking(move || index.recent(query.all.is_some())).await {
+    match tokio::task::spawn_blocking(move || index.recent(query.all)).await {
         Ok(recent) => Json(recent).into_response(),
         Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the list could not be made"),
     }
@@ -937,7 +929,7 @@ async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Ur
 /// `/raw/` is the served folder itself: its `--index` file, and without one the page as ever.
 async fn raw_root(state: State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Response {
     let Some(found) = index_page(&state, "") else {
-        return page(state, uri).await;
+        return page(state, uri, headers).await;
     };
     match raw::serve(found, &headers).await {
         Ok(response) => response,
@@ -1022,13 +1014,8 @@ async fn asset(State(app): State<Arc<App>>, Path(name): Path<String>, headers: H
     if let Some(id) = name.strip_prefix("themes/").and_then(|file| file.strip_suffix(".css")) {
         return app.theme_css(id).map_or_else(not_found, css);
     }
-    match name.as_str() {
-        "brand.css" => return app.options.accent.as_deref().map(brand_css).map_or_else(not_found, css),
-        "custom.css" => {
-            let text = app.options.css.as_ref().and_then(|path| fs::read_to_string(path).ok());
-            return text.map_or_else(not_found, css);
-        }
-        _ => {}
+    if name == "brand.css" {
+        return app.options.accent.as_deref().map(brand_css).map_or_else(not_found, css);
     }
     let Some(found) = assets::get(&name) else {
         return not_found();
@@ -1085,7 +1072,7 @@ struct Config {
     target: Target,
     /// True when deleting is on. The page shows its delete control only then.
     delete: bool,
-    /// True when the first page of a PDF can be had as a picture from `/api/thumb`.
+    /// True when the first page of a PDF can be had as a picture from `/api/picture`.
     pdf: bool,
     /// True with `--hidden`: dotfiles are served, and a new visitor starts with hidden entries shown.
     hidden: bool,
@@ -1112,9 +1099,27 @@ fn escape_html(text: &str) -> String {
     out
 }
 
+/// True when a request takes an HTML page: a browser's navigation always says so. curl and wget
+/// send `*/*`, which is taken to mean the file itself.
+fn wants_html(headers: &HeaderMap) -> bool {
+    headers.get_all(header::ACCEPT).iter().any(|value| {
+        value.to_str().unwrap_or("").split(',').any(|range| {
+            let mut parts = range.split(';');
+            let kind = parts.next().unwrap_or("").trim();
+            let refused = parts.any(|param| {
+                param
+                    .split_once('=')
+                    .is_some_and(|(name, q)| name.trim() == "q" && q.trim().parse::<f32>().is_ok_and(|q| q == 0.0))
+            });
+            kind.eq_ignore_ascii_case("text/html") && !refused
+        })
+    })
+}
+
 /// The page. Any path that is not one of the server's own gets it, and the page
-/// then shows that path.
-async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
+/// then shows that path. A file's address asked for by anything but a browser, such as
+/// curl or wget, answers with the file itself, as `/raw/` does.
+async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Response {
     let raw_path = uri.path();
     let behind = raw_path
         .strip_prefix("/-/")
@@ -1136,6 +1141,16 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
             return (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response();
         }
     }
+    let found = match found {
+        Some(file) if file.meta.is_file() && !wants_html(&headers) => {
+            let mut response = raw::serve(file, &headers).await.unwrap_or_else(|_| not_found());
+            response
+                .headers_mut()
+                .insert(header::VARY, HeaderValue::from_static("accept"));
+            return response;
+        }
+        found => found,
+    };
 
     let target = match &found {
         Some(found) => Target {
@@ -1176,19 +1191,17 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
     let Some(shell) = assets::get("index.html") else {
         return fail(StatusCode::INTERNAL_SERVER_ERROR, "the page is missing from this build");
     };
-    let mut extra = String::new();
-    if app.options.accent.is_some() {
-        extra.push_str("<link rel=\"stylesheet\" href=\"/assets/brand.css\">\n");
-    }
-    if app.options.css.is_some() {
-        extra.push_str("<link rel=\"stylesheet\" href=\"/assets/custom.css\">\n");
-    }
+    let extra = if app.options.accent.is_some() {
+        "<link rel=\"stylesheet\" href=\"/assets/brand.css\">\n"
+    } else {
+        ""
+    };
     let html = String::from_utf8_lossy(&shell.bytes)
         .replace(
             "<title>okfs</title>",
             &format!("<title>{}</title>", escape_html(&app.options.title)),
         )
-        .replace("<!--okfs:css-->", &extra)
+        .replace("<!--okfs:css-->", extra)
         .replace("<!--okfs:config-->", &config);
     let policy = if app.options.allow_delete {
         format!("{PAGE_POLICY}; {NO_FRAMING}")
@@ -1201,6 +1214,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
             (header::CONTENT_TYPE, "text/html; charset=utf-8"),
             (header::CACHE_CONTROL, "no-cache"),
             (header::CONTENT_SECURITY_POLICY, policy.as_str()),
+            (header::VARY, "accept"),
         ],
         html,
     )
@@ -1208,9 +1222,9 @@ async fn page(State(app): State<Arc<App>>, uri: Uri) -> Response {
 }
 
 /// Reading gets the page. Every other method is refused: no address of a file takes a write.
-async fn page_or_refuse(state: State<Arc<App>>, method: Method, uri: Uri) -> Response {
+async fn page_or_refuse(state: State<Arc<App>>, method: Method, uri: Uri, headers: HeaderMap) -> Response {
     if method == Method::GET || method == Method::HEAD {
-        page(state, uri).await
+        page(state, uri, headers).await
     } else {
         (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "GET, HEAD")]).into_response()
     }

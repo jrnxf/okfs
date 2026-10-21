@@ -319,10 +319,16 @@ impl Root {
         })
     }
 
-    /// When the file `name` in the folder `dir` was last written, and its size. Only a plain
-    /// file has them here: a link is not followed and has neither, and neither has a folder.
+    /// When the file `name` in the folder `dir` was last written, and its size. A link to a file
+    /// in the served folder has its file's, as the listing shows it. A link that leads out has
+    /// neither, and neither has a folder.
     pub fn stamp(&self, dir: &Path, name: &str) -> Option<Stamp> {
-        let meta = fs::symlink_metadata(dir.join(name)).ok()?;
+        let at = dir.join(name);
+        let mut meta = fs::symlink_metadata(&at).ok()?;
+        if meta.is_symlink() {
+            let target = at.canonicalize().ok().filter(|target| self.contains(target))?;
+            meta = fs::metadata(target).ok()?;
+        }
         meta.is_file().then(|| Stamp {
             modified: meta.modified().ok(),
             size: meta.len(),
@@ -446,19 +452,42 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn only_a_plain_file_has_a_time_and_a_size() {
+    fn only_a_file_has_a_time_and_a_size() {
         use std::os::unix::fs::symlink;
-        let (_tmp, root, _outside) = served_beside_outside();
+        let (_tmp, root, outside) = served_beside_outside();
         let served = root.dir();
         fs::create_dir_all(served.join("folder")).unwrap();
         fs::write(served.join("file.txt"), "inside").unwrap();
-        symlink(served.join("file.txt"), served.join("link.txt")).unwrap();
+        symlink(served.join("folder"), served.join("folder-link")).unwrap();
+        symlink(outside.join("kept.txt"), served.join("out.txt")).unwrap();
+        symlink(served.join("gone.txt"), served.join("dangling.txt")).unwrap();
 
         let stamp = root.stamp(served, "file.txt").unwrap();
         assert!(stamp.modified.is_some());
         assert_eq!(stamp.size, 6);
-        for name in ["link.txt", "folder", "missing.txt"] {
+        for name in ["folder", "folder-link", "out.txt", "dangling.txt", "missing.txt"] {
             assert!(root.stamp(served, name).is_none(), "{name}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_file_inside_has_its_files_time_and_size() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, _outside) = served_beside_outside();
+        let served = root.dir();
+        fs::create_dir_all(served.join("deep")).unwrap();
+        fs::write(served.join("deep/file.txt"), "inside").unwrap();
+        symlink(served.join("deep/file.txt"), served.join("link.txt")).unwrap();
+        symlink("../link.txt", served.join("deep/link-to-link.txt")).unwrap();
+
+        let file = root.stamp(&served.join("deep"), "file.txt").unwrap();
+        for (dir, name) in [
+            (served.to_path_buf(), "link.txt"),
+            (served.join("deep"), "link-to-link.txt"),
+        ] {
+            let link = root.stamp(&dir, name).unwrap();
+            assert_eq!((link.modified, link.size), (file.modified, 6), "{name}");
         }
     }
 

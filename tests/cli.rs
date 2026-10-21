@@ -2,9 +2,10 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
@@ -25,8 +26,13 @@ impl Drop for Running {
 
 /// Starts okfs on `served` with `args`, on a port the system picks, and waits until it listens.
 fn start(served: &Path, cache: &Path, args: &[&str]) -> Running {
+    launch(served, cache, &[&["--port", "0"], args].concat())
+}
+
+/// Starts okfs on `served` with `args` alone, and waits until it listens.
+fn launch(served: &Path, cache: &Path, args: &[&str]) -> Running {
     let mut child = Command::new(env!("CARGO_BIN_EXE_okfs"))
-        .args(["--port", "0", "--no-open"])
+        .arg("--no-open")
         .args(args)
         .arg(served)
         .env("XDG_CACHE_HOME", cache)
@@ -130,4 +136,113 @@ fn a_rescan_is_said_at_start_and_a_span_that_is_not_one_is_refused() {
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains("not a span of time"), "--rescan {wrong}: {error}");
     }
+}
+
+/// Runs okfs with `args` until it ends, and returns how it ended and what it wrote to stderr.
+fn run(args: &[&str]) -> (ExitStatus, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_okfs")).args(args).output().unwrap();
+    (output.status, String::from_utf8_lossy(&output.stderr).into_owned())
+}
+
+/// Waits for okfs to end by itself, for at most `limit`.
+fn ended(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
+    let since = Instant::now();
+    while since.elapsed() < limit {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    None
+}
+
+#[test]
+fn a_busy_port_is_passed_over_only_when_no_port_was_given() {
+    // 8080 is held here, unless something else on this machine holds it already.
+    let _held = TcpListener::bind("127.0.0.1:8080");
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("docs")).unwrap();
+    let okfs = launch(tmp.path(), &tmp.path().join("cache"), &[]);
+    assert_ne!(okfs.port, 8080);
+    assert!(
+        okfs.said.contains(&format!("port     {}, as 8080 is busy", okfs.port)),
+        "{}",
+        okfs.said
+    );
+    assert_eq!(status(okfs.port, "localhost"), 200);
+}
+
+#[test]
+fn a_busy_port_that_was_asked_for_is_never_traded_for_another() {
+    let held = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port().to_string();
+    let tmp = TempDir::new().unwrap();
+    let (ended, error) = run(&["--no-open", "--port", &port, tmp.path().to_str().unwrap()]);
+    assert!(!ended.success());
+    assert!(error.contains(&format!("cannot listen on 127.0.0.1:{port}")), "{error}");
+    assert!(error.contains("--port 0 for any free one"), "{error}");
+}
+
+#[test]
+fn localhost_is_an_address_to_listen_on() {
+    let (_tmp, okfs) = site(&["--bind", "localhost"]);
+    assert!(okfs.said.contains("http://127.0.0.1:"), "{}", okfs.said);
+    assert_eq!(status(okfs.port, "localhost"), 200);
+
+    let (ended, error) = run(&["--no-open", "--bind", "files.example.test", "."]);
+    assert!(!ended.success());
+    assert!(error.contains("not an IP address"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn sigterm_stops_okfs_as_ctrl_c_does_even_with_a_page_open() {
+    for signal in ["TERM", "INT"] {
+        let (_tmp, mut okfs) = site(&[]);
+        // An open page holds a stream of changes that never ends by itself.
+        let mut stream = TcpStream::connect(("127.0.0.1", okfs.port)).unwrap();
+        write!(stream, "GET /api/events HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        let mut first = [0; 12];
+        stream.read_exact(&mut first).unwrap();
+        assert_eq!(&first, b"HTTP/1.1 200");
+
+        let pid = okfs.child.id().to_string();
+        assert!(
+            Command::new("kill")
+                .args(["-s", signal, &pid])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let status = ended(&mut okfs.child, Duration::from_secs(5)).expect("okfs stopped");
+        assert!(status.success(), "SIG{signal}: {status}");
+    }
+}
+
+#[test]
+fn completions_and_the_manual_page_are_printed_for_packages() {
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_okfs"))
+            .args(["completions", shell])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}");
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            text.contains("okfs") && text.contains("allow-delete"),
+            "{shell}: {text}"
+        );
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_okfs"))
+        .arg("manpage")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let page = String::from_utf8_lossy(&output.stdout);
+    assert!(page.starts_with(".ie") || page.contains(".TH okfs 1"), "{page}");
+    assert!(page.contains("allow\\-delete"), "{page}");
+
+    let (ended, error) = run(&["completions", "tcsh"]);
+    assert!(!ended.success());
+    assert!(error.contains("invalid value 'tcsh'"), "{error}");
 }

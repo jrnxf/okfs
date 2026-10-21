@@ -54,19 +54,40 @@ struct Flush {
     every: Duration,
 }
 
+/// What an entry is, in one byte, so a node stays as small as it was.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    File,
+    /// A link to a file in the served folder. It has its file's time and size.
+    FileLink,
+    /// A real folder that the walk goes into.
+    Folder,
+    /// A folder the walk does not go into: a link to one, or one that is left out.
+    Unwalked,
+}
+
 struct Node {
     /// Where its name ends in `Folder::names`. It starts where the name before it ends.
     end: u32,
     /// The name is plain ASCII, which the search can look through a byte at a time.
     ascii: bool,
-    dir: bool,
-    /// A real folder, not a link to one: the walk goes in.
-    walk: bool,
+    kind: Kind,
     /// A listing hides it until hidden entries are asked for: see `Index::hides`.
     hidden: bool,
-    /// When a file was last written, in seconds. Zero for a folder, for a link, and for
-    /// a time that could not be read. Kept as 32 bits so a node stays as small as it was.
+    /// When a file was last written, in seconds. Zero for a folder, and for a time that
+    /// could not be read. Kept as 32 bits so a node stays as small as it was.
     modified: u32,
+}
+
+impl Node {
+    fn dir(&self) -> bool {
+        matches!(self.kind, Kind::Folder | Kind::Unwalked)
+    }
+
+    /// A real folder, not a link to one: the walk goes in.
+    fn walk(&self) -> bool {
+        self.kind == Kind::Folder
+    }
 }
 
 /// One folder's entries, laid out for the search: the names side by side in one string, read in
@@ -75,7 +96,7 @@ struct Folder {
     nodes: Vec<Node>,
     names: String,
     /// Each file's size in bytes, beside the nodes rather than in them: the search reads every
-    /// node and no size, and only sorts and pages by them. Zero for a folder and for a link.
+    /// node and no size, and only sorts and pages by them. Zero for a folder.
     sizes: Vec<u64>,
     /// It is inside a hidden folder: see `in_hidden`.
     hidden: bool,
@@ -124,7 +145,7 @@ impl Folder {
 
     /// All that a listing tells of each entry.
     fn shapes(&self) -> impl Iterator<Item = (&str, bool, bool, bool)> {
-        self.entries().map(|(name, n)| (name, n.dir, n.walk, n.hidden))
+        self.entries().map(|(name, n)| (name, n.dir(), n.walk(), n.hidden))
     }
 }
 
@@ -170,6 +191,10 @@ pub struct Index {
     /// Called after each walk of the whole tree that is not the first.
     rescanned: OnceLock<Box<dyn Fn() + Send + Sync>>,
     last: Mutex<Option<Last>>,
+    /// The links to files, by the file each leads to, so that a file written is stamped again
+    /// under its links too. A link that is gone or leads elsewhere is let go when its file is
+    /// next written.
+    links: Mutex<HashMap<PathBuf, HashSet<PathBuf>>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -180,10 +205,10 @@ pub struct Hit {
     pub idx: Vec<u32>,
     /// True when `idx` counts into the name, false when into the whole path.
     pub name: bool,
-    /// When a file was last written, in seconds. Zero for a folder, for a link, and for a time
+    /// When a file was last written, in seconds. Zero for a folder, and for a time
     /// that could not be read.
     pub m: u32,
-    /// A file's size in bytes. Zero for a folder and for a link.
+    /// A file's size in bytes. Zero for a folder.
     pub s: u64,
     /// For a folder, how many entries a listing of it shows: hidden ones only when they are searched.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,6 +293,7 @@ impl Index {
             feed: Feed::default(),
             rescanned: OnceLock::new(),
             last: Mutex::new(None),
+            links: Mutex::default(),
         })
     }
 
@@ -441,7 +467,7 @@ impl Index {
             let Some(folder) = self.read(&dir, &rules) else {
                 continue;
             };
-            for (name, _) in folder.entries().filter(|(_, n)| n.walk) {
+            for (name, _) in folder.entries().filter(|(_, n)| n.walk()) {
                 let inside = paths::join(&dir, name);
                 let rules = self.skip.enter(&self.root.dir().join(&inside), false, &rules);
                 todo.push_back((inside, rules));
@@ -468,12 +494,27 @@ impl Index {
         let entries = seen.into_iter().map(|s| {
             let stamp = if s.dir { None } else { self.root.stamp(&at, &s.name) };
             let modified = seconds(stamp.and_then(|stamp| stamp.modified));
+            if s.link && !s.dir {
+                let link = at.join(&s.name);
+                if let Ok(file) = link.canonicalize() {
+                    self.links
+                        .lock()
+                        .expect("the links lock")
+                        .entry(file)
+                        .or_default()
+                        .insert(link);
+                }
+            }
             let left_out = s.dir && self.skip.skips(rules, &at, dir.is_empty(), &s.name);
             let node = Node {
                 end: 0,
                 ascii: false,
-                dir: s.dir,
-                walk: s.dir && !s.link && !left_out,
+                kind: match (s.dir, s.link || left_out) {
+                    (true, false) => Kind::Folder,
+                    (true, true) => Kind::Unwalked,
+                    (false, false) => Kind::File,
+                    (false, true) => Kind::FileLink,
+                },
                 hidden: left_out || s.name.starts_with('.'),
                 modified,
             };
@@ -592,7 +633,9 @@ impl Index {
     /// Reads the time and size of each written file again, the way `read` does, and writes
     /// them into the index: one look at the disk per file, however often it was written to
     /// since the last batch.
-    fn restamp(&self, written: HashSet<PathBuf>) {
+    fn restamp(&self, mut written: HashSet<PathBuf>) {
+        let through = self.links_to(&written);
+        written.extend(through);
         let mut stamps: HashMap<String, HashMap<String, (u32, u64)>> = HashMap::new();
         for path in written {
             let (Some(dir), Some(name)) = (self.dir_of(&path), path.file_name().and_then(|name| name.to_str())) else {
@@ -613,12 +656,28 @@ impl Index {
                 continue;
             };
             for at in 0..folder.len() {
-                if let Some(&(time, size)) = stamps.get(folder.name(at)).filter(|_| !folder.nodes[at].dir) {
+                if let Some(&(time, size)) = stamps.get(folder.name(at)).filter(|_| !folder.nodes[at].dir()) {
                     folder.nodes[at].modified = time;
                     folder.sizes[at] = size;
                 }
             }
         }
+    }
+
+    /// The links that led to the files `written`, when they were read. Those that no longer do are let go.
+    fn links_to(&self, written: &HashSet<PathBuf>) -> Vec<PathBuf> {
+        let mut links = self.links.lock().expect("the links lock");
+        let mut through = Vec::new();
+        for file in written {
+            let Some(found) = links.get_mut(file) else { continue };
+            // Each is stamped again even so: one whose file was removed has no time now.
+            through.extend(found.iter().cloned());
+            found.retain(|link| link.canonicalize().is_ok_and(|target| target == *file));
+            if found.is_empty() {
+                links.remove(file);
+            }
+        }
+        through
     }
 
     /// What a changed path is now, when a listing shows it.
@@ -673,7 +732,7 @@ impl Index {
             match tree.dirs.get(dir) {
                 Some(old) => old
                     .entries()
-                    .filter(|(_, n)| n.walk)
+                    .filter(|(_, n)| n.walk())
                     .map(|(name, _)| name.to_owned())
                     .collect(),
                 // Not indexed yet: its parent's reread will walk it.
@@ -681,7 +740,11 @@ impl Index {
                 None => HashSet::new(),
             }
         };
-        let now: HashSet<&str> = folder.entries().filter(|(_, n)| n.walk).map(|(name, _)| name).collect();
+        let now: HashSet<&str> = folder
+            .entries()
+            .filter(|(_, n)| n.walk())
+            .map(|(name, _)| name)
+            .collect();
         let added: Vec<Tree> = now
             .iter()
             .filter(|name| !known.contains(**name))
@@ -805,7 +868,8 @@ impl Index {
     }
 
     /// The files written last, newest first. Read from memory: the disk is not looked
-    /// at. Folders and links never appear, and neither does a file whose time is unknown.
+    /// at. Folders never appear, and neither does a file whose time is unknown. Nor does a link:
+    /// the file it leads to is listed under its own name.
     /// Without `all`, neither does a hidden one: see `hides`.
     pub fn recent(&self, all: bool) -> Recent {
         let tree = self.tree.read().expect("the index lock");
@@ -816,7 +880,7 @@ impl Index {
         for (dir, folder) in tree.dirs.iter().filter(|(_, folder)| all || !folder.hidden) {
             for (name, node) in folder
                 .entries()
-                .filter(|(_, n)| !n.dir && n.modified != 0 && (all || !n.hidden))
+                .filter(|(_, n)| n.kind == Kind::File && n.modified != 0 && (all || !n.hidden))
             {
                 best.push(Reverse((node.modified, Reverse(&**dir), Reverse(name))));
                 if best.len() > RECENT {
@@ -1240,7 +1304,7 @@ fn scan<'t>(
             score,
             dir,
             name,
-            folder: node.dir,
+            folder: node.dir(),
             at: at as u32,
             by_name,
             close,
@@ -1442,7 +1506,7 @@ impl Tree {
             todo.extend(
                 folder
                     .entries()
-                    .filter(|(_, n)| n.walk)
+                    .filter(|(_, n)| n.walk())
                     .map(|(name, _)| paths::join(&dir, name)),
             );
         }
@@ -2099,9 +2163,9 @@ mod tests {
                 idx.sort_unstable();
                 idx.dedup();
                 Hit {
-                    c: node.dir.then(|| tree.shown_in(&path, all)).flatten(),
+                    c: node.dir().then(|| tree.shown_in(&path, all)).flatten(),
                     path,
-                    dir: node.dir,
+                    dir: node.dir(),
                     idx,
                     name: by_name,
                     m: node.modified,

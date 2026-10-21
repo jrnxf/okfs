@@ -1,12 +1,14 @@
-//! The command line: `okfs [PATH]`, `okfs theme check <file>` and `okfs theme list`.
+//! The command line: `okfs [PATH]`, `okfs theme check <file>`, `okfs theme list` and
+//! `okfs completions <shell>`.
 
-use std::io::IsTerminal;
-use std::net::{IpAddr, SocketAddr};
+use std::io::{self, IsTerminal};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 use crate::every;
 use crate::index::{Follow, Index};
@@ -19,6 +21,7 @@ const EXAMPLES: &str = "\
 Examples:
   okfs                            serve this folder at http://127.0.0.1:8080/
   okfs ~/photos --port 9000       serve another folder on another port
+  okfs --port 0                   serve on any free port
   okfs --bind 0.0.0.0             let other machines on the network in
   okfs --bind 0.0.0.0 --qr        and print a QR code a phone can scan to open it
   okfs --no-open                  serve without opening the browser
@@ -28,6 +31,7 @@ Examples:
   okfs theme check ./mine.css     check a theme file against the contract
   okfs --allow-delete             let visitors delete files and folders
   okfs --rescan 6h                read the whole tree again every 6 hours instead of watching it
+  okfs completions zsh            print the completions for a shell
 
 Everything is read only unless you pass --allow-delete. There is no upload and no editing.";
 
@@ -48,12 +52,12 @@ struct Serve {
     path: PathBuf,
 
     /// Address to listen on. Use 0.0.0.0 to let other machines in
-    #[arg(short, long, default_value = "127.0.0.1", value_name = "ADDR")]
+    #[arg(short, long, default_value = "127.0.0.1", value_name = "ADDR", value_parser = address)]
     bind: IpAddr,
 
-    /// Port to listen on
-    #[arg(short, long, default_value_t = 8080)]
-    port: u16,
+    /// Port to listen on, 0 for any free one. Without it, 8080 or the next free port after it
+    #[arg(short, long)]
+    port: Option<u16>,
 
     /// Print a QR code for the address another device can use. Needs a terminal
     #[arg(long)]
@@ -70,10 +74,6 @@ struct Serve {
     /// Theme a new visitor starts in: a built-in name or a theme file
     #[arg(long, default_value = "default", value_name = "NAME|FILE", help_heading = "Look")]
     theme: String,
-
-    /// Your own stylesheet, loaded after the theme. Class names are not a promise
-    #[arg(long, value_name = "FILE", help_heading = "Look")]
-    css: Option<PathBuf>,
 
     /// A Markdown note shown above every folder
     #[arg(long, value_name = "FILE.md", help_heading = "Look")]
@@ -112,6 +112,11 @@ enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Print the completions for a shell, to load from its startup file or a completions folder
+    Completions { shell: Shell },
+    /// Print the manual page, okfs(1), for packages to install
+    #[command(hide = true)]
+    Manpage,
     /// Draw the first page of the PDF on standard input. okfs runs this itself: see `pdf`
     #[command(hide = true)]
     PdfPage { width: u32 },
@@ -137,6 +142,17 @@ pub fn run() -> ExitCode {
             theme_list();
             Ok(())
         }
+        Some(Command::Completions { shell }) => {
+            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut io::stdout());
+            Ok(())
+        }
+        Some(Command::Manpage) => match clap_mangen::Man::new(Cli::command()).render(&mut io::stdout()) {
+            // Read only in part, as by `head`: what was read is what was wanted.
+            Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
+                Err(format!("cannot write the manual page: {error}"))
+            }
+            _ => Ok(()),
+        },
         Some(Command::PdfPage { width }) => {
             // Its failures are for the server that started it, which reads the exit code alone.
             return match crate::pdf::page(width) {
@@ -179,6 +195,66 @@ fn theme_list() {
     }
 }
 
+/// An address to listen on: an IP address, or `localhost` for 127.0.0.1.
+fn address(text: &str) -> Result<IpAddr, String> {
+    if text.eq_ignore_ascii_case("localhost") {
+        return Ok(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+    text.parse()
+        .map_err(|_| "not an IP address such as 127.0.0.1 or 0.0.0.0, or localhost".to_owned())
+}
+
+/// The port okfs listens on when none is given.
+const PORT: u16 = 8080;
+/// Ports tried after it when it is busy and none was given, at most.
+const PORTS_AFTER: u16 = 20;
+
+/// Listens on `bind`, at the port asked for or, when none was, at the first free one from 8080.
+/// A port that was asked for is never traded for another: a proxy or a bookmark points at it.
+async fn listen(bind: IpAddr, asked: Option<u16>) -> Result<tokio::net::TcpListener, String> {
+    let ports = match asked {
+        Some(port) => port..=port,
+        None => PORT..=PORT + PORTS_AFTER,
+    };
+    let (first, last) = (*ports.start(), *ports.end());
+    for port in ports {
+        let address = SocketAddr::new(bind, port);
+        match tokio::net::TcpListener::bind(address).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse && port < last => {}
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse && asked.is_some() => {
+                return Err(format!(
+                    "cannot listen on {address}: the port is busy. Pass another --port, or --port 0 for any free one"
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+                return Err(format!(
+                    "cannot listen on {bind}: ports {first} to {last} are all busy. Pass --port 0 for any free one"
+                ));
+            }
+            Err(error) => return Err(format!("cannot listen on {address}: {error}")),
+        }
+    }
+    unreachable!("a range of ports is never empty")
+}
+
+/// Ends when okfs is asked to stop: Ctrl-C in a terminal, or SIGTERM from a service manager such as
+/// systemd or docker.
+async fn stopped() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 /// Whether to open the browser: not when asked not to, not when output goes anywhere but a
 /// terminal (a service, a pipe), and not over SSH, where it would open on the far machine.
 fn should_open(no_open: bool, terminal: bool, ssh: bool) -> bool {
@@ -210,19 +286,16 @@ fn serve(args: Serve) -> Result<(), String> {
     {
         return Err(format!("--index {index} is not a plain file name such as index.html"));
     }
-    for (flag, file) in [("--css", &args.css), ("--header", &args.header)] {
-        if let Some(file) = file
-            && !file.is_file()
-        {
-            return Err(format!("{flag} {} is not a file", file.display()));
-        }
+    if let Some(header) = &args.header
+        && !header.is_file()
+    {
+        return Err(format!("--header {} is not a file", header.display()));
     }
 
     let options = Options {
         title: args.title,
         theme,
         accent: args.accent,
-        css: args.css,
         header: args.header,
         index: args.index,
         allow_hosts: args.allow_host,
@@ -243,11 +316,10 @@ fn serve(args: Serve) -> Result<(), String> {
 
     let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start: {error}"))?;
     runtime.block_on(async {
-        let address = SocketAddr::new(args.bind, args.port);
-        let listener = tokio::net::TcpListener::bind(address)
-            .await
-            .map_err(|error| format!("cannot listen on {address}: {error}"))?;
-        let address = listener.local_addr().unwrap_or(address);
+        let listener = listen(args.bind, args.port).await?;
+        let address = listener
+            .local_addr()
+            .map_err(|error| format!("cannot listen on {}: {error}", args.bind))?;
         println!("okfs {}", env!("CARGO_PKG_VERSION"));
         let writes = if args.allow_delete {
             "visitors can delete"
@@ -257,6 +329,9 @@ fn serve(args: Serve) -> Result<(), String> {
         println!("  serving  {} ({writes})", root.dir().display());
         if let Follow::Rescan(every) = follow {
             println!("  rescan   every {}", every::spoken(every));
+        }
+        if args.port.is_none() && address.port() != PORT {
+            println!("  port     {}, as {PORT} is busy", address.port());
         }
         let addresses = lan::addresses(address.ip(), &lan::found());
         for (index, ip) in addresses.iter().enumerate() {
@@ -292,7 +367,7 @@ fn serve(args: Serve) -> Result<(), String> {
         }
         axum::serve(listener, server::router(app))
             .with_graceful_shutdown(async move {
-                let _ = tokio::signal::ctrl_c().await;
+                stopped().await;
                 // An open page holds a stream that would never end by itself.
                 index.feed().close();
             })

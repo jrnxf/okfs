@@ -111,9 +111,10 @@ export const urls = {
   list: (path: string, limit?: number, depth?: number, follow: string[] = []) =>
     `/api/list?path=${encodeURIComponent(path)}${limit ? `&limit=${limit}` : ""}${depth ? `&depth=${depth}` : ""}` +
     `${follow.length ? `&follow=${encodeURIComponent(follow.join("/"))}` : ""}${all()}`,
-  preview: (path: string) => `/api/preview?path=${encodeURIComponent(path)}`,
+  /** The preview of one file: `getAnswer` takes it out of the answer, which holds it under its path. */
+  preview: (path: string) => `/api/previews?p=${encodeURIComponent(path)}`,
   /** The text of a file as it is written, as source code, whatever the file is. */
-  source: (path: string) => `/api/preview?path=${encodeURIComponent(path)}&raw=1`,
+  source: (path: string) => `/api/previews?p=${encodeURIComponent(path)}&raw=1`,
   /** Several text files in one answer, by path, source code cut to its first `lines` lines. */
   previews: (paths: string[], lines: number, source = false) =>
     `/api/previews?lines=${lines}${source ? "&raw=1" : ""}&${paths.map((path) => `p=${encodeURIComponent(path)}`).join("&")}`,
@@ -127,7 +128,7 @@ export const urls = {
   recent: () => `/api/recent${showsHidden() ? "?all=1" : ""}`,
   /** The time and size make a rewritten picture a new address: the browser keeps a thumbnail by its address. */
   thumb: (path: string, width: number, modified: number, size: number) =>
-    `/api/thumb?path=${encodeURIComponent(path)}&w=${width}&m=${modified}&s=${size}`,
+    `/api/picture?path=${encodeURIComponent(path)}&w=${width}&m=${modified}&s=${size}`,
   /** A picture whole, as a PNG or a JPEG: see `decodedByServer`. */
   picture: (path: string) => `/api/picture?path=${encodeURIComponent(path)}`,
   /** The stream of changes to the served folder. */
@@ -181,6 +182,19 @@ export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> 
   return (await response.json()) as T;
 }
 
+/**
+ * What an address of the server answers. The preview of one file comes from `/api/previews`, which answers
+ * with each file's preview under its path: that one is taken out, and a file with none fails as a missing one.
+ */
+export async function getAnswer<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const at = new URL(url, location.href);
+  if (at.pathname !== "/api/previews") return getJson<T>(url, signal);
+  const all = await getJson<Record<string, T>>(url, signal);
+  const path = at.searchParams.get("p") ?? "";
+  if (!Object.hasOwn(all, path)) throw new HttpError(404);
+  return all[path] as T;
+}
+
 /** A delete that did not go through, with the server's reason. */
 export class DeleteError extends Error {
   /** `partial`: a folder was being removed when it stopped, so part of it may be gone. */
@@ -203,7 +217,10 @@ export async function deleteEntry(path: string): Promise<void> {
 }
 
 /** The served path an address of the server asks about, or `null` when it names none. */
-export const pathOf = (url: string): string | null => new URL(url, location.href).searchParams.get("path");
+export const pathOf = (url: string): string | null => {
+  const query = new URL(url, location.href).searchParams;
+  return query.get("path") ?? query.get("p");
+};
 
 export const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 export const nameOf = (path: string): string => path.slice(path.lastIndexOf("/") + 1);

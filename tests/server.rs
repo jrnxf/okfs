@@ -124,6 +124,21 @@ async fn get(app: &axum::Router, uri: &str) -> (Response<()>, Vec<u8>) {
     send(app, Request::get(uri).body(Body::empty()).unwrap()).await
 }
 
+/// What a browser sends when it goes to an address.
+const BROWSER_ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+
+/// A GET as a browser's navigation sends it.
+async fn browse(app: &axum::Router, uri: &str) -> (Response<()>, Vec<u8>) {
+    let request = Request::get(uri).header(header::ACCEPT, BROWSER_ACCEPT);
+    send(app, request.body(Body::empty()).unwrap()).await
+}
+
+/// The preview of the file at `path`, as `/api/previews` sends it, with `form` after: `&lines=80`, `&raw=1`.
+async fn preview(app: &axum::Router, path: &str, form: &str) -> Value {
+    let all = json(app, &format!("/api/previews?p={}{form}", path.replace('/', "%2F"))).await;
+    all.get(path).cloned().unwrap_or(Value::Null)
+}
+
 async fn json(app: &axum::Router, uri: &str) -> Value {
     let (response, body) = get(app, uri).await;
     assert_eq!(response.status(), StatusCode::OK, "{uri}");
@@ -188,8 +203,7 @@ async fn no_path_leaves_the_served_folder() {
         let folder = escape.rsplit_once('/').map_or("..", |(dir, _)| dir);
         let tries = [
             format!("/raw/{escape}"),
-            format!("/api/preview?path={escape}"),
-            format!("/api/thumb?path={escape}"),
+            format!("/api/picture?path={escape}"),
             format!("/api/archive?path={escape}"),
             format!("/api/list?path={escape}"),
             format!("/api/list?path={folder}"),
@@ -205,6 +219,13 @@ async fn no_path_leaves_the_served_folder() {
             let text = String::from_utf8_lossy(&body);
             assert!(!text.contains(SECRET), "{uri} leaked the file outside");
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        }
+        // Previews by path leave out what is not there, so the answer is empty.
+        let uri = format!("/api/previews?p={escape}");
+        if let Ok(request) = Request::get(&uri).body(Body::empty()) {
+            let (response, body) = send(&app, request).await;
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            assert_eq!(body, b"{}", "{uri}");
         }
     }
 }
@@ -224,6 +245,21 @@ async fn links_that_stay_inside_work_and_links_that_leave_are_not_listed() {
     assert!(!names.contains(&"link-out.txt"));
     assert!(!names.contains(&"link-out-dir"));
     assert!(!names.contains(&".hidden"));
+
+    // A link inside has its file's size and time everywhere a file is shown with them.
+    let entries = listing["entries"].as_array().unwrap();
+    let listed = entries.iter().find(|entry| entry["n"] == "link-in.txt").unwrap();
+    assert_eq!(listed["s"], 6);
+    assert!(listed["m"].as_i64().unwrap() > 0);
+    for uri in [
+        "/api/search?q=link-in",
+        "/api/search?q=link-in&offset=0&limit=10&sort=size",
+    ] {
+        let found = json(&app, uri).await;
+        let hit = &found["hits"][0];
+        assert_eq!(hit["path"], "link-in.txt", "{uri}: {found}");
+        assert_eq!((&hit["s"], &hit["m"]), (&listed["s"], &listed["m"]), "{uri}: {found}");
+    }
 
     let found = json(&app, "/api/search?q=secret").await;
     assert_eq!(found["total"], 0, "the index reached outside: {found}");
@@ -245,7 +281,7 @@ async fn nothing_can_be_written() {
         "/raw/new.txt",
         "/api/list?path=",
         "/api/upload",
-        "/api/preview?path=a.txt",
+        "/api/previews?p=a.txt",
         "/zip/",
         "/theme.css",
         "/assets/main.js",
@@ -479,21 +515,21 @@ async fn thumbnails_shrink_turn_upright_and_refuse_oversized_input() {
     });
     let before = snapshot(&site.served).len();
 
-    let (response, body) = get(&app, "/api/thumb?path=wide.png&w=100").await;
+    let (response, body) = get(&app, "/api/picture?path=wide.png&w=100").await;
     assert_eq!(response.status(), StatusCode::OK);
     let small = image::load_from_memory(&body).unwrap();
     assert_eq!((small.width(), small.height()), (320, 160));
 
-    let (response, body) = get(&app, "/api/thumb?path=sideways.jpg&w=640").await;
+    let (response, body) = get(&app, "/api/picture?path=sideways.jpg&w=640").await;
     assert_eq!(response.status(), StatusCode::OK);
     let upright = image::load_from_memory(&body).unwrap();
     assert_eq!((upright.width(), upright.height()), (30, 60));
 
-    for uri in ["/api/thumb?path=bomb.png", "/api/thumb?path=huge.png"] {
+    for uri in ["/api/picture?path=bomb.png&w=640", "/api/picture?path=huge.png&w=640"] {
         assert_eq!(get(&app, uri).await.0.status(), StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
     }
     assert_eq!(
-        get(&app, "/api/thumb?path=a.txt").await.0.status(),
+        get(&app, "/api/picture?path=a.txt&w=640").await.0.status(),
         StatusCode::UNSUPPORTED_MEDIA_TYPE
     );
 
@@ -536,9 +572,9 @@ async fn thumbnails_are_cached_outside_the_served_folder() {
         cache: Some(cache.clone()),
         ..Options::default()
     });
-    let (_, first) = get(&app, "/api/thumb?path=wide.png&w=160").await;
+    let (_, first) = get(&app, "/api/picture?path=wide.png&w=160").await;
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 1);
-    let (_, second) = get(&app, "/api/thumb?path=wide.png&w=160").await;
+    let (_, second) = get(&app, "/api/picture?path=wide.png&w=160").await;
     assert_eq!(first, second);
 }
 
@@ -583,7 +619,7 @@ async fn the_first_page_of_a_pdf_is_drawn_once_and_kept_outside_the_served_folde
     let app = site.app(drawing(&cache));
     let before = snapshot(&site.served).len();
 
-    let (response, first) = get(&app, "/api/thumb?path=doc.pdf&w=600").await;
+    let (response, first) = get(&app, "/api/picture?path=doc.pdf&w=600").await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
     let page = image::load_from_memory(&first).unwrap().into_rgb8();
@@ -599,7 +635,7 @@ async fn the_first_page_of_a_pdf_is_drawn_once_and_kept_outside_the_served_folde
         drawer: Some(site.outside.join("no-such-program")),
         ..drawing(&cache)
     });
-    assert_eq!(get(&kept, "/api/thumb?path=doc.pdf&w=600").await.1, first);
+    assert_eq!(get(&kept, "/api/picture?path=doc.pdf&w=600").await.1, first);
 }
 
 #[cfg(feature = "pdf")]
@@ -622,13 +658,13 @@ async fn a_pdf_that_cannot_be_drawn_is_refused_and_the_server_goes_on() {
 
     // No picture is an answer, not a fault: the page then shows the PDF as it did before.
     for name in ["junk.pdf", "cut.pdf", "empty.pdf", "huge.pdf"] {
-        let (response, body) = get(&app, &format!("/api/thumb?path={name}")).await;
+        let (response, body) = get(&app, &format!("/api/picture?path={name}")).await;
         assert_eq!(response.status(), StatusCode::NO_CONTENT, "{name}");
         assert!(body.is_empty(), "{name}");
     }
     // Nothing is kept for a file that was refused, and a good file is still drawn.
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
-    assert_eq!(get(&app, "/api/thumb?path=doc.pdf").await.0.status(), StatusCode::OK);
+    assert_eq!(get(&app, "/api/picture?path=doc.pdf").await.0.status(), StatusCode::OK);
     assert_eq!(get(&app, "/raw/junk.pdf").await.0.status(), StatusCode::OK);
 }
 
@@ -666,7 +702,7 @@ async fn drawing_a_pdf_is_given_up_when_it_takes_too_long() {
     });
 
     let asked = std::time::Instant::now();
-    let (response, _) = get(&app, "/api/thumb?path=doc.pdf").await;
+    let (response, _) = get(&app, "/api/picture?path=doc.pdf").await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(asked.elapsed() < std::time::Duration::from_secs(10));
     // The process was ended, not left running.
@@ -681,7 +717,7 @@ async fn drawing_a_pdf_is_given_up_when_it_takes_too_long() {
     // It is not started a second time for the same file.
     fs::remove_file(&mark).unwrap();
     assert_eq!(
-        get(&app, "/api/thumb?path=doc.pdf").await.0.status(),
+        get(&app, "/api/picture?path=doc.pdf").await.0.status(),
         StatusCode::NO_CONTENT
     );
     assert!(!mark.exists());
@@ -702,7 +738,7 @@ async fn a_pdf_outside_the_served_folder_is_never_drawn() {
         "link-out-dir/secret.pdf",
         "sub/../../outside/secret.pdf",
     ] {
-        let (response, body) = get(&app, &format!("/api/thumb?path={path}")).await;
+        let (response, body) = get(&app, &format!("/api/picture?path={path}")).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         assert!(image::load_from_memory(&body).is_err(), "{path}");
     }
@@ -715,7 +751,7 @@ async fn pdfs_get_no_picture_without_a_program_to_draw_them() {
     fs::write(site.served.join("doc.pdf"), pdf()).unwrap();
     let app = site.app(Options::default());
     assert_eq!(
-        get(&app, "/api/thumb?path=doc.pdf").await.0.status(),
+        get(&app, "/api/picture?path=doc.pdf").await.0.status(),
         StatusCode::UNSUPPORTED_MEDIA_TYPE
     );
 }
@@ -739,7 +775,7 @@ async fn text_previews_are_bounded() {
     fs::write(site.served.join("data.json"), "{\"a\": [1, 2]}").unwrap();
     let app = site.router();
 
-    let large = json(&app, "/api/preview?path=huge.md").await;
+    let large = preview(&app, "huge.md", "").await;
     assert_eq!(
         (large["kind"].as_str(), large["cut"].as_bool()),
         (Some("code"), Some(true))
@@ -748,19 +784,19 @@ async fn text_previews_are_bounded() {
     let html = large["html"].as_str().unwrap();
     assert!(html.ends_with("# line 01</span>"));
     // The start of a cut file says nothing of more, so the whole of it is not asked for again.
-    let start = json(&app, "/api/preview?path=huge.md&lines=80").await;
+    let start = preview(&app, "huge.md", "&lines=80").await;
     assert_eq!(
         (start["more"].as_bool(), start["cut"].as_bool()),
         (Some(true), Some(true))
     );
     assert!(large.get("more").is_none());
 
-    let one = json(&app, "/api/preview?path=one.txt").await;
+    let one = preview(&app, "one.txt", "").await;
     assert_eq!(one["cut"], true);
     assert!(!one["html"].as_str().unwrap().contains('\u{fffd}'));
 
     for path in ["blob.bin", "big.bin"] {
-        let binary = json(&app, &format!("/api/preview?path={path}")).await;
+        let binary = preview(&app, path, "").await;
         assert_eq!(
             (binary["kind"].as_str(), binary["reason"].as_str()),
             (Some("none"), Some("binary")),
@@ -768,14 +804,14 @@ async fn text_previews_are_bounded() {
         );
     }
 
-    let code = json(&app, "/api/preview?path=sub/deep/c.rs").await;
+    let code = preview(&app, "sub/deep/c.rs", "").await;
     assert_eq!(code["kind"], "code");
     assert!(code["html"].as_str().unwrap().contains("tk-k"));
-    let table = json(&app, "/api/preview?path=table.csv").await;
+    let table = preview(&app, "table.csv", "").await;
     assert_eq!(table["head"], serde_json::json!(["name", "n"]));
     assert_eq!(table["rows"], serde_json::json!([["a, b", "1"], ["c", "2"]]));
     assert_eq!(table["numeric"], serde_json::json!([false, true]));
-    assert_eq!(json(&app, "/api/preview?path=data.json").await["kind"], "json");
+    assert_eq!(preview(&app, "data.json", "").await["kind"], "json");
 }
 
 #[tokio::test]
@@ -786,7 +822,7 @@ async fn the_start_of_a_source_file_can_be_asked_for_alone() {
     fs::write(site.served.join("short.rs"), "fn a() {}\nfn b() {}\n").unwrap();
 
     // The first lines only, colored, with the count of all of them and a note that there is more.
-    let start = json(&app, "/api/preview?path=long.rs&lines=80").await;
+    let start = preview(&app, "long.rs", "&lines=80").await;
     assert_eq!(
         (start["kind"].as_str(), start["lines"].as_u64()),
         (Some("code"), Some(200))
@@ -796,12 +832,12 @@ async fn the_start_of_a_source_file_can_be_asked_for_alone() {
     assert_eq!(html.matches("class=\"ln\"").count(), 80);
     assert!(html.contains("tk-k"));
     // Without the limit the whole file comes, and says nothing of more.
-    let whole = json(&app, "/api/preview?path=long.rs").await;
+    let whole = preview(&app, "long.rs", "").await;
     assert_eq!(whole["html"].as_str().unwrap().matches("class=\"ln\"").count(), 200);
     assert!(whole.get("more").is_none());
 
     // A file shorter than the limit is whole already.
-    let short = json(&app, "/api/preview?path=short.rs&lines=80").await;
+    let short = preview(&app, "short.rs", "&lines=80").await;
     assert_eq!(short["lines"], 2);
     assert!(short.get("more").is_none());
 }
@@ -825,11 +861,8 @@ async fn several_previews_come_in_one_answer_by_path() {
         ["data.json", "long.rs", "sub/deep/c.rs"]
     );
     assert_eq!(many["long.rs"]["more"], true);
-    assert_eq!(many["long.rs"], json(&app, "/api/preview?path=long.rs&lines=80").await);
-    assert_eq!(
-        many["sub/deep/c.rs"],
-        json(&app, "/api/preview?path=sub/deep/c.rs").await
-    );
+    assert_eq!(many["long.rs"], preview(&app, "long.rs", "&lines=80").await);
+    assert_eq!(many["sub/deep/c.rs"], preview(&app, "sub/deep/c.rs", "").await);
     assert_eq!(many["data.json"]["kind"], "json");
 
     // With `raw=1` each is as it is written: a table is code, not rows.
@@ -891,7 +924,15 @@ async fn a_folder_downloads_as_a_zip_of_what_is_shown() {
     let mut archive = zip::ZipArchive::new(Cursor::new(body.clone())).unwrap();
     let mut names: Vec<String> = archive.file_names().map(|name| name.unwrap().into_owned()).collect();
     names.sort();
-    let mut expected = vec!["a.txt", "file10.txt", "file2.txt", "sub/b.txt", "sub/deep/c.rs"];
+    let mut expected = vec![
+        "a.txt",
+        "file10.txt",
+        "file2.txt",
+        "sub/",
+        "sub/b.txt",
+        "sub/deep/",
+        "sub/deep/c.rs",
+    ];
     if cfg!(unix) {
         expected.push("link-in.txt");
         expected.sort();
@@ -919,6 +960,128 @@ async fn a_folder_downloads_as_a_zip_of_what_is_shown() {
 }
 
 #[tokio::test]
+async fn a_zip_keeps_each_files_and_folders_time() {
+    let site = Site::new();
+    // 2021-06-15 10:30:43 UTC, and a folder a day earlier.
+    let (file_time, folder_time) = (1_623_753_043, 1_623_666_643);
+    written_at(site.served.join("sub/b.txt"), file_time);
+    written_at(site.served.join("sub/deep"), folder_time);
+    let (_, body) = get(&site.router(), "/zip/").await;
+
+    let mut archive = zip::ZipArchive::new(Cursor::new(body)).unwrap();
+    for (name, seconds) in [("sub/b.txt", file_time), ("sub/deep/", folder_time)] {
+        let entry = archive.by_name(name).unwrap();
+        // To the second in UTC, in the field unzip tools read first.
+        let exact = entry.extra_data_fields().find_map(|field| match field {
+            zip::extra_fields::ExtraField::ExtendedTimestamp(time) => time.mod_time(),
+            _ => None,
+        });
+        assert_eq!(exact, Some(seconds as u32), "{name}");
+        // In local time, to two seconds, in the zip format's own field, for the tools that read only it.
+        let local = jiff::Timestamp::from_second(seconds as i64)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::system())
+            .datetime();
+        let dos = entry.last_modified().unwrap();
+        let fields = |t: &jiff::civil::DateTime| {
+            (
+                t.year() as u16,
+                t.month() as u8,
+                t.day() as u8,
+                t.hour() as u8,
+                t.minute() as u8,
+                t.second() as u8 / 2 * 2,
+            )
+        };
+        let dos = (
+            dos.year(),
+            dos.month(),
+            dos.day(),
+            dos.hour(),
+            dos.minute(),
+            dos.second(),
+        );
+        assert_eq!(dos, fields(&local), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn a_files_page_address_answers_with_the_file_to_anything_but_a_browser() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("api")).unwrap();
+    fs::write(site.served.join("api/notes.md"), "# notes").unwrap();
+    let app = site.router();
+
+    // curl and wget send */*; a request may send no Accept at all.
+    for accept in [Some("*/*"), None, Some("text/html;q=0, */*")] {
+        for (uri, bytes) in [("/sub/b.txt", &b"inside"[..]), ("/-/api/notes.md", b"# notes")] {
+            let mut request = Request::get(uri);
+            if let Some(accept) = accept {
+                request = request.header(header::ACCEPT, accept);
+            }
+            let (response, body) = send(&app, request.body(Body::empty()).unwrap()).await;
+            assert_eq!(response.status(), StatusCode::OK, "{uri} {accept:?}");
+            assert_eq!(body, bytes, "{uri} {accept:?}");
+            assert_eq!(response.headers()[header::VARY], "accept", "{uri}");
+        }
+    }
+    // As /raw/ does, with ranges.
+    let request = Request::get("/a.txt").header(header::RANGE, "bytes=2-4");
+    let (response, body) = send(&app, request.body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body, b"234");
+
+    // A browser gets the page, and a folder is the page whatever is asked.
+    let (response, body) = browse(&app, "/sub/b.txt").await;
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    assert_eq!(response.headers()[header::VARY], "accept");
+    assert!(String::from_utf8_lossy(&body).contains("okfs-config"));
+    let (response, body) = get(&app, "/sub/").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains("okfs-config"));
+
+    // Nothing more is reached this way than through /raw/.
+    for uri in ["/.hidden", "/link-out.txt", "/link-out-dir/secret.txt"] {
+        let (response, body) = get(&app, uri).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        assert!(!String::from_utf8_lossy(&body).contains(SECRET), "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn a_yes_or_no_in_a_query_is_one_true_zero_or_false() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("node_modules/pkg")).unwrap();
+    let app = site.router();
+    for (all, shown) in [
+        ("", false),
+        ("&all=0", false),
+        ("&all=false", false),
+        ("&all=1", true),
+        ("&all=true", true),
+    ] {
+        let listing = json(&app, &format!("/api/list?path={all}")).await;
+        assert_eq!(names(&listing).contains(&"node_modules"), shown, "{all}");
+    }
+    for uri in [
+        "/api/list?path=&all=yes",
+        "/api/search?q=a&rev=2",
+        "/api/recent?all=on",
+        "/api/previews?p=a.txt&raw=x",
+    ] {
+        assert_eq!(get(&app, uri).await.0.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+    fs::write(site.served.join("table.csv"), "a,b\n1,2\n").unwrap();
+    assert_eq!(preview(&app, "table.csv", "&raw=0").await["kind"], "table");
+    assert_eq!(preview(&app, "table.csv", "&raw=true").await["kind"], "code");
+}
+
+#[tokio::test]
 async fn the_page_knows_what_its_address_points_at() {
     let site = Site::new();
     fs::create_dir_all(site.served.join("api")).unwrap();
@@ -938,7 +1101,7 @@ async fn the_page_knows_what_its_address_points_at() {
     );
     assert_eq!(config(&body)["themes"].as_array().unwrap().len(), 5);
 
-    let (_, body) = get(&app, "/sub/b.txt").await;
+    let (_, body) = browse(&app, "/sub/b.txt").await;
     assert_eq!(
         config(&body)["target"],
         serde_json::json!({ "path": "sub/b.txt", "kind": "file" })
@@ -1916,7 +2079,7 @@ async fn only_okfs_may_frame_the_page_while_deleting_is_on() {
     for (app, on) in [(site.router(), false), (site.deleting(), true)] {
         // A folder, a file, a path behind /-/ and one that is missing: each is the page.
         for uri in ["/", "/sub/", "/sub/b.txt", "/-/sub/", "/nope"] {
-            let (page, _) = get(&app, uri).await;
+            let (page, _) = browse(&app, uri).await;
             let policy = page_policy(&page);
             let (framing, rest): (Vec<&str>, Vec<&str>) = policy
                 .iter()
@@ -2274,8 +2437,8 @@ async fn a_file_shown_as_something_made_from_its_text_can_be_asked_for_as_its_so
         ("page.html", "code", "&lt;h1&gt;Hi&lt;/h1&gt;"),
         ("shape.svg", "code", "&lt;svg"),
     ] {
-        assert_eq!(json(&app, &format!("/api/preview?path={name}")).await["kind"], shown);
-        let source = json(&app, &format!("/api/preview?path={name}&raw=1")).await;
+        assert_eq!(preview(&app, name, "").await["kind"], shown);
+        let source = preview(&app, name, "&raw=1").await;
         assert_eq!(source["kind"], "code", "{name}");
         // The text as it is written: its markup is escaped, never run, and nothing is left out.
         let html = source["html"].as_str().unwrap();
@@ -2285,14 +2448,14 @@ async fn a_file_shown_as_something_made_from_its_text_can_be_asked_for_as_its_so
     }
     // The start alone, as for any source file.
     fs::write(site.served.join("long.md"), "a line\n".repeat(200)).unwrap();
-    let start = json(&app, "/api/preview?path=long.md&raw=1&lines=80").await;
+    let start = preview(&app, "long.md", "&raw=1&lines=80").await;
     assert_eq!(
         (start["lines"].as_u64(), start["more"].as_bool()),
         (Some(200), Some(true))
     );
     // What is not text has no source either.
     fs::write(site.served.join("blob.bin"), [0_u8; 64]).unwrap();
-    assert_eq!(json(&app, "/api/preview?path=blob.bin&raw=1").await["kind"], "none");
+    assert_eq!(preview(&app, "blob.bin", "&raw=1").await["kind"], "none");
 }
 
 /// Markup with its tags taken out: the text a reader sees.

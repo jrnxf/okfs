@@ -75,13 +75,18 @@ try {
   };
   const preview = {};
   const texts = {};
+  // Each file's preview, in the form `form` asks for: okfs answers with it under the file's path.
+  const previewOf = async (path, form) => {
+    const found = await (await get(`/api/previews?p=${encodeURIComponent(path)}${form}`)).json();
+    if (!(path in found)) throw new Error(`${path}: no preview`);
+    return found[path];
+  };
   for (const path of walk(top).filter(text).sort()) {
-    const q = encodeURIComponent(path);
     preview[path] = {
-      first: keep(await (await get(`/api/preview?path=${q}&lines=80`)).json()),
-      whole: keep(await (await get(`/api/preview?path=${q}`)).json()),
-      sourceFirst: keep(await (await get(`/api/preview?path=${q}&raw=1&lines=80`)).json()),
-      sourceWhole: keep(await (await get(`/api/preview?path=${q}&raw=1`)).json()),
+      first: keep(await previewOf(path, "&lines=80")),
+      whole: keep(await previewOf(path, "")),
+      sourceFirst: keep(await previewOf(path, "&raw=1&lines=80")),
+      sourceWhole: keep(await previewOf(path, "&raw=1")),
     };
     texts[path] = readFileSync(join(top, path), "utf8");
   }
