@@ -11,8 +11,9 @@ import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInf
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { Prose, lookAhead, pagesAhead } from "./preview";
+import { NOT_ANSWERING, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
-import { FolderBar, Side } from "./side";
+import { EMPTY_FOLDER, FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
 import { slots } from "./slots";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
@@ -112,6 +113,27 @@ function Columns() {
   );
 }
 
+/** The rows of `list` on screen at once, less one, which a page keeps in sight. Before it is drawn, ten. */
+function pageOf(list: HTMLElement | null): number {
+  const row = list?.querySelector(".probe")?.getBoundingClientRect().height;
+  if (!list || !row) return 10;
+  return Math.max(1, Math.floor(list.clientHeight / row) - 1);
+}
+
+/**
+ * A quiet word at the foot of the page: that okfs is not answering, for as long as it does not, or what was just
+ * done. It is always in the page, so a screen reader hears it change.
+ */
+function Notice() {
+  const down = useDown();
+  const text = down ? `${NOT_ANSWERING}. Retrying…` : store.s.notice;
+  return (
+    <div class={down ? "notice down" : "notice"} role="status">
+      {text ? <span class="trunc">{text}</span> : null}
+    </div>
+  );
+}
+
 function Empty() {
   const { s } = store;
   if (s.status === "loading" || s.entries.length) return null;
@@ -138,7 +160,7 @@ function Empty() {
   } else {
     body = (
       <>
-        <b>Nothing in here yet</b>
+        <b>{EMPTY_FOLDER}</b>
         <span class="num">/{s.path}</span>
       </>
     );
@@ -246,6 +268,7 @@ export function App() {
         filter: focusFilter,
         closeMenu: () => setMenu(null),
         flipScheme: () => setScheme(isDark() ? "light" : "dark"),
+        page: () => pageOf(scroller.current),
       };
       // A key the list takes does only what the list does with it: an arrow moves the cursor and scrolls nothing.
       const action = keyFor(store, host, pressOf(event));
@@ -417,6 +440,7 @@ export function App() {
               count={s.status === "ready" ? s.all.length : undefined}
               mtime={s.status === "ready" ? s.mtime : undefined}
               doomed={here}
+              missing={s.status === "missing"}
             />
           )}
           {finding ? <MatchColumns /> : <Columns />}
@@ -525,6 +549,7 @@ export function App() {
           {finding ? "Refine" : "Filter"}
         </button>
       </footer>
+      <Notice />
       {s.palette && <Palette />}
       {s.help && <Help />}
       {s.doomed && <ConfirmDelete key={s.doomed.path} doomed={s.doomed} />}

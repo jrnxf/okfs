@@ -27,6 +27,9 @@ function visit(listing: Listing, item: Item, open: boolean): void {
   else void store.showDir(listing.path, { select: item.n });
 }
 
+/** What an empty folder says, in the main list and in a column. */
+export const EMPTY_FOLDER = "This folder is empty";
+
 /** A click on a button of a header leaves the focus where it was, so the keys go on working on the list. */
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
@@ -35,16 +38,33 @@ const keepFocus = (event: MouseEvent) => event.preventDefault();
  * one as every column does, so a folder's rows sit at the same height in every slot, and on one grid with the
  * rows beside them.
  */
-export function FolderBar({ name, path, count, mtime, doomed }: { name: string; path: string; count: number | undefined; mtime: number | undefined; doomed: Doomed | null }) {
+export function FolderBar({
+  name,
+  path,
+  count,
+  mtime,
+  doomed,
+  missing = false,
+}: {
+  name: string;
+  path: string;
+  count: number | undefined;
+  mtime: number | undefined;
+  doomed: Doomed | null;
+  /** Nothing is at the path: the bar names it and says nothing more, and offers nothing to do with it. */
+  missing?: boolean;
+}) {
   const facts = [...(count === undefined ? [] : [fmt.items(count)]), ...(mtime === undefined ? [] : [fmt.rel(mtime)])];
   return (
     <div class="ph" onMouseDown={keepFocus}>
-      <KindIcon kind="folder" />
+      {!missing && <KindIcon kind="folder" />}
       <span class="nm trunc">{name}</span>
       <span class="facts trunc num" title={mtime === undefined ? undefined : fmt.abs(mtime)}>{facts.join(" · ")}</span>
-      <a class="btn" href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
-        <Icon name="download" />
-      </a>
+      {!missing && (
+        <a class="btn" href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
+          <Icon name="download" />
+        </a>
+      )}
       {doomed && (
         <button class="btn" aria-label="Delete" title="Delete" onClick={() => store.askDelete(doomed)}>
           <Icon name="trash" />
@@ -96,7 +116,7 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
           );
         })}
         {more > 0 && <div class="col-note label">and {fmt.count(more)} more</div>}
-        {listing?.total === 0 && <div class="col-note label">This folder is empty.</div>}
+        {listing?.total === 0 && <div class="col-note label">{EMPTY_FOLDER}</div>}
       </div>
     </section>
   );
@@ -349,8 +369,6 @@ export function Side({ slots }: { slots: number }) {
         )}
       </>
     );
-  } else if (!cur) {
-    header = <span class="sp" />;
   }
 
   return (
@@ -362,9 +380,12 @@ export function Side({ slots }: { slots: number }) {
           was, live: see `useGoing`. */}
       {here ? (
         <div class="pane" key="pane" ref={pane} data-pane={shown?.path ?? ""}>
-          <div class="ph" onMouseDown={keepFocus}>
-            {header}
-          </div>
+          {/* With nothing to preview, as in an empty folder or at a missing address, there is nothing to head. */}
+          {header && (
+            <div class="ph" onMouseDown={keepFocus}>
+              {header}
+            </div>
+          )}
           <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}</div>
           {s.open && shown && !ledFile && <StepBar file={shown} />}
         </div>

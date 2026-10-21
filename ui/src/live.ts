@@ -1,6 +1,7 @@
 // The page follows the served folder: the server tells what changed on disk, and the store reads that again.
 
 import { urls } from "./api";
+import { isDown, onReach, setDown } from "./reach";
 import { store } from "./store";
 
 /** Seconds to wait before each new try after the stream drops. The last one repeats. */
@@ -24,6 +25,7 @@ function open(): void {
   // Nothing was heard while no stream was up: read once whatever is on screen.
   source.onopen = () => {
     tries = 0;
+    setDown(false);
     store.sync();
   };
   source.addEventListener("change", (event) => {
@@ -34,6 +36,7 @@ function open(): void {
   // The browser would try again by itself, at one fixed pace and also against a server that refuses.
   source.onerror = () => {
     close();
+    setDown(true);
     const wait = RETRY[Math.min(tries++, RETRY.length - 1)] ?? 30;
     retry = setTimeout(open, wait * 1000);
   };
@@ -45,5 +48,9 @@ function open(): void {
  */
 export function follow(): void {
   document.addEventListener("visibilitychange", () => (document.hidden ? close() : open()));
+  // A request answered while the stream waits to try again: okfs is back, and the stream need not wait.
+  onReach(() => {
+    if (!isDown() && !stream && !document.hidden) open();
+  });
   open();
 }

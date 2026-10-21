@@ -18,10 +18,12 @@ import {
   urls,
   withFind,
 } from "./api";
+import { copyText } from "./clip";
 import { type Config, config, locate } from "./config";
 import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
+import { NoAnswer } from "./reach";
 import { columnsUrl, forgetAnswers, preload } from "./preview";
 import { COLUMN_ROWS } from "./slots";
 
@@ -141,6 +143,8 @@ export interface State {
   doomed: Doomed | null;
   /** Counts the times the list caught up with the disk by itself. The list does not scroll for those. */
   caught: number;
+  /** A word on what was just done, such as a link copied, while it is shown. See `say`. */
+  notice: string | null;
 }
 
 type HistoryMode = "push" | "replace" | "none";
@@ -169,6 +173,9 @@ interface Picks {
 }
 
 const NO_PICKS: Picks = { root: "", names: [] };
+
+/** How long a notice stays up. */
+const NOTICE_MS = 2400;
 
 /** How long a folder waits for the columns beside it once its listing has come. Past it, they come after it. */
 const COLUMNS_WAIT = 150;
@@ -234,6 +241,7 @@ export class Store {
     matches: null,
     doomed: null,
     caught: 0,
+    notice: null,
   };
 
   private readonly listeners = new Set<() => void>();
@@ -263,6 +271,7 @@ export class Store {
   /** The stamp of each file shown by its address, and the time and size the file had when it was loaded. See `stamp`. */
   private readonly stamps = new Map<string, { stamp: string; seen?: string }>();
   private stamped = 0;
+  private noticed: ReturnType<typeof setTimeout> | undefined;
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -504,6 +513,8 @@ export class Store {
       if (columns) await within(columns, COLUMNS_WAIT);
     } catch (error) {
       if (turn !== this.turn) return;
+      // okfs did not answer: the page says so, and nothing here changes.
+      if (error instanceof NoAnswer) return;
       if (!(error instanceof HttpError)) throw error;
       this.lose(path);
       this.setUrl(opts.history ?? "push", path, true);
@@ -1068,6 +1079,34 @@ export class Store {
   setHelp(on: boolean): void {
     this.s.help = on;
     this.emit();
+  }
+
+  /** Puts up a notice for a moment. A newer one takes its place. */
+  say(text: string): void {
+    clearTimeout(this.noticed);
+    this.s.notice = text;
+    this.emit();
+    this.noticed = setTimeout(() => {
+      this.s.notice = null;
+      this.emit();
+    }, NOTICE_MS);
+  }
+
+  /** The page's own address for the open file or the entry under the cursor, unless one is given, to share it. */
+  linkTo(entry: Pick<Entry, "path" | "dir"> | null = this.s.open ?? this.cur()): string | null {
+    return entry ? new URL(urls.view(entry.path, entry.dir), location.href).href : null;
+  }
+
+  /** Copies the link to the open file or the entry under the cursor, and says whether it did. */
+  async copyLink(entry: Entry | null = this.s.open ?? this.cur()): Promise<void> {
+    const link = this.linkTo(entry);
+    if (!entry || !link) return;
+    try {
+      await copyText(link);
+      this.say(`Copied the link to “${entry.name}”`);
+    } catch {
+      this.say("The browser would not copy the link");
+    }
   }
 
   /** The folder being shown, as something to delete. The served folder itself is never offered. */

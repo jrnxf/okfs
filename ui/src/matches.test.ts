@@ -128,7 +128,7 @@ async function fresh(url = "/code/", state: unknown = null): Promise<Store> {
   return store;
 }
 
-const host = { filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined };
+const host = { filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined, page: () => 10 };
 /** A press of `key` on the list. */
 async function press(store: Store, key: string): Promise<void> {
   keys.listKeys(store, host)[key]?.();

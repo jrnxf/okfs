@@ -8,6 +8,8 @@ export interface KeyHost {
   filter: () => void;
   closeMenu: () => void;
   flipScheme: () => void;
+  /** How many rows of the list a page is: those on screen at once. */
+  page: () => number;
 }
 
 /** All that the keys ask about a press. */
@@ -80,7 +82,10 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     },
     Home: () => store.moveTo(0),
     End: () => store.moveTo(s.entries.length - 1),
+    // Not taken on an open file: the file scrolls a page with them.
+    ...(modal ? {} : { PageDown: () => store.move(host.page()), PageUp: () => store.move(-host.page()) }),
     "/": host.filter,
+    y: () => void store.copyLink(),
     s: () => store.setSort(),
     t: host.flipScheme,
     "?": () => store.setHelp(true),
@@ -109,9 +114,10 @@ function findKeys(store: Store, host: KeyHost, move: Record<"down" | "up" | "lef
     },
     Home: () => store.moveTo(0),
     End: () => store.moveTo(last()),
-    PageDown: () => store.move(10),
-    PageUp: () => store.move(-10),
+    PageDown: () => store.move(host.page()),
+    PageUp: () => store.move(-host.page()),
     "/": host.filter,
+    y: () => void store.copyLink(),
     s: () => store.setMatchSort(),
     ".": () => store.setHidden(),
     t: host.flipScheme,
