@@ -18,6 +18,8 @@ fn main() {
     ] {
         println!("cargo:rerun-if-changed={}", ui.join(watched).display());
     }
+    // ui/build.ts copies it into the page.
+    println!("cargo:rerun-if-changed=THIRD_PARTY.md");
     println!("cargo:rerun-if-env-changed=OKFS_SKIP_UI_BUILD");
 
     // Set OKFS_SKIP_UI_BUILD to embed an existing ui/dist, for machines without bun.

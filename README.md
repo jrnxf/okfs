@@ -299,4 +299,4 @@ scripts/shoot-readme.sh path/to/tidewater
 
 okfs is released under the MIT License. See `LICENSE`.
 
-Geist, Geist Mono and Newsreader are bundled under the SIL Open Font License 1.1.
+Geist, Geist Mono and Newsreader are bundled under the SIL Open Font License 1.1. `THIRD_PARTY.md` holds the notices for them and for the other work okfs bundles; each release attaches the full list, Rust crates included, as `okfs-third-party-notices.md`.

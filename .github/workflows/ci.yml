@@ -84,3 +84,57 @@ jobs:
 
       - name: Flake check
         run: nix flake check
+
+  # The release ships macOS binaries: okfs builds and its tests pass there too.
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.bun/install/cache
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ui/bun.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Test
+        run: cargo test --locked
+
+  # okfs.jrnxf.co builds okfs's page and index from this checkout (web/README.md): a change that
+  # breaks only the site fails here, not in its deploy.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # The pinned Rust and wasm-opt web/tools.sh downloads.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: web/.build/tools
+          key: web-tools-${{ runner.os }}-${{ hashFiles('web/tools.sh') }}
+
+      - name: Build the site
+        run: npm ci && npm run build
+        working-directory: web
