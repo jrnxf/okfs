@@ -117,7 +117,7 @@ jobs:
             exit 1
           fi
           file "$bin"
-          if [ "$RUNNER_OS" = Linux ] && ! file -b "$bin" | grep -Eq 'static(-pie)? linked'; then
+          if [ "$RUNNER_OS" = Linux ] && ! file -b "$bin" | grep -Eq 'static(ally|-pie) linked'; then
             echo "expected a static binary" >&2
             exit 1
           fi
