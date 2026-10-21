@@ -38,7 +38,7 @@ test("one file's preview is taken out of the answer for it, one with none fails 
   await expect(missing).rejects.toMatchObject({ status: 404 });
   // A server that does not answer is told apart from a file with no preview.
   await expect(api.getAnswer(api.urls.preview("unanswered.md"))).rejects.toBeInstanceOf(reach.NoAnswer);
-  reach.setDown(false);
+  reach.setDown(null);
   // Any other address is answered as it is.
   expect(await api.getAnswer(api.urls.list(""))).toEqual({});
   expect(api.urls.thumb("p.png", 160, 1, 2)).toBe("/api/picture?path=p.png&w=160&m=1&s=2");

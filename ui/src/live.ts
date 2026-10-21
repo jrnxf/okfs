@@ -1,7 +1,7 @@
 // The page follows the served folder: the server tells what changed on disk, and the store reads that again.
 
 import { urls } from "./api";
-import { isDown, onReach, setDown } from "./reach";
+import { call, isDown, onReach, setDown } from "./reach";
 import { store } from "./store";
 
 /** Seconds to wait before each new try after the stream drops. The last one repeats. */
@@ -25,7 +25,7 @@ function open(): void {
   // Nothing was heard while no stream was up: read once whatever is on screen.
   source.onopen = () => {
     tries = 0;
-    setDown(false);
+    setDown(null);
     store.sync();
   };
   source.addEventListener("change", (event) => {
@@ -36,7 +36,8 @@ function open(): void {
   // The browser would try again by itself, at one fixed pace and also against a server that refuses.
   source.onerror = () => {
     close();
-    setDown(true);
+    // A dropped stream does not say why. A request does: okfs is gone, or it refuses the page's key, or neither.
+    call(urls.probe, { method: "HEAD", cache: "no-store" }).catch(() => undefined);
     const wait = RETRY[Math.min(tries++, RETRY.length - 1)] ?? 30;
     retry = setTimeout(open, wait * 1000);
   };

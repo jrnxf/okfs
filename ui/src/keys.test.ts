@@ -221,7 +221,7 @@ test("page down and page up move a page of rows over the matches too", () => {
   expect(store.s.matches.cursor).toBe(0);
 });
 
-test("y copies the page's own address for what is under the cursor, in a folder and over the matches", () => {
+test("y copies the page's own address for what is under the cursor, in a folder and over the matches", async () => {
   const store = showing("inner/", "notes.md");
   const copied: (string | undefined)[] = [];
   store.copyLink = async (entry = store.s.open ?? store.cur()) => void copied.push(entry?.path);
@@ -234,6 +234,12 @@ test("y copies the page's own address for what is under the cursor, in a folder 
   expect(store.linkTo({ path: "notes.md", dir: false })).toBe("http://localhost/notes.md");
   expect(store.linkTo({ path: "inner", dir: true })).toBe("http://localhost/inner/");
   expect(store.linkTo({ path: "api/a b.txt", dir: false })).toBe("http://localhost/-/api/a%20b.txt");
+  // With the key okfs asks for, which whoever is sent the link does not hold in a cookie.
+  const { config } = await import("./config");
+  config.key = "Zm9vYmFy-_";
+  expect(store.linkTo({ path: "notes.md", dir: false })).toBe("http://localhost/notes.md?key=Zm9vYmFy-_");
+  expect(store.linkTo({ path: "inner", dir: true })).toBe("http://localhost/inner/?key=Zm9vYmFy-_");
+  delete config.key;
 
   store.s.matches = { q: "x", list: [], total: 0, took: 1, sort: { key: "rank", rev: false }, cursor: 0, ready: true };
   store.s.finding = true;

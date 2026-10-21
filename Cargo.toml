@@ -33,6 +33,7 @@ clap_mangen = "0.2.33"
 csv = "1.4.0"
 dirs = "7.0.0"
 futures-util = "0.3.34"
+getrandom = "0.4.3"
 hayro = { version = "0.8.0", optional = true }
 httpdate = "1.0.3"
 ignore = "0.4"

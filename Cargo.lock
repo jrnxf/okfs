@@ -1680,6 +1680,7 @@ dependencies = [
  "csv",
  "dirs",
  "futures-util",
+ "getrandom",
  "hayro",
  "http-body-util",
  "httpdate",

@@ -10,6 +10,7 @@ use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
 use http_body_util::BodyExt;
 use okfs::index::{Follow, Index};
+use okfs::key::Key;
 use okfs::paths::Root;
 use okfs::server::{App, Options, ThemeChoice, router};
 use serde_json::Value;
@@ -2604,4 +2605,300 @@ async fn a_listing_with_levels_reads_nothing_outside_the_served_folder() {
     let lead = json(&app, "/api/list?path=lead&limit=50&depth=3").await;
     assert!(names(&lead).is_empty());
     assert!(lead.get("under").is_none());
+}
+
+/// The key the tests below run okfs with.
+const KEY: &str = "Zm9vYmFyYmF6cXV4cXV1eA";
+
+/// Asking for the key, as okfs does at an address beyond loopback.
+fn keyed(site: &Site, options: Options) -> axum::Router {
+    site.app(Options {
+        key: Some(Key::of(KEY)),
+        check_host: true,
+        ..options
+    })
+}
+
+/// A request on the address the page is opened at, with these headers.
+fn on_home(method: &str, uri: &str, headers: Headers) -> Request<Body> {
+    let mut request = Request::builder().method(method).uri(uri).header(header::HOST, HOME);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    request.body(Body::empty()).unwrap()
+}
+
+/// What a browser sends when it goes to an address.
+const NAVIGATE: Headers = &[("accept", BROWSER_ACCEPT), ("sec-fetch-mode", "navigate")];
+
+/// The cookie a browser holds after its first visit at `HOME`.
+const COOKIE: (&str, &str) = ("cookie", "okfs-key-8080=Zm9vYmFyYmF6cXV4cXV1eA");
+
+#[tokio::test]
+async fn with_a_key_every_route_is_refused_without_it_and_says_nothing_of_the_folder() {
+    let site = Site::new();
+    let app = keyed(
+        &site,
+        Options {
+            allow_delete: true,
+            ..Options::default()
+        },
+    );
+    let before = snapshot(&site.served);
+    let routes = [
+        ("GET", "/"),
+        ("GET", "/-/"),
+        ("GET", "/sub/"),
+        ("GET", "/a.txt"),
+        ("HEAD", "/a.txt"),
+        ("GET", "/raw/a.txt"),
+        ("GET", "/raw/"),
+        ("GET", "/zip/"),
+        ("GET", "/zip/sub"),
+        ("GET", "/api/list?path="),
+        ("GET", "/api/previews?p=a.txt"),
+        ("GET", "/api/search?q=a"),
+        ("GET", "/api/recent"),
+        ("GET", "/api/archive?path=a.txt"),
+        ("GET", "/api/picture?path=a.txt"),
+        ("GET", "/api/events"),
+        ("GET", "/theme.css"),
+        ("GET", "/assets/app.css"),
+        ("GET", "/assets/main.js"),
+        ("DELETE", "/api/entry?path=a.txt"),
+        ("POST", "/a.txt"),
+    ];
+    let cookie = |value: &'static str| ("cookie", value);
+    for (method, uri) in routes {
+        let joined = if uri.contains('?') { '&' } else { '?' };
+        let wrong = format!("{uri}{joined}key=Zm9vYmFyYmF6cXV4cXV1ey");
+        let delete: Headers = &[("x-okfs", "delete"), ("origin", "http://localhost:8080")];
+        let asks = [
+            on_home(method, uri, delete),
+            on_home(method, &wrong, delete),
+            on_home(method, &wrong, NAVIGATE),
+            on_home(
+                method,
+                uri,
+                &[cookie("okfs-key-8080=Zm9vYmFyYmF6cXV4cXV1ey"), delete[0], delete[1]],
+            ),
+            // The cookie of another port is not this one's.
+            on_home(
+                method,
+                uri,
+                &[cookie("okfs-key-9000=Zm9vYmFyYmF6cXV4cXV1eA"), delete[0], delete[1]],
+            ),
+            on_home(method, uri, NAVIGATE),
+        ];
+        for request in asks {
+            let shown = format!("{method} {}", request.uri());
+            let (response, body) = send(&app, request).await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{shown}");
+            assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "okfs-key", "{shown}");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store", "{shown}");
+            assert!(!response.headers().contains_key(header::SET_COOKIE), "{shown}");
+            let body = String::from_utf8_lossy(&body);
+            for told in ["a.txt", "sub", "served", "okfs-config", KEY] {
+                assert!(!body.contains(told), "{shown} tells {told}: {body}");
+            }
+            assert!(method == "HEAD" || body.contains("needs its key"), "{shown}: {body}");
+        }
+    }
+    assert_eq!(snapshot(&site.served), before);
+
+    // A browser is shown a page, anything else a line.
+    let (response, _) = send(&app, on_home("GET", "/", NAVIGATE)).await;
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html")
+    );
+    let (response, _) = send(&app, on_home("GET", "/raw/a.txt", &[])).await;
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/plain")
+    );
+    // A host okfs does not answer to is refused before the key is looked at.
+    let request = Request::get(format!("/raw/a.txt?key={KEY}"))
+        .header(header::HOST, "evil.example")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_browser_trades_the_key_in_its_address_for_a_cookie() {
+    let site = Site::new();
+    let app = keyed(&site, Options::default());
+    let (response, body) = send(
+        &app,
+        on_home("GET", &format!("/sub/?find=b&key={KEY}&theme=paper"), NAVIGATE),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let set = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert_eq!(set, format!("okfs-key-8080={KEY}; Path=/; HttpOnly; SameSite=Strict"));
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+    // The page goes on to the same address without the key, by a step of its own, which the
+    // SameSite=Strict cookie goes with even after a link from another site.
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains(r#"<meta http-equiv="refresh" content="0; url=/sub/?find=b&amp;theme=paper">"#),
+        "{body}"
+    );
+    assert!(!body.contains(KEY), "{body}");
+
+    // With the cookie, everything answers, and the page knows the key for the links it hands out.
+    let (response, body) = send(&app, on_home("GET", "/sub/?find=b&theme=paper", &[NAVIGATE[0], COOKIE])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).contains(&format!("\"key\":\"{KEY}\"")));
+    for uri in [
+        "/raw/sub/b.txt",
+        "/api/list?path=sub",
+        "/api/events",
+        "/assets/app.css",
+        "/theme.css",
+    ] {
+        let response = app.clone().oneshot(on_home("GET", uri, &[COOKIE])).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+    }
+
+    // Behind a proxy that ends TLS and says so, the cookie never travels over plain http.
+    let (response, _) = send(
+        &app,
+        on_home(
+            "GET",
+            &format!("/?key={KEY}"),
+            &[NAVIGATE[0], NAVIGATE[1], ("x-forwarded-proto", "https")],
+        ),
+    )
+    .await;
+    assert!(
+        response.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .ends_with("; SameSite=Strict; Secure")
+    );
+
+    // A browser too old to say it navigates still asks for a page.
+    let (response, _) = send(&app, on_home("GET", &format!("/a.txt?key={KEY}"), &[NAVIGATE[0]])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().contains_key(header::SET_COOKIE));
+
+    // An old link, with a key from an earlier start, still opens for a browser that holds this one.
+    let old = "/sub/?key=b2xkb2xkb2xkb2xkb2xkb2xkbw";
+    let (response, body) = send(&app, on_home("GET", old, &[NAVIGATE[0], NAVIGATE[1], COOKIE])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+    assert!(String::from_utf8_lossy(&body).contains("url=/sub/\""));
+}
+
+#[tokio::test]
+async fn the_step_that_takes_the_key_out_never_leads_to_another_host() {
+    let site = Site::new();
+    let app = keyed(&site, Options::default());
+    for (asked, to) in [
+        (format!("//evil.example/?key={KEY}"), "url=/evil.example/\""),
+        (format!("/%2F%2Fevil.example?key={KEY}"), "url=/%2F%2Fevil.example\""),
+        (format!("/?key={KEY}&next=%22%3E"), "url=/?next=%22%3E\""),
+    ] {
+        let (response, body) = send(&app, on_home("GET", &asked, NAVIGATE)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{asked}");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains(to), "{asked}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn curl_brings_the_key_in_the_address_and_gets_the_answer_itself() {
+    let site = Site::new();
+    let app = keyed(&site, Options::default());
+    for (uri, want) in [
+        (format!("/a.txt?key={KEY}"), "0123456789abcdefghij"),
+        (format!("/raw/a.txt?key={KEY}"), "0123456789abcdefghij"),
+        (format!("/-/sub/b.txt?key={KEY}"), "inside"),
+    ] {
+        let (response, body) = send(&app, on_home("GET", &uri, &[("accept", "*/*")])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        assert!(!response.headers().contains_key(header::SET_COOKIE), "{uri}");
+        assert_eq!(String::from_utf8_lossy(&body), want, "{uri}");
+    }
+    let (response, body) = send(
+        &app,
+        on_home("GET", &format!("/raw/a.txt?key={KEY}"), &[("range", "bytes=2-4")]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body, b"234");
+
+    let curl = |uri: String| send(&app, on_home("GET", &uri, &[("accept", "*/*")]));
+    let (_, body) = curl(format!("/api/list?path=sub&key={KEY}")).await;
+    let listing: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(names(&listing), ["b.txt", "deep"]);
+    let (_, body) = curl(format!("/api/previews?p=a.txt&key={KEY}")).await;
+    let previews: Value = serde_json::from_slice(&body).unwrap();
+    assert!(previews.get("a.txt").is_some(), "{previews}");
+    let (response, body) = curl(format!("/zip/sub?key={KEY}")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut zip = zip::ZipArchive::new(Cursor::new(body)).unwrap();
+    assert!(zip.by_name("b.txt").is_ok());
+
+    // A folder's address without its slash keeps the key on the way to the one with it.
+    let (response, _) = curl(format!("/sub?key={KEY}")).await;
+    assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(response.headers()[header::LOCATION], format!("/sub/?key={KEY}"));
+
+    let response = app
+        .clone()
+        .oneshot(on_home("GET", &format!("/api/events?key={KEY}"), &[]))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_page_with_the_cookie_still_deletes_and_one_without_never_does() {
+    let site = Site::new();
+    let app = keyed(
+        &site,
+        Options {
+            allow_delete: true,
+            ..Options::default()
+        },
+    );
+    let page: Headers = &[("x-okfs", "delete"), ("origin", "http://localhost:8080")];
+    let (response, _) = send(&app, on_home("DELETE", "/api/entry?path=a.txt", page)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(site.served.join("a.txt").exists());
+    let (response, _) = send(
+        &app,
+        on_home("DELETE", "/api/entry?path=a.txt", &[page[0], page[1], COOKIE]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!site.served.join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn without_a_key_nothing_asks_for_one() {
+    let site = Site::new();
+    let app = site.app(Options {
+        check_host: true,
+        ..Options::default()
+    });
+    let (response, body) = send(&app, on_home("GET", "/", NAVIGATE)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!String::from_utf8_lossy(&body).contains("\"key\""));
+    // A key in the address means nothing, and is not taken out.
+    let (response, body) = send(&app, on_home("GET", "/raw/a.txt?key=anything", &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+    assert_eq!(body, b"0123456789abcdefghij");
+    let (response, _) = send(&app, on_home("GET", "/?key=anything", NAVIGATE)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
 }

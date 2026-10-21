@@ -13,7 +13,9 @@ use tempfile::TempDir;
 struct Running {
     child: Child,
     port: u16,
-    /// What it printed before the address, and the address line itself.
+    /// The key in the address it printed, when it asks for one.
+    key: Option<String>,
+    /// What it printed before its theme line: the folder, the addresses and who can reach them.
     said: String,
 }
 
@@ -42,18 +44,26 @@ fn launch(served: &Path, cache: &Path, args: &[&str]) -> Running {
         .unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     let mut said = String::new();
-    let port = loop {
+    let (port, key) = loop {
         let line = lines.next().expect("okfs printed its address").unwrap();
         said.push_str(&line);
         said.push('\n');
         if let Some(link) = line.trim_start().strip_prefix("at") {
-            let port = link.trim().trim_end_matches('/').rsplit(':').next().unwrap();
-            break port.parse().unwrap();
+            let (link, key) = link.trim().split_once("/?key=").unwrap_or((link.trim(), ""));
+            let port = link.trim_end_matches('/').rsplit(':').next().unwrap();
+            break (port.parse().unwrap(), (!key.is_empty()).then(|| key.to_owned()));
         }
     };
-    // What it prints after the address is read so it never waits on a full pipe.
+    // The lines after the address are read too, so it never waits on a full pipe.
+    for line in lines
+        .by_ref()
+        .take_while(|line| line.as_ref().is_ok_and(|line| !line.starts_with("  theme")))
+    {
+        said.push_str(&line.unwrap());
+        said.push('\n');
+    }
     std::thread::spawn(move || lines.for_each(drop));
-    Running { child, port, said }
+    Running { child, port, key, said }
 }
 
 /// Starts okfs on a folder of its own, with one file in it.
@@ -66,17 +76,26 @@ fn site(args: &[&str]) -> (TempDir, Running) {
     (tmp, running)
 }
 
-/// The status okfs answers a listing with, asked over the loopback address with this Host.
-fn status(port: u16, host: &str) -> u16 {
+/// The status okfs answers a listing with, asked over the loopback address with this Host, with the
+/// key it printed when it asks for one.
+fn status(okfs: &Running, host: &str) -> u16 {
+    let key = okfs.key.as_deref().map(|key| format!("&key={key}")).unwrap_or_default();
+    ask(okfs.port, host, &format!("/api/list?path=docs{key}"), "").0
+}
+
+/// What okfs answers `path` with, asked as curl does, over the loopback address with this Host
+/// and these further header lines.
+fn ask(port: u16, host: &str, path: &str, headers: &str) -> (u16, String) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     write!(
         stream,
-        "GET /api/list?path=docs HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n{headers}Connection: close\r\n\r\n"
     )
     .unwrap();
     let mut answer = String::new();
     stream.read_to_string(&mut answer).unwrap();
-    answer.split(' ').nth(1).unwrap().parse().unwrap()
+    let status = answer.split(' ').nth(1).unwrap().parse().unwrap();
+    (status, answer)
 }
 
 #[test]
@@ -92,14 +111,14 @@ fn every_address_answers_only_to_plain_addresses_localhost_and_the_names_it_is_g
             "files.example.test".to_owned(),
             "FILES.example.test:443".to_owned(),
         ] {
-            assert_eq!(status(port, &host), 200, "--bind {bind}, Host: {host}");
+            assert_eq!(status(&okfs, &host), 200, "--bind {bind}, Host: {host}");
         }
         for host in [
             "evil.example",
             "rebound.attacker.test:8080",
             "files.example.test.evil.example",
         ] {
-            assert_eq!(status(port, host), 403, "--bind {bind}, Host: {host}");
+            assert_eq!(status(&okfs, host), 403, "--bind {bind}, Host: {host}");
         }
     }
 }
@@ -113,16 +132,125 @@ fn beyond_loopback_with_no_name_given_plain_addresses_still_answer() {
         format!("192.168.1.20:{port}"),
         format!("localhost:{port}"),
     ] {
-        assert_eq!(status(port, &host), 200, "Host: {host}");
+        assert_eq!(status(&okfs, &host), 200, "Host: {host}");
     }
-    assert_eq!(status(port, "my-laptop.local:8080"), 403);
+    assert_eq!(status(&okfs, "my-laptop.local:8080"), 403);
+}
+
+#[test]
+fn beyond_loopback_only_a_link_with_the_key_gets_in() {
+    let (_tmp, okfs) = site(&["--bind", "0.0.0.0"]);
+    let port = okfs.port;
+    let key = okfs.key.clone().expect("a key in the address");
+    assert_eq!(key.len(), 22, "{key}");
+    // Every address printed carries it, and the line under them says what it lets in.
+    let links: Vec<&str> = okfs.said.lines().filter(|line| line.contains("http://")).collect();
+    assert!(
+        !links.is_empty() && links.iter().all(|line| line.ends_with(&format!("/?key={key}"))),
+        "{}",
+        okfs.said
+    );
+    assert!(
+        okfs.said
+            .contains("  key      on: anyone with one of these links can read every file shown"),
+        "{}",
+        okfs.said
+    );
+    assert!(!okfs.said.contains("open to"), "{}", okfs.said);
+
+    let host = format!("192.168.1.20:{port}");
+    for path in [
+        "/",
+        "/docs/note.txt",
+        "/raw/docs/note.txt",
+        "/zip/",
+        "/api/list?path=",
+        "/api/events",
+        "/assets/app.css",
+    ] {
+        let (status, answer) = ask(port, &host, path, "");
+        assert_eq!(status, 401, "{path}");
+        assert!(!answer.contains("note"), "{path}: {answer}");
+        let wrong = if path.contains('?') { "&key=wrong" } else { "?key=wrong" };
+        assert_eq!(ask(port, &host, &format!("{path}{wrong}"), "").0, 401, "{path}");
+    }
+    // curl gets the file with the key in its address.
+    for path in ["/docs/note.txt", "/raw/docs/note.txt"] {
+        let (status, answer) = ask(port, &host, &format!("{path}?key={key}"), "");
+        assert_eq!(status, 200, "{path}");
+        assert!(answer.ends_with("\r\n\r\nnote"), "{path}: {answer}");
+    }
+    // Or with the cookie a browser keeps, named for the port.
+    let cookie = format!("Cookie: okfs-key-{port}={key}\r\n");
+    assert_eq!(ask(port, &host, "/raw/docs/note.txt", &cookie).0, 200);
+    // A wrong host is refused before any key is looked at.
+    assert_eq!(
+        ask(port, "evil.example", &format!("/raw/docs/note.txt?key={key}"), "").0,
+        403
+    );
+}
+
+#[test]
+fn on_loopback_no_key_is_asked_for_unless_told_to() {
+    let (_tmp, okfs) = site(&[]);
+    assert_eq!(okfs.key, None);
+    assert!(
+        !okfs.said.contains("key") && !okfs.said.contains("open to"),
+        "{}",
+        okfs.said
+    );
+    assert_eq!(ask(okfs.port, "localhost", "/raw/docs/note.txt", "").0, 200);
+
+    let (_tmp, okfs) = site(&["--key"]);
+    let key = okfs.key.clone().expect("a key with --key");
+    assert!(okfs.said.contains("http://127.0.0.1:"), "{}", okfs.said);
+    assert!(okfs.said.contains("  key      on:"), "{}", okfs.said);
+    assert_eq!(ask(okfs.port, "localhost", "/raw/docs/note.txt", "").0, 401);
+    assert_eq!(
+        ask(okfs.port, "localhost", &format!("/raw/docs/note.txt?key={key}"), "").0,
+        200
+    );
+}
+
+#[test]
+fn with_no_key_anyone_who_reaches_the_address_gets_in_and_is_told_so() {
+    let (_tmp, okfs) = site(&["--bind", "0.0.0.0", "--no-key"]);
+    assert_eq!(okfs.key, None);
+    assert!(
+        okfs.said
+            .contains("  open to  anyone who can reach these addresses can read every file shown"),
+        "{}",
+        okfs.said
+    );
+    assert_eq!(
+        ask(
+            okfs.port,
+            &format!("192.168.1.20:{}", okfs.port),
+            "/raw/docs/note.txt",
+            ""
+        )
+        .0,
+        200
+    );
+
+    let (_tmp, okfs) = site(&["--bind", "0.0.0.0", "--no-key", "--allow-delete"]);
+    assert!(
+        okfs.said
+            .contains("  open to  anyone who can reach these addresses can read and delete every file shown"),
+        "{}",
+        okfs.said
+    );
+
+    let (ended, error) = run(&["--no-open", "--key", "--no-key", "."]);
+    assert!(!ended.success());
+    assert!(error.contains("cannot be used with"), "{error}");
 }
 
 #[test]
 fn a_rescan_is_said_at_start_and_a_span_that_is_not_one_is_refused() {
     let (_tmp, okfs) = site(&["--rescan", "6h"]);
     assert!(okfs.said.contains("rescan   every 6h"), "{}", okfs.said);
-    assert_eq!(status(okfs.port, "localhost"), 200);
+    assert_eq!(status(&okfs, "localhost"), 200);
 
     let (_tmp, okfs) = site(&[]);
     assert!(!okfs.said.contains("rescan"), "{}", okfs.said);
@@ -169,7 +297,7 @@ fn a_busy_port_is_passed_over_only_when_no_port_was_given() {
         "{}",
         okfs.said
     );
-    assert_eq!(status(okfs.port, "localhost"), 200);
+    assert_eq!(status(&okfs, "localhost"), 200);
 }
 
 #[test]
@@ -187,7 +315,7 @@ fn a_busy_port_that_was_asked_for_is_never_traded_for_another() {
 fn localhost_is_an_address_to_listen_on() {
     let (_tmp, okfs) = site(&["--bind", "localhost"]);
     assert!(okfs.said.contains("http://127.0.0.1:"), "{}", okfs.said);
-    assert_eq!(status(okfs.port, "localhost"), 200);
+    assert_eq!(status(&okfs, "localhost"), 200);
 
     let (ended, error) = run(&["--no-open", "--bind", "files.example.test", "."]);
     assert!(!ended.success());

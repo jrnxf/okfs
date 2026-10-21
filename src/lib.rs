@@ -6,6 +6,7 @@ pub mod assets;
 pub mod cli;
 pub mod every;
 pub mod index;
+pub mod key;
 pub mod lan;
 pub mod live;
 pub mod paths;
