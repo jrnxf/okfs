@@ -12,7 +12,7 @@ use clap_complete::Shell;
 
 use crate::every;
 use crate::index::{Follow, Index};
-use crate::key::Key;
+use crate::key::{self, Key, Once};
 use crate::lan::{self, Scan};
 use crate::paths::Root;
 use crate::server::{self, App, Options, ThemeChoice};
@@ -310,6 +310,14 @@ fn serve(args: Serve) -> Result<(), String> {
     } else {
         None
     };
+    let ssh = std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
+    let open = should_open(args.no_open, std::io::stdout().is_terminal(), ssh);
+    // The browser okfs opens gets a one-time code in place of the key, as every account on the
+    // machine can read the command that opens it.
+    let once = match &key {
+        Some(_) if open => Some(std::sync::Arc::new(Once::new(key::ONCE_LIFE)?)),
+        _ => None,
+    };
     let options = Options {
         title: args.title,
         theme,
@@ -323,6 +331,7 @@ fn serve(args: Serve) -> Result<(), String> {
         drawer: this_program(),
         pdf_limit: crate::pdf::LIMIT,
         key: key.clone(),
+        once: once.clone(),
     };
     let theme_name = match &options.theme {
         ThemeChoice::BuiltIn(name) => name.clone(),
@@ -383,11 +392,11 @@ fn serve(args: Serve) -> Result<(), String> {
                 Scan::Skipped => {}
             }
         }
-        let ssh = std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
-        if should_open(args.no_open, std::io::stdout().is_terminal(), ssh)
-            && let Some(ip) = addresses.first()
-        {
-            let link = lan::link(*ip, address.port(), key);
+        if open && let Some(ip) = addresses.first() {
+            let link = match &once {
+                Some(once) => lan::link_once(*ip, address.port(), once.as_str()),
+                None => lan::link(*ip, address.port(), key),
+            };
             if let Err(error) = webbrowser::open(&link) {
                 println!("  open     could not open the browser: {error}");
             }

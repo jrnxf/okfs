@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
 use http_body_util::BodyExt;
 use okfs::index::{Follow, Index};
-use okfs::key::Key;
+use okfs::key::{Key, ONCE_LIFE, Once};
 use okfs::paths::Root;
 use okfs::server::{App, Options, ThemeChoice, router};
 use serde_json::Value;
@@ -2795,6 +2795,112 @@ async fn a_browser_trades_the_key_in_its_address_for_a_cookie() {
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!response.headers().contains_key(header::SET_COOKIE));
     assert!(String::from_utf8_lossy(&body).contains("url=/sub/\""));
+}
+
+/// Asking for the key, with a one-time code for the browser okfs opens itself.
+fn keyed_once(site: &Site, once: &Arc<Once>) -> axum::Router {
+    keyed(
+        site,
+        Options {
+            once: Some(Arc::clone(once)),
+            ..Options::default()
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_one_time_code_is_traded_for_the_cookie_once_and_never_again() {
+    let site = Site::new();
+    let once = Arc::new(Once::new(ONCE_LIFE).unwrap());
+    let app = keyed_once(&site, &once);
+    let code = once.as_str().to_owned();
+
+    // A wrong code spends nothing and lets nothing in.
+    let (response, _) = send(&app, on_home("GET", "/?once=Zm9vYmFyYmF6cXV4cXV1ey", NAVIGATE)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let (response, body) = send(
+        &app,
+        on_home("GET", &format!("/sub/?once={code}&theme=paper"), NAVIGATE),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let set = response.headers()[header::SET_COOKIE].to_str().unwrap();
+    assert_eq!(set, format!("okfs-key-8080={KEY}; Path=/; HttpOnly; SameSite=Strict"));
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains(r#"<meta http-equiv="refresh" content="0; url=/sub/?theme=paper">"#),
+        "{body}"
+    );
+    assert!(!body.contains(KEY) && !body.contains(&code), "{body}");
+
+    // Spent: the same code, by a browser or anything else, is refused like no key at all.
+    for headers in [NAVIGATE, &[]] {
+        for uri in [format!("/?once={code}"), format!("/raw/a.txt?once={code}")] {
+            let (response, body) = send(&app, on_home("GET", &uri, headers)).await;
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+            assert!(!response.headers().contains_key(header::SET_COOKIE), "{uri}");
+            assert!(!String::from_utf8_lossy(&body).contains(KEY), "{uri}");
+        }
+    }
+    // The key and the cookie it handed over still work.
+    let response = app
+        .clone()
+        .oneshot(on_home("GET", "/raw/sub/b.txt", &[COOKIE]))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (response, _) = send(&app, on_home("GET", &format!("/raw/sub/b.txt?key={KEY}"), &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_one_time_code_lets_in_only_the_request_that_spends_it() {
+    let site = Site::new();
+    let once = Arc::new(Once::new(ONCE_LIFE).unwrap());
+    let app = keyed_once(&site, &once);
+    // Not a browser: it gets the cookie and the step on, never the file it asked for.
+    let (response, body) = send(
+        &app,
+        on_home("GET", &format!("/raw/sub/b.txt?once={}", once.as_str()), &[]),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().contains_key(header::SET_COOKIE));
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("url=/raw/sub/b.txt\""), "{body}");
+    assert!(!body.contains(&fs::read_to_string(site.served.join("sub/b.txt")).unwrap()));
+    let (response, _) = send(&app, on_home("GET", &format!("/?once={}", once.as_str()), NAVIGATE)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_one_time_code_dies_unspent_after_its_life() {
+    let site = Site::new();
+    let once = Arc::new(Once::new(std::time::Duration::from_millis(50)).unwrap());
+    let app = keyed_once(&site, &once);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    let (response, body) = send(&app, on_home("GET", &format!("/?once={}", once.as_str()), NAVIGATE)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+    assert!(String::from_utf8_lossy(&body).contains("needs its key"));
+}
+
+#[tokio::test]
+async fn without_a_key_a_code_means_nothing() {
+    let site = Site::new();
+    let once = Arc::new(Once::new(ONCE_LIFE).unwrap());
+    // Only okfs with a key makes a code, but one given without a key opens nothing more.
+    let app = site.app(Options {
+        once: Some(Arc::clone(&once)),
+        check_host: true,
+        ..Options::default()
+    });
+    let (response, _) = send(&app, on_home("GET", "/raw/sub/b.txt", &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
 }
 
 #[tokio::test]
