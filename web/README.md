@@ -1,8 +1,14 @@
 # okfs.jrnxf.co
 
-The okfs site: a landing page whose okfs is real. okfs's own page, built from `ui/`, runs in frames against
-okfs's own index, built from `src/` for WebAssembly, over a demo folder of about 300,000 entries that the page
-makes in the visitor's browser. Nothing is fetched while it runs, and the site is one file, `dist/index.html`.
+The okfs site: a front page and a demo, both with a real okfs in them. okfs's own page, built from `ui/`, runs
+in frames against okfs's own index, built from `src/` for WebAssembly, over a demo folder of about 300,000
+entries that the page makes in the visitor's browser.
+
+- `/` is the front page, `dist/index.html`: a catalogue page with okfs on the screen of a drawn computer. It
+  fetches the demo's data once, as `dist/okfs-demo.<hash>.json`, and nothing after that. A link to `/` with a
+  query, or to one of the demo's sections, goes on to `/demo/`, where the demo used to be.
+- `/demo/` is the demo, `dist/demo/index.html`: okfs fills the page. It is one file with everything in it, and
+  nothing is fetched while it runs.
 
 ## How it fits together
 
@@ -25,6 +31,9 @@ makes in the visitor's browser. Nothing is fetched while it runs, and the site i
   status line under it that holds the counts and the things to try; the sections below each drive an
   okfs of their own or ask its engine directly. Its two faces, Mona Sans and Fragment Mono, come from the
   `@fontsource` packages in `package.json`, and `build.ts` writes them into the page.
+- `src/site.html`, `src/site.js`: the front page. It uses `runtime.js` like the demo, fed the same blocks from
+  the data file `build.ts` writes beside it. Its two faces, Fraunces and IBM Plex Mono, come from the
+  `@fontsource` packages in `package.json`; `build.ts` copies them to `dist/fonts/`.
 - `public/og.png`: the picture a link to the site shows, okfs's logo and its line at 1200 by 630.
 - `demo/files/`: the demo's files with real contents: the tidewater text files, a zip, a PDF (made with
   `typst compile demo/survey.typ`), a 10 s film (two of the page's landscapes, panned and faded with ffmpeg,
@@ -35,7 +44,7 @@ makes in the visitor's browser. Nothing is fetched while it runs, and the site i
 
 ```sh
 npm install
-npm run build     # build.sh: dist/index.html
+npm run build     # build.sh: dist/index.html, dist/demo/index.html and the data file
 ```
 
 `build.sh` uses Rust with the `wasm32-wasip1` target, binaryen's `wasm-opt` and bun when they are on PATH at

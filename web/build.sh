@@ -1,6 +1,6 @@
 #!/bin/sh
-# Builds the site into web/dist: one page, index.html, holding okfs's page built from ui/, okfs's index built
-# from src/ for WebAssembly, and the demo. See README.md.
+# Builds the site into web/dist: the front page, index.html, and the demo, demo/index.html, which holds okfs's
+# page built from ui/, okfs's index built from src/ for WebAssembly, and the demo folder. See README.md.
 set -eu
 . "$(dirname "$0")/tools.sh"
 

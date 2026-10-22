@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-okfs-data="{{okfs-data}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f3ecdc">
+<script>
+  // The demo lived at this address until it moved to /demo/: a link to it with a query, or to one of its
+  // sections, goes on to the demo.
+  (function () {
+    var demo = ["search", "how", "keys", "keys-sec", "previews", "themes", "binary", "top"];
+    if (location.search || demo.indexOf(location.hash.slice(1)) >= 0) location.replace("/demo/" + location.search + location.hash);
+  })();
+  // Before first paint: the scheme a visitor chose, or the system's.
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("okfs-site.theme"); } catch (e) {}
+    var pick = t === "dark" || t === "light" ? t : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = pick;
+    document.querySelector('meta[name="theme-color"]').setAttribute("content", pick === "dark" ? "#1a1815" : "#f3ecdc");
+  })();
+</script>
+<title>okfs - a file browser for any folder</title>
+<meta name="description" content="okfs is one binary. Run it in a folder and your browser opens on it: the list on the left, the file under the cursor beside it. The okfs on this page is the real one.">
+<link rel="canonical" href="https://okfs.jrnxf.co/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="okfs">
+<meta property="og:url" content="https://okfs.jrnxf.co/">
+<meta property="og:title" content="okfs - a file browser for any folder">
+<meta property="og:description" content="One binary. Run it in a folder and flip through every file inside, in your browser.">
+<meta property="og:image" content="https://okfs.jrnxf.co/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The okfs logo, its o drawn as three columns with the last one lit, over the line: A whole folder in a browser tab.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://okfs.jrnxf.co/og.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cstyle%3E.ink{fill:%23191918}.spot{fill:%23e8501c}@media (prefers-color-scheme: dark){.ink{fill:%23ededeb}.spot{fill:%23ff6a36}}%3C/style%3E%3Cpath class='ink' d='M3.5 1H4V15H3.5A2.5 2.5 0 0 1 1 12.5V3.5A2.5 2.5 0 0 1 3.5 1ZM5 1H8V15H5Z'/%3E%3Cpath class='spot' d='M9 1H12.5A2.5 2.5 0 0 1 15 3.5V12.5A2.5 2.5 0 0 1 12.5 15H9Z'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="{{okfs-data}}" as="fetch" crossorigin>
+<style>
+/* Fraunces and IBM Plex Mono, latin, served beside this page. Both SIL Open Font License 1.1. */
+@font-face { font-family: "Fraunces"; src: url(/fonts/fraunces.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-400.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-500.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-600.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+:root {
+  --serif: "Fraunces", Georgia, serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --paper: #f3ecdc; --paper-2: #eae0ca; --ink: #191918; --ink-2: #5d5547; --rule: #191918; --spot: #e8501c; --on-spot: #191918;
+  --beige: #ddd3bb; --beige-2: #c9bc9f; --beige-3: #b3a585; --glass: #10130f;
+}
+[data-theme="dark"] {
+  --paper: #1a1815; --paper-2: #23201b; --ink: #ede6d6; --ink-2: #aaa192; --rule: #ede6d6; --spot: #ff6a36;
+  --beige: #cfc4aa; --beige-2: #b6a98b; --beige-3: #9b8e71; --glass: #050605;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; overflow-x: hidden; background: var(--paper); color: var(--ink); font: 400 18px/1.55 var(--serif); font-variation-settings: "opsz" 14; }
+a { color: inherit; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--spot); outline-offset: 3px; }
+svg { display: block; }
+.logo { --logo-ink: var(--ink); --logo-spot: var(--spot); display: block; height: auto; aspect-ratio: 2647 / 850; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.wrap { max-width: 1220px; margin: 0 auto; padding: 0 32px; }
+.mast { border-bottom: 1px solid var(--rule); }
+.mast .wrap { display: flex; align-items: center; gap: 22px; padding-top: 12px; padding-bottom: 12px; font: 400 13px/1 var(--mono); }
+.mast .home { display: block; text-decoration: none; }
+.mast .logo { width: 100px; }
+.mast nav { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+.mast nav a { text-decoration: none; }
+.mast nav a:hover { color: var(--spot); }
+.edition { border: 1px solid var(--rule); background: none; padding: 5px 9px; font: 400 12px/1 var(--mono); white-space: nowrap; }
+.folio { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; font: 400 12px/1 var(--mono); color: var(--ink-2); border-bottom: 3px double var(--rule); }
+
+/* the spread: okfs on a computer, and the item */
+.spread { display: grid; grid-template-columns: 7fr 5fr; gap: 56px; padding: 44px 0 56px; align-items: start; }
+.computer { position: relative; margin: 0 auto; max-width: 720px; }
+.monitor { background: linear-gradient(180deg, var(--beige) 0%, var(--beige-2) 100%); border-radius: 18px 18px 10px 10px; padding: 26px 30px 56px; box-shadow: inset 0 -6px 0 var(--beige-3), inset 0 2px 0 rgba(255,255,255,.5), 0 30px 40px -28px rgba(0,0,0,.55); position: relative; }
+.monitor::after { content: ""; position: absolute; left: 30px; bottom: 20px; width: 64px; height: 14px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--beige-3) 0 2px, transparent 2px 5px); }
+.badge { position: absolute; right: 30px; bottom: 14px; width: 84px; --logo-ink: #3b352a; --logo-spot: #e8501c; }
+.bezel { background: #2a2722; padding: 16px; border-radius: 14px; box-shadow: inset 0 0 0 3px #1c1a17; }
+.screen { position: relative; aspect-ratio: 4 / 3; border-radius: 22px / 18px; overflow: hidden; background: var(--glass); }
+.screen .host { position: absolute; inset: 0; }
+.screen iframe.okfs-frame { position: absolute; left: 0; top: 0; width: var(--fw, 1000px); height: var(--fh, 750px); border: 0; transform-origin: 0 0; transform: scale(var(--k, .6)); opacity: 0; transition: opacity .35s ease; }
+.screen iframe.okfs-frame.on { opacity: 1; }
+.screen::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 40px rgba(0,0,0,.45); background: linear-gradient(160deg, rgba(255,255,255,.07), transparent 40%); }
+.boot { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: #c9f2c4; font: 400 14px/1.5 var(--mono); padding: 20px; }
+.stand { width: 46%; height: 20px; margin: 0 auto; background: linear-gradient(180deg, var(--beige-3), var(--beige-2)); clip-path: polygon(8% 0, 92% 0, 100% 100%, 0 100%); }
+.keyboard { width: 92%; margin: 0 auto; height: 44px; border-radius: 6px 6px 10px 10px; background: var(--beige); box-shadow: inset 0 -5px 0 var(--beige-3); position: relative; }
+.keyboard::before { content: ""; position: absolute; inset: 8px 14px 14px; background: repeating-linear-gradient(90deg, var(--beige-2) 0 18px, transparent 18px 22px); border-radius: 2px; }
+.fig { margin-top: 14px; font: 400 13px/1.45 var(--mono); color: var(--ink-2); }
+.fig b { color: var(--ink); }
+
+.item .no { font: 500 13px/1 var(--mono); letter-spacing: .08em; color: var(--spot); }
+.item .logo { width: min(380px, 100%); margin: 18px 0 16px; }
+.item h1 { font: 500 clamp(30px, 3.1vw, 42px)/1.08 var(--serif); font-variation-settings: "opsz" 72, "SOFT" 100, "WONK" 1; margin: 0 0 18px; letter-spacing: -.01em; }
+.item p { margin: 0 0 14px; }
+.specs { margin: 22px 0; padding: 0; list-style: none; font: 400 14px/1.4 var(--mono); border-top: 1px solid var(--rule); }
+.specs li { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
+.specs li span:first-child { color: var(--ink-2); }
+.specs .dots { flex: 1; border-bottom: 1px dotted var(--ink-2); transform: translateY(-5px); min-width: 20px; }
+.price { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin-top: 8px; }
+.tag { font: 600 34px/1 var(--serif); font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1; }
+.tag small { display: block; font: 400 12px/1.3 var(--mono); color: var(--ink-2); margin-top: 4px; }
+.buy { display: inline-flex; flex-direction: column; gap: 4px; padding: 13px 18px; background: var(--spot); color: var(--on-spot); border-radius: 4px; text-decoration: none; font: 600 17px/1 var(--serif); }
+.buy small { font: 400 12px/1 var(--mono); }
+.buy:hover { background: var(--ink); color: var(--paper); }
+
+/* sections */
+section { padding-top: 64px; scroll-margin-top: 12px; }
+.sec-head { display: grid; grid-template-columns: 160px 1fr; gap: 24px; border-top: 3px double var(--rule); padding-top: 18px; margin-bottom: 26px; }
+.sec-head .mk { font: 500 12px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--spot); }
+h2 { font: 500 clamp(30px, 3.4vw, 46px)/1.05 var(--serif); font-variation-settings: "opsz" 96, "SOFT" 100, "WONK" 1; margin: 0; letter-spacing: -.01em; }
+.sec-head p { margin: 10px 0 0; max-width: 62ch; color: var(--ink-2); }
+.indent { margin-left: 184px; }
+
+.bench { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.bench table { width: 100%; border-collapse: collapse; font: 400 15px/1.4 var(--mono); }
+.bench td { padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); vertical-align: baseline; }
+.bench td:last-child { text-align: right; white-space: nowrap; font-weight: 600; color: var(--spot); }
+.bench .lead { display: flex; gap: 8px; }
+.bench .lead::after { content: ""; flex: 1; border-bottom: 1px dotted var(--ink-2); transform: translateY(-5px); }
+.runs { font: 400 14px/1.5 var(--mono); }
+.runs button { border: 1px solid var(--rule); background: none; padding: 9px 12px; font: 500 13px/1 var(--mono); margin-bottom: 14px; }
+.runs button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.runs button:disabled { opacity: .5; cursor: default; }
+.runs ol { margin: 0; padding: 0; list-style: none; counter-reset: r; }
+.runs li { display: grid; grid-template-columns: 2.4em 1fr auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
+.runs li::before { counter-increment: r; content: counter(r) "."; color: var(--ink-2); }
+.runs li b { color: var(--spot); font-weight: 600; }
+.note { font: 400 12px/1.5 var(--mono); color: var(--ink-2); margin-top: 10px; }
+
+.finishes { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
+.chips { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.chips button { width: 100%; text-align: left; display: grid; grid-template-columns: 70px 1fr; gap: 12px; align-items: center; background: none; border: 1px solid color-mix(in srgb, var(--rule) 35%, transparent); padding: 8px; border-radius: 3px; font: 400 15px/1.25 var(--serif); }
+.chips button[aria-pressed="true"] { border-color: var(--spot); box-shadow: inset 0 0 0 1px var(--spot); }
+.chips .sw { display: flex; height: 34px; border-radius: 2px; overflow: hidden; border: 1px solid rgba(0,0,0,.2); }
+.chips .sw i { flex: 1; }
+.chips b { display: block; font-weight: 600; }
+.chips small { color: var(--ink-2); font-size: 13px; }
+.plate { border: 1px solid var(--rule); background: var(--paper-2); padding: 10px; }
+.plate .host { position: relative; overflow: hidden; height: 470px; background: var(--paper); }
+.plate iframe.okfs-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .35s ease; }
+.plate iframe.okfs-frame.on { opacity: 1; }
+.plate .cap { font: 400 12px/1.4 var(--mono); color: var(--ink-2); padding-top: 8px; }
+
+.box dl { margin-top: 0; margin-bottom: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 40px; }
+.box dl div { padding: 16px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
+.box dt { font: 600 19px/1.25 var(--serif); font-variation-settings: "opsz" 48, "SOFT" 100; margin-bottom: 4px; }
+.box dt span { font: 500 12px/1 var(--mono); color: var(--spot); margin-right: 10px; vertical-align: 2px; }
+.box dd { margin: 0; font-size: 16.5px; color: var(--ink-2); }
+code { font: 400 .86em var(--mono); color: var(--ink); background: var(--paper-2); padding: 1px 4px; }
+
+.coupon { border: 2px dashed var(--ink); padding: 26px 28px; position: relative; background: var(--paper-2); }
+.coupon .cut { position: absolute; top: -14px; left: 22px; background: var(--paper); padding: 0 8px; font: 400 18px/1 var(--mono); }
+.coupon h3 { margin: 0 0 4px; font: 600 26px/1.1 var(--serif); font-variation-settings: "opsz" 72, "SOFT" 100, "WONK" 1; }
+.coupon .sub { font: 400 13px/1.4 var(--mono); color: var(--ink-2); margin-bottom: 18px; }
+.ways { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 0 16px; padding: 0; border: 0; font: 400 15px/1.3 var(--mono); }
+.ways label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.ways input { appearance: none; width: 18px; height: 18px; border: 1.5px solid var(--ink); margin: 0; display: grid; place-items: center; }
+.ways input:checked::after { content: "\2715"; font: 600 14px/1 var(--mono); color: var(--spot); }
+.line { display: flex; gap: 10px; align-items: center; border-bottom: 1.5px solid var(--ink); padding: 8px 0; }
+.line code { background: none; padding: 0; flex: 1; overflow-x: auto; white-space: nowrap; font-size: 16px; }
+.line button { border: 1px solid var(--ink); background: var(--paper); font: 500 12px/1 var(--mono); padding: 6px 9px; flex: none; }
+.coupon .fine { font: 400 13px/1.5 var(--mono); color: var(--ink-2); margin-top: 12px; }
+
+footer { margin-top: 90px; border-top: 3px double var(--rule); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 26px; align-items: center; padding-top: 22px; padding-bottom: 40px; font: 400 13px/1.5 var(--mono); }
+footer .logo { width: 100px; }
+footer .credit { margin-left: auto; color: var(--ink-2); }
+
+@media (max-width: 1000px) {
+  .spread { grid-template-columns: 1fr; gap: 34px; }
+  .item { order: -1; }
+  .bench, .finishes { grid-template-columns: 1fr; }
+  .sec-head { grid-template-columns: 1fr; gap: 8px; }
+  .indent { margin-left: 0; }
+}
+@media (max-width: 640px) {
+  body { font-size: 17px; }
+  .wrap { padding: 0 16px; }
+  .mast .wrap { gap: 10px; }
+  .mast nav { gap: 12px; }
+  .mast nav .wide { display: none; }
+  .folio span:last-child { display: none; }
+  .spread { padding-top: 24px; }
+  .monitor { padding: 14px 14px 40px; border-radius: 12px 12px 8px 8px; }
+  .monitor::after { left: 14px; bottom: 14px; width: 40px; height: 10px; }
+  .badge { right: 14px; bottom: 10px; width: 64px; }
+  .bezel { padding: 9px; border-radius: 10px; }
+  .screen { aspect-ratio: 3 / 4; border-radius: 14px / 12px; }
+  .box dl { grid-template-columns: 1fr; }
+  .plate .host { height: 70vh; }
+  .coupon { padding: 22px 16px; }
+  .line code { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- The okfs logo: the tile stands in for the o, set with kfs in Unbounded 600, outlined. -->
+    <symbol id="okfs-logo" viewBox="-20 -810 2647 850">
+      <g transform="translate(-71.03 -675.23) scale(2.95962)">
+        <path fill="var(--logo-ink)" d="M60,24 H60 A8,8 0 0 1 68,32 V224 A8,8 0 0 1 60,232 H60 A36,36 0 0 1 24,196 V60 A36,36 0 0 1 60,24 Z M90,24 H118 A8,8 0 0 1 126,32 V224 A8,8 0 0 1 118,232 H90 A8,8 0 0 1 82,224 V32 A8,8 0 0 1 90,24 Z"/>
+        <path fill="var(--logo-spot)" d="M148,24 H196 A36,36 0 0 1 232,60 V196 A36,36 0 0 1 196,232 H148 A8,8 0 0 1 140,224 V32 A8,8 0 0 1 148,24 Z"/>
+      </g>
+      <path fill="var(--logo-ink)" transform="translate(625.60 0)" d="M245 -151 194 -168 521 -570H720L227 0H60V-770H245ZM359 -279 497 -380 735 0H524Z M1153.0 -647Q1085.0 -647 1056.5 -621.0Q1028.0 -595 1028.0 -539V0H842.0V-528Q842.0 -609 874.0 -666.5Q906.0 -724 970.5 -755.0Q1035.0 -786 1131.0 -786Q1175.0 -786 1209.0 -779.5Q1243.0 -773 1280.0 -762V-624Q1250.0 -635 1219.0 -641.0Q1188.0 -647 1153.0 -647ZM725.0 -386V-525H1267.0V-386Z M1949.0 -183Q1949.0 -119 1911.5 -74.5Q1874.0 -30 1802.0 -7.0Q1730.0 16 1627.0 16Q1522.0 16 1443.0 -10.0Q1364.0 -36 1320.0 -83.0Q1276.0 -130 1273.0 -192H1462.0Q1468.0 -167 1490.5 -148.0Q1513.0 -129 1549.0 -119.5Q1585.0 -110 1634.0 -110Q1700.0 -110 1734.0 -124.0Q1768.0 -138 1768.0 -166Q1768.0 -187 1743.5 -198.0Q1719.0 -209 1656.0 -214L1552.0 -222Q1454.0 -229 1396.0 -253.0Q1338.0 -277 1313.5 -314.0Q1289.0 -351 1289.0 -397Q1289.0 -460 1328.5 -502.0Q1368.0 -544 1438.0 -565.0Q1508.0 -586 1602.0 -586Q1696.0 -586 1769.5 -561.0Q1843.0 -536 1887.5 -492.0Q1932.0 -448 1938.0 -389H1749.0Q1745.0 -409 1727.5 -426.0Q1710.0 -443 1677.5 -453.5Q1645.0 -464 1593.0 -464Q1534.0 -464 1503.0 -451.0Q1472.0 -438 1472.0 -413Q1472.0 -394 1491.0 -383.0Q1510.0 -372 1563.0 -367L1698.0 -357Q1794.0 -349 1848.5 -326.5Q1903.0 -304 1926.0 -268.0Q1949.0 -232 1949.0 -183Z"/>
+    </symbol>
+  </defs>
+</svg>
+<header class="mast">
+  <div class="wrap">
+    <a class="home" href="/" aria-label="okfs"><svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg></a>
+    <nav aria-label="Sections">
+      <a class="wide" href="#measured">measured</a>
+      <a class="wide" href="#finishes">finishes</a>
+      <a href="#install">install</a>
+      <a class="wide" href="https://github.com/jrnxf/okfs">github</a>
+      <button class="edition" type="button" id="theme" aria-label="Switch between dark and light">day / night</button>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+  <div class="folio"><span>Catalogue no. 1</span><span>Software for looking at folders</span><span>Page 1</span></div>
+
+  <div class="spread">
+    <div class="photo">
+      <div class="computer">
+        <div class="monitor">
+          <div class="bezel"><div class="screen" id="screen"><div class="host" id="view"><div class="boot" id="boot"><span>okfs is starting<br><span id="boot-sub">in this tab</span></span></div></div></div></div>
+          <svg class="logo badge" viewBox="0 0 2647 850" aria-hidden="true"><use href="#okfs-logo" width="2647" height="850"/></svg>
+        </div>
+        <div class="stand"></div>
+        <div class="keyboard"></div>
+      </div>
+      <p class="fig"><b>Fig. 1.</b> okfs, running on the screen above. It is the real program, compiled for this page; click into it and press <b>j</b>, or <b>Ctrl K</b> to search.</p>
+    </div>
+
+    <div class="item">
+      <div class="no">Item <span id="ver">0.1.0</span></div>
+      <svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
+      <h1>A file browser for any folder you can reach.</h1>
+      <p>Run <code>okfs</code> in a folder and your browser opens on it. The list sits on the left. The file under the cursor shows beside it as soon as the cursor lands, so holding <b>j</b> flips through a folder of photos, PDFs or video.</p>
+      <ul class="specs">
+        <li><span>Runs on</span><span class="dots"></span><span>Linux, macOS</span></li>
+        <li><span>Ships as</span><span class="dots"></span><span>one binary, about 18 MB</span></li>
+        <li><span>Serves at</span><span class="dots"></span><span>127.0.0.1:8080</span></li>
+        <li><span>Deletes files</span><span class="dots"></span><span>only with --allow-delete</span></li>
+      </ul>
+      <div class="price">
+        <div class="tag">Free<small>MIT licence</small></div>
+        <a class="buy" href="/demo/">Open the live demo <small>okfs, the whole page</small></a>
+      </div>
+    </div>
+  </div>
+
+  <section id="measured" aria-labelledby="measured-h">
+    <div class="sec-head"><div class="mk">Fig. 2<br>Measured here</div><div><h2 id="measured-h">Measured in your browser, a moment ago.</h2><p>When this page opened it unpacked okfs's index, compiled it and read a folder of about 300,000 names. These are its own timings.</p></div></div>
+    <div class="bench indent">
+      <table>
+        <caption class="sr">okfs's timings in this tab</caption>
+        <tbody>
+          <tr><td><span class="lead">Index engine, WebAssembly</span></td><td id="b-size">-</td></tr>
+          <tr><td><span class="lead">Unpacked</span></td><td id="b-unpack">-</td></tr>
+          <tr><td><span class="lead">Compiled</span></td><td id="b-compile">-</td></tr>
+          <tr><td><span class="lead">Entries in the folder</span></td><td id="b-count">-</td></tr>
+          <tr><td><span class="lead">Read all of them</span></td><td id="b-walk">-</td></tr>
+        </tbody>
+      </table>
+      <div class="runs">
+        <button type="button" id="run" disabled>Search five names now</button>
+        <ol id="runs" aria-live="polite"></ol>
+        <p class="note">Each search ranks every name in the folder. The times are this tab's, with okfs compiled to WebAssembly.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="finishes" aria-labelledby="finishes-h">
+    <div class="sec-head"><div class="mk">Fig. 3<br>Finishes</div><div><h2 id="finishes-h">Available in five finishes, light and dark.</h2><p>Each theme is one CSS file. Pick one with <code>--theme</code>, or write your own.</p></div></div>
+    <div class="finishes indent">
+      <ul class="chips" id="chips" aria-label="Themes"></ul>
+      <div class="plate"><div class="host" id="theme-view"></div><p class="cap" id="theme-cap">Plate: the paper finish.</p></div>
+    </div>
+  </section>
+
+  <section id="box" class="box" aria-labelledby="box-h">
+    <div class="sec-head"><div class="mk">In the box</div><div><h2 id="box-h">What okfs does</h2></div></div>
+    <dl class="indent">
+      <div><dt><span>01</span>Previews</dt><dd>Pictures, video, sound, PDFs, Markdown, code, CSV, JSON, zip files and web pages, each shown as itself.</dd></div>
+      <div><dt><span>02</span>Search</dt><dd><code>Ctrl K</code> finds any name in the tree. The query lives in the address, so a shared link keeps it.</dd></div>
+      <div><dt><span>03</span>Columns</dt><dd>A folder under the cursor shows what is in it, and the columns slide as you go in and out.</dd></div>
+      <div><dt><span>04</span>Live</dt><dd>A file added, removed or rewritten shows at once, without a reload.</dd></div>
+      <div><dt><span>05</span>Your phone</dt><dd><code>okfs --bind 0.0.0.0 --qr</code> prints a QR code for another device on the network.</dd></div>
+      <div><dt><span>06</span>Self-contained</dt><dd>The page is compiled into the binary. Nothing is fetched from another site.</dd></div>
+    </dl>
+  </section>
+
+  <section id="install" aria-labelledby="install-h">
+    <div class="sec-head"><div class="mk">Order form</div><div><h2 id="install-h">Install</h2></div></div>
+    <div class="coupon indent">
+      <span class="cut" aria-hidden="true">&#9986;</span>
+      <h3>Clip and paste into a terminal.</h3>
+      <p class="sub">No postage. Tick one.</p>
+      <fieldset class="ways">
+        <legend class="sr">How to install</legend>
+        <label><input type="radio" name="way" value="nix" checked>nix</label>
+        <label><input type="radio" name="way" value="release">release archive</label>
+        <label><input type="radio" name="way" value="cargo">cargo</label>
+      </fieldset>
+      <div id="lines"></div>
+      <p class="fine" id="fine"></p>
+    </div>
+  </section>
+</main>
+<footer>
+  <div class="wrap">
+    <svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
+    <a href="/demo/">live demo</a>
+    <a href="https://github.com/jrnxf/okfs">source</a>
+    <a href="https://github.com/jrnxf/okfs/releases">releases</a>
+    <span class="credit">Set in Fraunces and IBM Plex Mono, under the SIL Open Font License.</span>
+  </div>
+</footer>
+<!--okfs:site-->
+</body>
+</html>
