@@ -21,20 +21,32 @@
     document.querySelector('meta[name="theme-color"]').setAttribute("content", pick === "dark" ? "#1a1815" : "#f3ecdc");
   })();
 </script>
-<title>okfs - a file browser for any folder</title>
-<meta name="description" content="okfs is one binary. Run it in a folder and your browser opens on it: the list on the left, the file under the cursor beside it. The okfs on this page is the real one.">
+<title>okfs - web file browser and file server in one binary</title>
+<meta name="description" content="okfs is a free, open-source web file browser in one binary. Run it in a folder to preview images, video, PDFs and code, and search every file in your browser.">
 <link rel="canonical" href="https://okfs.jrnxf.co/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="okfs">
 <meta property="og:url" content="https://okfs.jrnxf.co/">
-<meta property="og:title" content="okfs - a file browser for any folder">
-<meta property="og:description" content="One binary. Run it in a folder and flip through every file inside, in your browser.">
+<meta property="og:title" content="okfs - web file browser and file server in one binary">
+<meta property="og:description" content="okfs is an open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.">
 <meta property="og:image" content="https://okfs.jrnxf.co/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="The okfs logo, its o drawn as three columns with the last one lit, over the line: A whole folder in a browser tab.">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="okfs - web file browser and file server in one binary">
+<meta name="twitter:description" content="okfs is an open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.">
 <meta name="twitter:image" content="https://okfs.jrnxf.co/og.png">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"okfs",
+ "description":"An open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.",
+ "applicationCategory":"DeveloperApplication","operatingSystem":"Linux, macOS",
+ "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},
+ "license":"https://opensource.org/licenses/MIT",
+ "url":"https://okfs.jrnxf.co/","downloadUrl":"https://github.com/jrnxf/okfs/releases",
+ "codeRepository":"https://github.com/jrnxf/okfs","sameAs":["https://github.com/jrnxf/okfs"],
+ "image":"https://okfs.jrnxf.co/og.png"}
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cstyle%3E.ink{fill:%23191918}.spot{fill:%23e8501c}@media (prefers-color-scheme: dark){.ink{fill:%23ededeb}.spot{fill:%23ff6a36}}%3C/style%3E%3Cpath class='ink' d='M3.5 1H4V15H3.5A2.5 2.5 0 0 1 1 12.5V3.5A2.5 2.5 0 0 1 3.5 1ZM5 1H8V15H5Z'/%3E%3Cpath class='spot' d='M9 1H12.5A2.5 2.5 0 0 1 15 3.5V12.5A2.5 2.5 0 0 1 12.5 15H9Z'/%3E%3C/svg%3E">
 <link rel="preload" href="/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{okfs-data}}" as="fetch" crossorigin>
@@ -46,11 +58,11 @@
 @font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-600.woff2) format("woff2"); font-weight: 600; font-display: swap; }
 :root {
   --serif: "Fraunces", Georgia, serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
-  --paper: #f3ecdc; --paper-2: #eae0ca; --ink: #191918; --ink-2: #5d5547; --rule: #191918; --spot: #e8501c; --on-spot: #191918;
+  --paper: #f3ecdc; --paper-2: #eae0ca; --ink: #191918; --ink-2: #5d5547; --rule: #191918; --spot: #e8501c; --spot-ink: #a8360d; --on-spot: #191918;
   --beige: #ddd3bb; --beige-2: #c9bc9f; --beige-3: #b3a585; --glass: #10130f;
 }
 [data-theme="dark"] {
-  --paper: #1a1815; --paper-2: #23201b; --ink: #ede6d6; --ink-2: #aaa192; --rule: #ede6d6; --spot: #ff6a36;
+  --paper: #1a1815; --paper-2: #23201b; --ink: #ede6d6; --ink-2: #aaa192; --rule: #ede6d6; --spot: #ff6a36; --spot-ink: #ff6a36;
   --beige: #cfc4aa; --beige-2: #b6a98b; --beige-3: #9b8e71; --glass: #050605;
 }
 *, *::before, *::after { box-sizing: border-box; }
@@ -69,7 +81,7 @@ svg { display: block; }
 .mast .logo { width: 100px; }
 .mast nav { margin-left: auto; display: flex; gap: 22px; align-items: center; }
 .mast nav a { text-decoration: none; }
-.mast nav a:hover { color: var(--spot); }
+.mast nav a:hover { color: var(--spot-ink); }
 .edition { border: 1px solid var(--rule); background: none; padding: 5px 9px; font: 400 12px/1 var(--mono); white-space: nowrap; }
 .folio { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; font: 400 12px/1 var(--mono); color: var(--ink-2); border-bottom: 3px double var(--rule); }
 
@@ -92,7 +104,7 @@ svg { display: block; }
 .fig { margin-top: 14px; font: 400 13px/1.45 var(--mono); color: var(--ink-2); }
 .fig b { color: var(--ink); }
 
-.item .no { font: 500 13px/1 var(--mono); letter-spacing: .08em; color: var(--spot); }
+.item .no { font: 500 13px/1 var(--mono); letter-spacing: .08em; color: var(--spot-ink); }
 .item .logo { width: min(380px, 100%); margin: 18px 0 16px; }
 .item h1 { font: 500 clamp(30px, 3.1vw, 42px)/1.08 var(--serif); font-variation-settings: "opsz" 72, "SOFT" 100, "WONK" 1; margin: 0 0 18px; letter-spacing: -.01em; }
 .item p { margin: 0 0 14px; }
@@ -110,7 +122,7 @@ svg { display: block; }
 /* sections */
 section { padding-top: 64px; scroll-margin-top: 12px; }
 .sec-head { display: grid; grid-template-columns: 160px 1fr; gap: 24px; border-top: 3px double var(--rule); padding-top: 18px; margin-bottom: 26px; }
-.sec-head .mk { font: 500 12px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--spot); }
+.sec-head .mk { font: 500 12px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--spot-ink); }
 h2 { font: 500 clamp(30px, 3.4vw, 46px)/1.05 var(--serif); font-variation-settings: "opsz" 96, "SOFT" 100, "WONK" 1; margin: 0; letter-spacing: -.01em; }
 .sec-head p { margin: 10px 0 0; max-width: 62ch; color: var(--ink-2); }
 .indent { margin-left: 184px; }
@@ -118,7 +130,7 @@ h2 { font: 500 clamp(30px, 3.4vw, 46px)/1.05 var(--serif); font-variation-settin
 .bench { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .bench table { width: 100%; border-collapse: collapse; font: 400 15px/1.4 var(--mono); }
 .bench td { padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); vertical-align: baseline; }
-.bench td:last-child { text-align: right; white-space: nowrap; font-weight: 600; color: var(--spot); }
+.bench td:last-child { text-align: right; white-space: nowrap; font-weight: 600; color: var(--spot-ink); }
 .bench .lead { display: flex; gap: 8px; }
 .bench .lead::after { content: ""; flex: 1; border-bottom: 1px dotted var(--ink-2); transform: translateY(-5px); }
 .runs { font: 400 14px/1.5 var(--mono); }
@@ -128,7 +140,7 @@ h2 { font: 500 clamp(30px, 3.4vw, 46px)/1.05 var(--serif); font-variation-settin
 .runs ol { margin: 0; padding: 0; list-style: none; counter-reset: r; }
 .runs li { display: grid; grid-template-columns: 2.4em 1fr auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
 .runs li::before { counter-increment: r; content: counter(r) "."; color: var(--ink-2); }
-.runs li b { color: var(--spot); font-weight: 600; }
+.runs li b { color: var(--spot-ink); font-weight: 600; }
 .note { font: 400 12px/1.5 var(--mono); color: var(--ink-2); margin-top: 10px; }
 
 .finishes { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
@@ -148,7 +160,7 @@ h2 { font: 500 clamp(30px, 3.4vw, 46px)/1.05 var(--serif); font-variation-settin
 .box dl { margin-top: 0; margin-bottom: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 40px; }
 .box dl div { padding: 16px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
 .box dt { font: 600 19px/1.25 var(--serif); font-variation-settings: "opsz" 48, "SOFT" 100; margin-bottom: 4px; }
-.box dt span { font: 500 12px/1 var(--mono); color: var(--spot); margin-right: 10px; vertical-align: 2px; }
+.box dt span { font: 500 12px/1 var(--mono); color: var(--spot-ink); margin-right: 10px; vertical-align: 2px; }
 .box dd { margin: 0; font-size: 16.5px; color: var(--ink-2); }
 code { font: 400 .86em var(--mono); color: var(--ink); background: var(--paper-2); padding: 1px 4px; }
 
@@ -164,6 +176,17 @@ code { font: 400 .86em var(--mono); color: var(--ink); background: var(--paper-2
 .line code { background: none; padding: 0; flex: 1; overflow-x: auto; white-space: nowrap; font-size: 16px; }
 .line button { border: 1px solid var(--ink); background: var(--paper); font: 500 12px/1 var(--mono); padding: 6px 9px; flex: none; }
 .coupon .fine { font: 400 13px/1.5 var(--mono); color: var(--ink-2); margin-top: 12px; }
+
+.compare { overflow-x: auto; }
+.compare table { width: 100%; min-width: 760px; border-collapse: collapse; font: 400 14px/1.4 var(--mono); }
+.compare th, .compare td { text-align: left; vertical-align: top; padding: 9px 12px 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
+.compare thead th { font-weight: 600; border-bottom: 1px solid var(--rule); }
+.compare tbody th { font-weight: 400; color: var(--ink-2); }
+.compare th:first-child { position: sticky; left: 0; background: var(--paper); }
+.compare td:nth-child(2) { font-weight: 600; }
+.faq div { padding: 16px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); max-width: 70ch; }
+.faq h3 { margin: 0 0 6px; font: 600 19px/1.3 var(--serif); font-variation-settings: "opsz" 48, "SOFT" 100; }
+.faq p { margin: 0; font-size: 16.5px; color: var(--ink-2); }
 
 footer { margin-top: 90px; border-top: 3px double var(--rule); }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 26px; align-items: center; padding-top: 22px; padding-bottom: 40px; font: 400 13px/1.5 var(--mono); }
@@ -217,9 +240,10 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
     <nav aria-label="Sections">
       <a class="wide" href="#measured">measured</a>
       <a class="wide" href="#finishes">finishes</a>
+      <a class="wide" href="#compare">compare</a>
       <a href="#install">install</a>
       <a class="wide" href="https://github.com/jrnxf/okfs">github</a>
-      <button class="edition" type="button" id="theme" aria-label="Switch between dark and light">day / night</button>
+      <button class="edition" type="button" id="theme" aria-label="day / night: switch between dark and light">day / night</button>
     </nav>
   </div>
 </header>
@@ -240,7 +264,7 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
     </div>
 
     <div class="item">
-      <div class="no">Item <span id="ver">0.1.0</span></div>
+      <div class="no">Item 0.1.0</div>
       <svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
       <h1>A file browser for any folder you can reach.</h1>
       <p>Run <code>okfs</code> in a folder and your browser opens on it. The list sits on the left. The file under the cursor shows beside it as soon as the cursor lands, so holding <b>j</b> flips through a folder of photos, PDFs or video.</p>
@@ -298,6 +322,38 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
     </dl>
   </section>
 
+  <section id="compare" aria-labelledby="compare-h">
+    <div class="sec-head"><div class="mk">Comparison</div><div><h2 id="compare-h">How okfs compares</h2><p>okfs is for looking at a folder. It has no upload and no accounts, on purpose: for uploads, use dufs or copyparty; for a file manager with users, File Browser Quantum.</p></div></div>
+    <div class="compare indent">
+      <table>
+        <caption class="sr">okfs beside python -m http.server, miniserve, dufs and copyparty</caption>
+        <thead><tr><th scope="col"></th><th scope="col">okfs</th><th scope="col">python -m http.server</th><th scope="col">miniserve</th><th scope="col">dufs</th><th scope="col">copyparty</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Default address</th><td>loopback only</td><td>all interfaces</td><td>all interfaces</td><td>all interfaces</td><td>all interfaces</td></tr>
+          <tr><th scope="row">Beyond loopback</th><td>secret link</td><td>none</td><td>basic auth, optional</td><td>basic or digest auth, optional</td><td>accounts</td></tr>
+          <tr><th scope="row">Writes</th><td>none; delete behind a flag</td><td>none</td><td>upload, optional</td><td>upload, edit, move and delete, each optional</td><td>upload, per account</td></tr>
+          <tr><th scope="row">Previews</th><td>images, video, audio, PDF, Markdown, code, CSV, JSON, zip, HTML</td><td>none</td><td>none</td><td>none</td><td>thumbnails, audio spectrograms</td></tr>
+          <tr><th scope="row">Search of the whole tree</th><td>instant, in memory</td><td>none</td><td>none</td><td>yes</td><td>yes, indexed</td></tr>
+          <tr><th scope="row">Live updates</th><td>yes</td><td>none</td><td>none</td><td>none</td><td>not checked</td></tr>
+          <tr><th scope="row">TLS</th><td>through a proxy</td><td>since Python 3.14</td><td>yes</td><td>yes</td><td>yes</td></tr>
+        </tbody>
+      </table>
+      <p class="note">This is how each tool read on 2026-10-21, from its documentation. Check the project you are comparing before you rely on a cell.</p>
+    </div>
+  </section>
+
+  <section id="questions" aria-labelledby="questions-h">
+    <div class="sec-head"><div class="mk">Questions</div><div><h2 id="questions-h">Questions</h2></div></div>
+    <div class="faq indent">
+      <div><h3>How do I browse a folder in my browser?</h3><p>Run <code>okfs</code> in it. It serves the folder at http://127.0.0.1:8080 and opens your browser on it.</p></div>
+      <div><h3>Is okfs an alternative to python -m http.server or miniserve?</h3><p>Yes, for looking at files. It adds previews, a search of the whole tree and live updates, and stays read only. For uploads, use dufs or copyparty.</p></div>
+      <div><h3>How do I open files from my computer on my phone?</h3><p><code>okfs --bind 0.0.0.0 --qr</code> prints a QR code with a secret link. Scan it on a phone on the same network.</p></div>
+      <div><h3>Can visitors upload, edit or delete files?</h3><p>There is no upload and no editing. Deleting needs <code>--allow-delete</code>.</p></div>
+      <div><h3>Does okfs need Docker, a database or an account?</h3><p>No. It is one binary with the page inside it.</p></div>
+      <div><h3>Does it run on Windows?</h3><p>Not yet. It runs on Linux and macOS.</p></div>
+    </div>
+  </section>
+
   <section id="install" aria-labelledby="install-h">
     <div class="sec-head"><div class="mk">Order form</div><div><h2 id="install-h">Install</h2></div></div>
     <div class="coupon indent">
@@ -310,8 +366,22 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
         <label><input type="radio" name="way" value="release">release archive</label>
         <label><input type="radio" name="way" value="cargo">cargo</label>
       </fieldset>
-      <div id="lines"></div>
-      <p class="fine" id="fine"></p>
+      <div class="way" data-way="nix">
+        <div class="line"><code>nix run github:jrnxf/okfs -- ~/photos</code><button type="button">Copy</button></div>
+        <div class="line"><code>nix profile install github:jrnxf/okfs</code><button type="button">Copy</button></div>
+        <p class="fine">The first line runs it once in ~/photos. The second puts it on your PATH; nix profile upgrade okfs updates it.</p>
+      </div>
+      <div class="way" data-way="release" hidden>
+        <div class="line"><code>tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')</code><button type="button">Copy</button></div>
+        <div class="line"><code>gh release download "$tag" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'</code><button type="button">Copy</button></div>
+        <div class="line"><code>tar -xzf okfs-*-aarch64-apple-darwin.tar.gz</code><button type="button">Copy</button></div>
+        <p class="fine">That is a Mac with Apple silicon; the binary is okfs in the folder the archive makes. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. The first release, v0.1.0-pre.1, is on its way.</p>
+      </div>
+      <div class="way" data-way="cargo" hidden>
+        <div class="line"><code>cargo install --git https://github.com/jrnxf/okfs</code><button type="button">Copy</button></div>
+        <div class="line"><code>okfs ~/photos</code><button type="button">Copy</button></div>
+        <p class="fine">It needs a Rust toolchain and bun, which builds the page.</p>
+      </div>
     </div>
   </section>
 </main>

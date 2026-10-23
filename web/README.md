@@ -35,6 +35,8 @@ entries that the page makes in the visitor's browser.
   the data file `build.ts` writes beside it. Its two faces, Fraunces and IBM Plex Mono, come from the
   `@fontsource` packages in `package.json`; `build.ts` copies them to `dist/fonts/`.
 - `public/og.png`: the picture a link to the site shows, okfs's logo and its line at 1200 by 630.
+- `public/robots.txt`, `public/sitemap.xml`, `public/llms.txt`: for crawlers and answer engines. The sitemap lists
+  `/` and `/demo/`; robots.txt allows every crawler and names the sitemap.
 - `demo/files/`: the demo's files with real contents: the tidewater text files, a zip, a PDF (made with
   `typst compile demo/survey.typ`), a 10 s film (two of the page's landscapes, panned and faded with ffmpeg,
   VP9) and a page. `demo/templates/`: one file of each kind whose preview the others borrow.
