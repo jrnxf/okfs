@@ -161,6 +161,12 @@ export function Editor({ file }: { file: Entry }) {
 
   useEffect(() => editor.current?.wrap(store.wraps(file)), [store.wraps(file)]);
 
+  // Staying, when asked whether to leave, puts the focus back in the text.
+  const asking = store.s.leaving !== null;
+  useEffect(() => {
+    if (!asking) editor.current?.focus();
+  }, [asking]);
+
   /** Their version in place of the text in the editor. Undo brings back what was there. */
   const showTheirs = async () => {
     try {

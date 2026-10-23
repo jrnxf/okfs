@@ -187,6 +187,7 @@ export function mount(parent: HTMLElement, text: string, options: Mount): Editin
         drawSelection(),
         dropCursor(),
         EditorState.allowMultipleSelections.of(true),
+        EditorState.lineSeparator.of("\n"),
         indentOnInput(),
         syntaxHighlighting(colors),
         bracketMatching(),

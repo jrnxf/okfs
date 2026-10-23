@@ -1,5 +1,5 @@
 // A file's text as the editor holds it and as it is saved: the editor keeps lines joined by `\n`, and the file keeps
-// the line endings and the byte-order mark it was found with.
+// the line endings and the byte-order mark it was found with. A lone `\r` is not a line ending: it stays in the text.
 
 /** How a file writes its text: with `\r\n` line endings, and with a byte-order mark in front. */
 export interface Form {
@@ -24,7 +24,7 @@ export function readText(bytes: Uint8Array): { text: string; form: Form } | null
   const bom = raw.startsWith("﻿");
   const body = bom ? raw.slice(1) : raw;
   const crlf = (body.match(/\r\n/g)?.length ?? 0) > (body.match(/(?<!\r)\n/g)?.length ?? 0);
-  return { text: body.replace(/\r\n?/g, "\n"), form: { crlf, bom } };
+  return { text: body.replace(/\r\n/g, "\n"), form: { crlf, bom } };
 }
 
 /** The bytes to save for the editor's text, written the way the file was found. */
