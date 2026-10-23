@@ -1,6 +1,7 @@
 // Builds the page into dist/: two scripts, one stylesheet, the fonts, the third-party notices and the HTML shell.
 // The Rust build embeds everything in dist/ into the binary.
 import { cp, mkdir, rm } from "node:fs/promises";
+import { buildCss, uiSources } from "./css";
 
 const out = "dist";
 await rm(out, { recursive: true, force: true });
@@ -27,10 +28,8 @@ for (const { entry, format } of scripts) {
   }
 }
 
-// Order matters: fonts, then the token contract, then the styles that read it.
-const styles = ["fonts", "tokens", "core", "app"];
-const css = await Promise.all(styles.map((name) => Bun.file(`src/styles/${name}.css`).text()));
-await Bun.write(`${out}/app.css`, css.join("\n"));
+// The stylesheet, with the utilities the page's markup uses: see css.ts.
+await Bun.write(`${out}/app.css`, await buildCss("src/styles/app.css", uiSources()));
 
 // Geist, Geist Mono and Newsreader are under the SIL Open Font License 1.1, which allows bundling.
 const fonts = [

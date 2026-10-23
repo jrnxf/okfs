@@ -50,179 +50,10 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cstyle%3E.ink{fill:%23191918}.spot{fill:%23e8501c}@media (prefers-color-scheme: dark){.ink{fill:%23ededeb}.spot{fill:%23ff6a36}}%3C/style%3E%3Cpath class='ink' d='M3.5 1H4V15H3.5A2.5 2.5 0 0 1 1 12.5V3.5A2.5 2.5 0 0 1 3.5 1ZM5 1H8V15H5Z'/%3E%3Cpath class='spot' d='M9 1H12.5A2.5 2.5 0 0 1 15 3.5V12.5A2.5 2.5 0 0 1 12.5 15H9Z'/%3E%3C/svg%3E">
 <link rel="preload" href="/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="{{okfs-data}}" as="fetch" crossorigin>
-<style>
-/* Fraunces and IBM Plex Mono, latin, served beside this page. Both SIL Open Font License 1.1. */
-@font-face { font-family: "Fraunces"; src: url(/fonts/fraunces.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-400.woff2) format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-500.woff2) format("woff2"); font-weight: 500; font-display: swap; }
-@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-600.woff2) format("woff2"); font-weight: 600; font-display: swap; }
-:root {
-  --serif: "Fraunces", Georgia, serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
-  --paper: #f3ecdc; --paper-2: #eae0ca; --ink: #191918; --ink-2: #5d5547; --rule: #191918; --spot: #e8501c; --spot-ink: #a8360d; --on-spot: #191918;
-  --beige: #ddd3bb; --beige-2: #c9bc9f; --beige-3: #b3a585; --glass: #10130f;
-}
-[data-theme="dark"] {
-  --paper: #1a1815; --paper-2: #23201b; --ink: #ede6d6; --ink-2: #aaa192; --rule: #ede6d6; --spot: #ff6a36; --spot-ink: #ff6a36;
-  --beige: #cfc4aa; --beige-2: #b6a98b; --beige-3: #9b8e71; --glass: #050605;
-}
-*, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-body { margin: 0; overflow-x: hidden; background: var(--paper); color: var(--ink); font: 400 18px/1.55 var(--serif); font-variation-settings: "opsz" 14; }
-a { color: inherit; }
-button { font: inherit; color: inherit; cursor: pointer; }
-:focus-visible { outline: 2px solid var(--spot); outline-offset: 3px; }
-svg { display: block; }
-.logo { --logo-ink: var(--ink); --logo-spot: var(--spot); display: block; height: auto; aspect-ratio: 2647 / 850; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.wrap { max-width: 1220px; margin: 0 auto; padding: 0 32px; }
-.mast { border-bottom: 1px solid var(--rule); }
-.mast .wrap { display: flex; align-items: center; gap: 22px; padding-top: 12px; padding-bottom: 12px; font: 400 13px/1 var(--mono); }
-.mast .home { display: block; text-decoration: none; }
-.mast .logo { width: 100px; }
-.mast nav { margin-left: auto; display: flex; gap: 22px; align-items: center; }
-.mast nav a { text-decoration: none; }
-.mast nav a:hover { color: var(--spot-ink); }
-.edition { border: 1px solid var(--rule); background: none; padding: 5px 9px; font: 400 12px/1 var(--mono); white-space: nowrap; }
-.folio { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; font: 400 12px/1 var(--mono); color: var(--ink-2); border-bottom: 3px double var(--rule); }
-
-/* the spread: okfs on a computer, and the item */
-.spread { display: grid; grid-template-columns: 7fr 5fr; gap: 56px; padding: 44px 0 56px; align-items: start; }
-.computer { position: relative; margin: 0 auto; max-width: 720px; }
-.monitor { background: linear-gradient(180deg, var(--beige) 0%, var(--beige-2) 100%); border-radius: 18px 18px 10px 10px; padding: 26px 30px 56px; box-shadow: inset 0 -6px 0 var(--beige-3), inset 0 2px 0 rgba(255,255,255,.5), 0 30px 40px -28px rgba(0,0,0,.55); position: relative; }
-.monitor::after { content: ""; position: absolute; left: 30px; bottom: 20px; width: 64px; height: 14px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--beige-3) 0 2px, transparent 2px 5px); }
-.badge { position: absolute; right: 30px; bottom: 14px; width: 84px; --logo-ink: #3b352a; --logo-spot: #e8501c; }
-.bezel { background: #2a2722; padding: 16px; border-radius: 14px; box-shadow: inset 0 0 0 3px #1c1a17; }
-.screen { position: relative; aspect-ratio: 4 / 3; border-radius: 22px / 18px; overflow: hidden; background: var(--glass); }
-.screen .host { position: absolute; inset: 0; }
-.screen iframe.okfs-frame { position: absolute; left: 0; top: 0; width: var(--fw, 1000px); height: var(--fh, 750px); border: 0; transform-origin: 0 0; transform: scale(var(--k, .6)); opacity: 0; transition: opacity .35s ease; }
-.screen iframe.okfs-frame.on { opacity: 1; }
-.screen::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 40px rgba(0,0,0,.45); background: linear-gradient(160deg, rgba(255,255,255,.07), transparent 40%); }
-.boot { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; color: #c9f2c4; font: 400 14px/1.5 var(--mono); padding: 20px; }
-.stand { width: 46%; height: 20px; margin: 0 auto; background: linear-gradient(180deg, var(--beige-3), var(--beige-2)); clip-path: polygon(8% 0, 92% 0, 100% 100%, 0 100%); }
-.keyboard { width: 92%; margin: 0 auto; height: 44px; border-radius: 6px 6px 10px 10px; background: var(--beige); box-shadow: inset 0 -5px 0 var(--beige-3); position: relative; }
-.keyboard::before { content: ""; position: absolute; inset: 8px 14px 14px; background: repeating-linear-gradient(90deg, var(--beige-2) 0 18px, transparent 18px 22px); border-radius: 2px; }
-.fig { margin-top: 14px; font: 400 13px/1.45 var(--mono); color: var(--ink-2); }
-.fig b { color: var(--ink); }
-
-.item .no { font: 500 13px/1 var(--mono); letter-spacing: .08em; color: var(--spot-ink); }
-.item .logo { width: min(380px, 100%); margin: 18px 0 16px; }
-.item h1 { font: 500 clamp(30px, 3.1vw, 42px)/1.08 var(--serif); font-variation-settings: "opsz" 72, "SOFT" 100, "WONK" 1; margin: 0 0 18px; letter-spacing: -.01em; }
-.item p { margin: 0 0 14px; }
-.specs { margin: 22px 0; padding: 0; list-style: none; font: 400 14px/1.4 var(--mono); border-top: 1px solid var(--rule); }
-.specs li { display: flex; gap: 8px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
-.specs li span:first-child { color: var(--ink-2); }
-.specs .dots { flex: 1; border-bottom: 1px dotted var(--ink-2); transform: translateY(-5px); min-width: 20px; }
-.price { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin-top: 8px; }
-.tag { font: 600 34px/1 var(--serif); font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1; }
-.tag small { display: block; font: 400 12px/1.3 var(--mono); color: var(--ink-2); margin-top: 4px; }
-.buy { display: inline-flex; flex-direction: column; gap: 4px; padding: 13px 18px; background: var(--spot); color: var(--on-spot); border-radius: 4px; text-decoration: none; font: 600 17px/1 var(--serif); }
-.buy small { font: 400 12px/1 var(--mono); }
-.buy:hover { background: var(--ink); color: var(--paper); }
-
-/* sections */
-section { padding-top: 64px; scroll-margin-top: 12px; }
-.sec-head { display: grid; grid-template-columns: 160px 1fr; gap: 24px; border-top: 3px double var(--rule); padding-top: 18px; margin-bottom: 26px; }
-.sec-head .mk { font: 500 12px/1.4 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--spot-ink); }
-h2 { font: 500 clamp(30px, 3.4vw, 46px)/1.05 var(--serif); font-variation-settings: "opsz" 96, "SOFT" 100, "WONK" 1; margin: 0; letter-spacing: -.01em; }
-.sec-head p { margin: 10px 0 0; max-width: 62ch; color: var(--ink-2); }
-.indent { margin-left: 184px; }
-
-.bench { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-.bench table { width: 100%; border-collapse: collapse; font: 400 15px/1.4 var(--mono); }
-.bench td { padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); vertical-align: baseline; }
-.bench td:last-child { text-align: right; white-space: nowrap; font-weight: 600; color: var(--spot-ink); }
-.bench .lead { display: flex; gap: 8px; }
-.bench .lead::after { content: ""; flex: 1; border-bottom: 1px dotted var(--ink-2); transform: translateY(-5px); }
-.runs { font: 400 14px/1.5 var(--mono); }
-.runs button { border: 1px solid var(--rule); background: none; padding: 9px 12px; font: 500 13px/1 var(--mono); margin-bottom: 14px; }
-.runs button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
-.runs button:disabled { opacity: .5; cursor: default; }
-.runs ol { margin: 0; padding: 0; list-style: none; counter-reset: r; }
-.runs li { display: grid; grid-template-columns: 2.4em 1fr auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
-.runs li::before { counter-increment: r; content: counter(r) "."; color: var(--ink-2); }
-.runs li b { color: var(--spot-ink); font-weight: 600; }
-.note { font: 400 12px/1.5 var(--mono); color: var(--ink-2); margin-top: 10px; }
-
-.finishes { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
-.chips { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.chips button { width: 100%; text-align: left; display: grid; grid-template-columns: 70px 1fr; gap: 12px; align-items: center; background: none; border: 1px solid color-mix(in srgb, var(--rule) 35%, transparent); padding: 8px; border-radius: 3px; font: 400 15px/1.25 var(--serif); }
-.chips button[aria-pressed="true"] { border-color: var(--spot); box-shadow: inset 0 0 0 1px var(--spot); }
-.chips .sw { display: flex; height: 34px; border-radius: 2px; overflow: hidden; border: 1px solid rgba(0,0,0,.2); }
-.chips .sw i { flex: 1; }
-.chips b { display: block; font-weight: 600; }
-.chips small { color: var(--ink-2); font-size: 13px; }
-.plate { border: 1px solid var(--rule); background: var(--paper-2); padding: 10px; }
-.plate .host { position: relative; overflow: hidden; height: 470px; background: var(--paper); }
-.plate iframe.okfs-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .35s ease; }
-.plate iframe.okfs-frame.on { opacity: 1; }
-.plate .cap { font: 400 12px/1.4 var(--mono); color: var(--ink-2); padding-top: 8px; }
-
-.box dl { margin-top: 0; margin-bottom: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 40px; }
-.box dl div { padding: 16px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
-.box dt { font: 600 19px/1.25 var(--serif); font-variation-settings: "opsz" 48, "SOFT" 100; margin-bottom: 4px; }
-.box dt span { font: 500 12px/1 var(--mono); color: var(--spot-ink); margin-right: 10px; vertical-align: 2px; }
-.box dd { margin: 0; font-size: 16.5px; color: var(--ink-2); }
-code { font: 400 .86em var(--mono); color: var(--ink); background: var(--paper-2); padding: 1px 4px; }
-
-.coupon { border: 2px dashed var(--ink); padding: 26px 28px; position: relative; background: var(--paper-2); }
-.coupon .cut { position: absolute; top: -14px; left: 22px; background: var(--paper); padding: 0 8px; font: 400 18px/1 var(--mono); }
-.coupon h3 { margin: 0 0 4px; font: 600 26px/1.1 var(--serif); font-variation-settings: "opsz" 72, "SOFT" 100, "WONK" 1; }
-.coupon .sub { font: 400 13px/1.4 var(--mono); color: var(--ink-2); margin-bottom: 18px; }
-.ways { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 0 16px; padding: 0; border: 0; font: 400 15px/1.3 var(--mono); }
-.ways label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
-.ways input { appearance: none; width: 18px; height: 18px; border: 1.5px solid var(--ink); margin: 0; display: grid; place-items: center; }
-.ways input:checked::after { content: "\2715"; font: 600 14px/1 var(--mono); color: var(--spot); }
-.line { display: flex; gap: 10px; align-items: center; border-bottom: 1.5px solid var(--ink); padding: 8px 0; }
-.line code { background: none; padding: 0; flex: 1; overflow-x: auto; white-space: nowrap; font-size: 16px; }
-.line button { border: 1px solid var(--ink); background: var(--paper); font: 500 12px/1 var(--mono); padding: 6px 9px; flex: none; }
-.coupon .fine { font: 400 13px/1.5 var(--mono); color: var(--ink-2); margin-top: 12px; }
-
-.compare { overflow-x: auto; }
-.compare table { width: 100%; min-width: 760px; border-collapse: collapse; font: 400 14px/1.4 var(--mono); }
-.compare th, .compare td { text-align: left; vertical-align: top; padding: 9px 12px 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); }
-.compare thead th { font-weight: 600; border-bottom: 1px solid var(--rule); }
-.compare tbody th { font-weight: 400; color: var(--ink-2); }
-.compare th:first-child { position: sticky; left: 0; background: var(--paper); }
-.compare td:nth-child(2) { font-weight: 600; }
-.faq div { padding: 16px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 25%, transparent); max-width: 70ch; }
-.faq h3 { margin: 0 0 6px; font: 600 19px/1.3 var(--serif); font-variation-settings: "opsz" 48, "SOFT" 100; }
-.faq p { margin: 0; font-size: 16.5px; color: var(--ink-2); }
-
-footer { margin-top: 90px; border-top: 3px double var(--rule); }
-footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 26px; align-items: center; padding-top: 22px; padding-bottom: 40px; font: 400 13px/1.5 var(--mono); }
-footer .logo { width: 100px; }
-footer .credit { margin-left: auto; color: var(--ink-2); }
-
-@media (max-width: 1000px) {
-  .spread { grid-template-columns: 1fr; gap: 34px; }
-  .item { order: -1; }
-  .bench, .finishes { grid-template-columns: 1fr; }
-  .sec-head { grid-template-columns: 1fr; gap: 8px; }
-  .indent { margin-left: 0; }
-}
-@media (max-width: 640px) {
-  body { font-size: 17px; }
-  .wrap { padding: 0 16px; }
-  .mast .wrap { gap: 10px; }
-  .mast nav { gap: 12px; }
-  .mast nav .wide { display: none; }
-  .folio span:last-child { display: none; }
-  .spread { padding-top: 24px; }
-  .monitor { padding: 14px 14px 40px; border-radius: 12px 12px 8px 8px; }
-  .monitor::after { left: 14px; bottom: 14px; width: 40px; height: 10px; }
-  .badge { right: 14px; bottom: 10px; width: 64px; }
-  .bezel { padding: 9px; border-radius: 10px; }
-  .screen { aspect-ratio: 3 / 4; border-radius: 14px / 12px; }
-  .box dl { grid-template-columns: 1fr; }
-  .plate .host { height: 70vh; }
-  .coupon { padding: 22px 16px; }
-  .line code { font-size: 13px; }
-}
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
-</style>
+<style>{{site-css}}</style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<svg class="absolute" width="0" height="0" aria-hidden="true">
   <defs>
     <!-- The okfs logo: the tile stands in for the o, set with kfs in Unbounded 600, outlined. -->
     <symbol id="okfs-logo" viewBox="-20 -810 2647 850">
@@ -234,85 +65,85 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
     </symbol>
   </defs>
 </svg>
-<header class="mast">
-  <div class="wrap">
-    <a class="home" href="/" aria-label="okfs"><svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg></a>
-    <nav aria-label="Sections">
-      <a class="wide" href="#measured">measured</a>
-      <a class="wide" href="#finishes">finishes</a>
-      <a class="wide" href="#compare">compare</a>
-      <a href="#install">install</a>
-      <a class="wide" href="https://github.com/jrnxf/okfs">github</a>
-      <button class="edition" type="button" id="theme" aria-label="day / night: switch between dark and light">day / night</button>
+<header class="border-b border-b-rule">
+  <div class="mx-auto max-w-[1220px] px-8 phone:px-4 flex items-center gap-5.5 py-3 [font:400_13px/1_var(--mono)] phone:gap-2.5">
+    <a class="block no-underline" href="/" aria-label="okfs"><svg class="logo w-[100px]" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg></a>
+    <nav class="ml-auto flex items-center gap-5.5 phone:gap-3" aria-label="Sections">
+      <a class="no-underline hover:text-spot-ink phone:hidden" href="#measured">measured</a>
+      <a class="no-underline hover:text-spot-ink phone:hidden" href="#finishes">finishes</a>
+      <a class="no-underline hover:text-spot-ink phone:hidden" href="#compare">compare</a>
+      <a class="no-underline hover:text-spot-ink" href="#install">install</a>
+      <a class="no-underline hover:text-spot-ink phone:hidden" href="https://github.com/jrnxf/okfs">github</a>
+      <button class="border border-rule bg-transparent px-2.25 py-1.25 [font:400_12px/1_var(--mono)] whitespace-nowrap" type="button" id="theme" aria-label="day / night: switch between dark and light">day / night</button>
     </nav>
   </div>
 </header>
-<main class="wrap">
-  <div class="folio"><span>Catalogue no. 1</span><span>Software for looking at folders</span><span>Page 1</span></div>
+<main class="mx-auto max-w-[1220px] px-8 phone:px-4">
+  <div class="flex justify-between gap-3 border-b-3 [border-bottom-style:double] border-b-rule py-2 [font:400_12px/1_var(--mono)] text-ink-2"><span>Catalogue no. 1</span><span>Software for looking at folders</span><span class="phone:hidden">Page 1</span></div>
 
-  <div class="spread">
-    <div class="photo">
-      <div class="computer">
-        <div class="monitor">
-          <div class="bezel"><div class="screen" id="screen"><div class="host" id="view"><div class="boot" id="boot"><span>okfs is starting<br><span id="boot-sub">in this tab</span></span></div></div></div></div>
-          <svg class="logo badge" viewBox="0 0 2647 850" aria-hidden="true"><use href="#okfs-logo" width="2647" height="850"/></svg>
+  <div class="grid grid-cols-[7fr_5fr] [align-items:start] gap-14 pt-11 pb-14 tablet:grid-cols-[1fr] tablet:gap-8.5 phone:pt-6">
+    <div>
+      <div class="relative mx-auto max-w-[720px]">
+        <div class="relative rounded-[18px_18px_10px_10px] bg-[linear-gradient(180deg,var(--beige)_0%,var(--beige-2)_100%)] px-7.5 pt-6.5 pb-14 shadow-[inset_0_-6px_0_var(--beige-3),inset_0_2px_0_rgba(255,255,255,.5),0_30px_40px_-28px_rgba(0,0,0,.55)] after:absolute after:bottom-5 after:left-7.5 after:h-3.5 after:w-16 after:rounded-[2px] after:bg-[repeating-linear-gradient(90deg,var(--beige-3)_0_2px,transparent_2px_5px)] after:content-[''] phone:rounded-[12px_12px_8px_8px] phone:px-3.5 phone:pt-3.5 phone:pb-10 phone:after:bottom-3.5 phone:after:left-3.5 phone:after:h-2.5 phone:after:w-10">
+          <div class="rounded-[14px] bg-[#2a2722] p-4 shadow-[inset_0_0_0_3px_#1c1a17] phone:rounded-[10px] phone:p-2.25"><div class="relative aspect-[4/3] overflow-hidden rounded-[22px/18px] bg-glass after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:bg-[linear-gradient(160deg,rgba(255,255,255,.07),transparent_40%)] after:shadow-[inset_0_0_40px_rgba(0,0,0,.45)] after:content-[''] phone:aspect-[3/4] phone:rounded-[14px/12px]" id="screen"><div class="absolute inset-0" id="view"><div class="absolute inset-0 grid place-content-center p-5 text-center [font:400_14px/1.5_var(--mono)] text-[#c9f2c4]" id="boot"><span>okfs is starting<br><span id="boot-sub">in this tab</span></span></div></div></div></div>
+          <svg class="logo absolute right-7.5 bottom-3.5 w-[84px] [--logo-ink:#3b352a] [--logo-spot:#e8501c] phone:right-3.5 phone:bottom-2.5 phone:w-16" viewBox="0 0 2647 850" aria-hidden="true"><use href="#okfs-logo" width="2647" height="850"/></svg>
         </div>
-        <div class="stand"></div>
-        <div class="keyboard"></div>
+        <div class="mx-auto h-5 w-[46%] bg-[linear-gradient(180deg,var(--beige-3),var(--beige-2))] [clip-path:polygon(8%_0,92%_0,100%_100%,0_100%)]"></div>
+        <div class="relative mx-auto h-11 w-[92%] rounded-[6px_6px_10px_10px] bg-beige shadow-[inset_0_-5px_0_var(--beige-3)] before:absolute before:inset-[8px_14px_14px] before:rounded-[2px] before:bg-[repeating-linear-gradient(90deg,var(--beige-2)_0_18px,transparent_18px_22px)] before:content-['']"></div>
       </div>
-      <p class="fig"><b>Fig. 1.</b> okfs, running on the screen above. It is the real program, compiled for this page; click into it and press <b>j</b>, or <b>Ctrl K</b> to search.</p>
+      <p class="mt-3.5 [font:400_13px/1.45_var(--mono)] text-ink-2 [&_b]:text-ink"><b>Fig. 1.</b> okfs, running on the screen above. It is the real program, compiled for this page; click into it and press <b>j</b>, or <b>Ctrl K</b> to search.</p>
     </div>
 
-    <div class="item">
-      <div class="no">Item 0.1.0</div>
-      <svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
-      <h1>A file browser for any folder you can reach.</h1>
-      <p>Run <code>okfs</code> in a folder and your browser opens on it. The list sits on the left. The file under the cursor shows beside it as soon as the cursor lands, so holding <b>j</b> flips through a folder of photos, PDFs or video.</p>
-      <ul class="specs">
-        <li><span>Runs on</span><span class="dots"></span><span>Linux, macOS</span></li>
-        <li><span>Ships as</span><span class="dots"></span><span>one binary, about 18 MB</span></li>
-        <li><span>Serves at</span><span class="dots"></span><span>127.0.0.1:8080</span></li>
-        <li><span>Deletes files</span><span class="dots"></span><span>only with --allow-delete</span></li>
+    <div class="tablet:-order-1">
+      <div class="[font:500_13px/1_var(--mono)] tracking-[.08em] text-spot-ink">Item 0.1.0</div>
+      <svg class="logo mt-4.5 mb-4 w-[min(380px,100%)]" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
+      <h1 class="mt-0 mb-4.5 font-serif font-[500] text-[length:clamp(30px,3.1vw,42px)] leading-[1.08] [font-variation-settings:'opsz'_72,'SOFT'_100,'WONK'_1] tracking-[-.01em]">A file browser for any folder you can reach.</h1>
+      <p class="mt-0 mb-3.5">Run <code>okfs</code> in a folder and your browser opens on it. The list sits on the left. The file under the cursor shows beside it as soon as the cursor lands, so holding <b>j</b> flips through a folder of photos, PDFs or video.</p>
+      <ul class="my-5.5 list-none border-t border-t-rule p-0 [font:400_14px/1.4_var(--mono)] *:flex *:gap-2 *:border-b *:border-b-rule-faint *:py-1.75">
+        <li><span class="text-ink-2">Runs on</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>Linux, macOS</span></li>
+        <li><span class="text-ink-2">Ships as</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>one binary, about 18 MB</span></li>
+        <li><span class="text-ink-2">Serves at</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>127.0.0.1:8080</span></li>
+        <li><span class="text-ink-2">Deletes files</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>only with --allow-delete</span></li>
       </ul>
-      <div class="price">
-        <div class="tag">Free<small>MIT licence</small></div>
-        <a class="buy" href="/demo/">Open the live demo <small>okfs, the whole page</small></a>
+      <div class="mt-2 flex flex-wrap items-center gap-5.5">
+        <div class="font-serif font-[600] text-[34px] leading-[1] [font-variation-settings:'opsz'_144,'SOFT'_100,'WONK'_1]">Free<small class="mt-1 block [font:400_12px/1.3_var(--mono)] text-ink-2">MIT licence</small></div>
+        <a class="inline-flex flex-col gap-1 rounded-[4px] bg-spot px-4.5 py-3.25 [font:600_17px/1_var(--serif)] text-on-spot no-underline hover:bg-ink hover:text-paper" href="/demo/">Open the live demo <small class="[font:400_12px/1_var(--mono)]">okfs, the whole page</small></a>
       </div>
     </div>
   </div>
 
-  <section id="measured" aria-labelledby="measured-h">
-    <div class="sec-head"><div class="mk">Fig. 2<br>Measured here</div><div><h2 id="measured-h">Measured in your browser, a moment ago.</h2><p>When this page opened it unpacked okfs's index, compiled it and read a folder of about 300,000 names. These are its own timings.</p></div></div>
-    <div class="bench indent">
-      <table>
-        <caption class="sr">okfs's timings in this tab</caption>
+  <section id="measured" class="scroll-mt-3 pt-16" aria-labelledby="measured-h">
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Fig. 2<br>Measured here</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="measured-h">Measured in your browser, a moment ago.</h2><p class="mt-2.5 mb-0 max-w-[62ch] text-ink-2">When this page opened it unpacked okfs's index, compiled it and read a folder of about 300,000 names. These are its own timings.</p></div></div>
+    <div class="grid grid-cols-[1fr_1fr] gap-6 tablet:grid-cols-[1fr] ml-46 tablet:ml-0">
+      <table class="w-full border-collapse [font:400_15px/1.4_var(--mono)] [&_td]:border-b [&_td]:border-b-rule-faint [&_td]:px-0 [&_td]:py-2.5 [&_td]:align-baseline [&_td:last-child]:text-right [&_td:last-child]:font-[600] [&_td:last-child]:whitespace-nowrap [&_td:last-child]:text-spot-ink">
+        <caption class="absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]">okfs's timings in this tab</caption>
         <tbody>
-          <tr><td><span class="lead">Index engine, WebAssembly</span></td><td id="b-size">-</td></tr>
-          <tr><td><span class="lead">Unpacked</span></td><td id="b-unpack">-</td></tr>
-          <tr><td><span class="lead">Compiled</span></td><td id="b-compile">-</td></tr>
-          <tr><td><span class="lead">Entries in the folder</span></td><td id="b-count">-</td></tr>
-          <tr><td><span class="lead">Read all of them</span></td><td id="b-walk">-</td></tr>
+          <tr><td><span class="flex gap-2 after:flex-1 after:border-b after:[border-bottom-style:dotted] after:border-b-ink-2 after:[transform:translateY(-5px)] after:content-['']">Index engine, WebAssembly</span></td><td id="b-size">-</td></tr>
+          <tr><td><span class="flex gap-2 after:flex-1 after:border-b after:[border-bottom-style:dotted] after:border-b-ink-2 after:[transform:translateY(-5px)] after:content-['']">Unpacked</span></td><td id="b-unpack">-</td></tr>
+          <tr><td><span class="flex gap-2 after:flex-1 after:border-b after:[border-bottom-style:dotted] after:border-b-ink-2 after:[transform:translateY(-5px)] after:content-['']">Compiled</span></td><td id="b-compile">-</td></tr>
+          <tr><td><span class="flex gap-2 after:flex-1 after:border-b after:[border-bottom-style:dotted] after:border-b-ink-2 after:[transform:translateY(-5px)] after:content-['']">Entries in the folder</span></td><td id="b-count">-</td></tr>
+          <tr><td><span class="flex gap-2 after:flex-1 after:border-b after:[border-bottom-style:dotted] after:border-b-ink-2 after:[transform:translateY(-5px)] after:content-['']">Read all of them</span></td><td id="b-walk">-</td></tr>
         </tbody>
       </table>
-      <div class="runs">
-        <button type="button" id="run" disabled>Search five names now</button>
-        <ol id="runs" aria-live="polite"></ol>
-        <p class="note">Each search ranks every name in the folder. The times are this tab's, with okfs compiled to WebAssembly.</p>
+      <div class="[font:400_14px/1.5_var(--mono)]">
+        <button class="mb-3.5 border border-rule bg-transparent px-3 py-2.25 [font:500_13px/1_var(--mono)] disabled:cursor-default disabled:opacity-50 hover:not-disabled:bg-ink hover:not-disabled:text-paper" type="button" id="run" disabled>Search five names now</button>
+        <ol class="m-0 list-none p-0 [counter-reset:r]" id="runs" aria-live="polite"></ol>
+        <p class="mt-2.5 [font:400_12px/1.5_var(--mono)] text-ink-2">Each search ranks every name in the folder. The times are this tab's, with okfs compiled to WebAssembly.</p>
       </div>
     </div>
   </section>
 
-  <section id="finishes" aria-labelledby="finishes-h">
-    <div class="sec-head"><div class="mk">Fig. 3<br>Finishes</div><div><h2 id="finishes-h">Available in five finishes, light and dark.</h2><p>Each theme is one CSS file. Pick one with <code>--theme</code>, or write your own.</p></div></div>
-    <div class="finishes indent">
-      <ul class="chips" id="chips" aria-label="Themes"></ul>
-      <div class="plate"><div class="host" id="theme-view"></div><p class="cap" id="theme-cap">Plate: the paper finish.</p></div>
+  <section id="finishes" class="scroll-mt-3 pt-16" aria-labelledby="finishes-h">
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Fig. 3<br>Finishes</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="finishes-h">Available in five finishes, light and dark.</h2><p class="mt-2.5 mb-0 max-w-[62ch] text-ink-2">Each theme is one CSS file. Pick one with <code>--theme</code>, or write your own.</p></div></div>
+    <div class="grid grid-cols-[300px_1fr] [align-items:start] gap-6 tablet:grid-cols-[1fr] ml-46 tablet:ml-0">
+      <ul class="m-0 grid list-none gap-2.5 p-0" id="chips" aria-label="Themes"></ul>
+      <div class="border border-rule bg-paper-2 p-2.5"><div class="relative h-[470px] overflow-hidden bg-paper phone:h-[70vh]" id="theme-view"></div><p class="pt-2 [font:400_12px/1.4_var(--mono)] text-ink-2" id="theme-cap">Plate: the paper finish.</p></div>
     </div>
   </section>
 
-  <section id="box" class="box" aria-labelledby="box-h">
-    <div class="sec-head"><div class="mk">In the box</div><div><h2 id="box-h">What okfs does</h2></div></div>
-    <dl class="indent">
+  <section id="box" class="scroll-mt-3 pt-16" aria-labelledby="box-h">
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">In the box</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="box-h">What okfs does</h2></div></div>
+    <dl class="my-0 grid grid-cols-[repeat(2,1fr)] gap-x-10 gap-y-0 phone:grid-cols-[1fr] ml-46 tablet:ml-0 *:border-b *:border-b-rule-faint *:py-4 [&_dt]:mb-1 [&_dt]:font-serif [&_dt]:font-[600] [&_dt]:text-[19px] [&_dt]:leading-[1.25] [&_dt]:[font-variation-settings:'opsz'_48,'SOFT'_100] [&_dt_span]:mr-2.5 [&_dt_span]:align-[2px] [&_dt_span]:[font:500_12px/1_var(--mono)] [&_dt_span]:text-spot-ink [&_dd]:m-0 [&_dd]:text-[16.5px] [&_dd]:text-ink-2">
       <div><dt><span>01</span>Previews</dt><dd>Pictures, video, sound, PDFs, Markdown, code, CSV, JSON, zip files and web pages, each shown as itself.</dd></div>
       <div><dt><span>02</span>Search</dt><dd><code>Ctrl K</code> finds any name in the tree. The query lives in the address, so a shared link keeps it.</dd></div>
       <div><dt><span>03</span>Columns</dt><dd>A folder under the cursor shows what is in it, and the columns slide as you go in and out.</dd></div>
@@ -322,11 +153,11 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
     </dl>
   </section>
 
-  <section id="compare" aria-labelledby="compare-h">
-    <div class="sec-head"><div class="mk">Comparison</div><div><h2 id="compare-h">How okfs compares</h2><p>okfs is for looking at a folder. It has no upload and no accounts, on purpose: for uploads, use dufs or copyparty; for a file manager with users, File Browser Quantum.</p></div></div>
-    <div class="compare indent">
-      <table>
-        <caption class="sr">okfs beside python -m http.server, miniserve, dufs and copyparty</caption>
+  <section id="compare" class="scroll-mt-3 pt-16" aria-labelledby="compare-h">
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Comparison</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="compare-h">How okfs compares</h2><p class="mt-2.5 mb-0 max-w-[62ch] text-ink-2">okfs is for looking at a folder. It has no upload and no accounts, on purpose: for uploads, use dufs or copyparty; for a file manager with users, File Browser Quantum.</p></div></div>
+    <div class="overflow-x-auto ml-46 tablet:ml-0">
+      <table class="w-full min-w-[760px] border-collapse [font:400_14px/1.4_var(--mono)] [&_:is(th,td)]:border-b [&_:is(th,td)]:border-b-rule-faint [&_:is(th,td)]:pt-[9px] [&_:is(th,td)]:pr-3 [&_:is(th,td)]:pb-[9px] [&_:is(th,td)]:pl-0 [&_:is(th,td)]:text-left [&_:is(th,td)]:align-top [&_thead_th]:border-b-rule [&_thead_th]:font-[600] [&_tbody_th]:font-[400] [&_tbody_th]:text-ink-2 [&_th:first-child]:sticky [&_th:first-child]:left-0 [&_th:first-child]:bg-paper [&_td:nth-child(2)]:font-[600]">
+        <caption class="absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]">okfs beside python -m http.server, miniserve, dufs and copyparty</caption>
         <thead><tr><th scope="col"></th><th scope="col">okfs</th><th scope="col">python -m http.server</th><th scope="col">miniserve</th><th scope="col">dufs</th><th scope="col">copyparty</th></tr></thead>
         <tbody>
           <tr><th scope="row">Default address</th><td>loopback only</td><td>all interfaces</td><td>all interfaces</td><td>all interfaces</td><td>all interfaces</td></tr>
@@ -338,13 +169,13 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
           <tr><th scope="row">TLS</th><td>yes, optional</td><td>since Python 3.14</td><td>yes</td><td>yes</td><td>yes</td></tr>
         </tbody>
       </table>
-      <p class="note">This is how each tool read on 2026-10-21, from its documentation. Check the project you are comparing before you rely on a cell.</p>
+      <p class="mt-2.5 [font:400_12px/1.5_var(--mono)] text-ink-2">This is how each tool read on 2026-10-21, from its documentation. Check the project you are comparing before you rely on a cell.</p>
     </div>
   </section>
 
-  <section id="questions" aria-labelledby="questions-h">
-    <div class="sec-head"><div class="mk">Questions</div><div><h2 id="questions-h">Questions</h2></div></div>
-    <div class="faq indent">
+  <section id="questions" class="scroll-mt-3 pt-16" aria-labelledby="questions-h">
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Questions</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="questions-h">Questions</h2></div></div>
+    <div class="ml-46 tablet:ml-0 *:max-w-[70ch] *:border-b *:border-b-rule-faint *:py-4 [&_h3]:mt-0 [&_h3]:mb-1.5 [&_h3]:font-serif [&_h3]:font-[600] [&_h3]:text-[19px] [&_h3]:leading-[1.3] [&_h3]:[font-variation-settings:'opsz'_48,'SOFT'_100] [&_p]:m-0 [&_p]:text-[16.5px] [&_p]:text-ink-2">
       <div><h3>How do I browse a folder in my browser?</h3><p>Run <code>okfs</code> in it. It serves the folder at http://127.0.0.1:8080 and opens your browser on it.</p></div>
       <div><h3>Is okfs an alternative to python -m http.server or miniserve?</h3><p>Yes, for looking at files. It adds previews, a search of the whole tree and live updates, and stays read only. For uploads, use dufs or copyparty.</p></div>
       <div><h3>How do I open files from my computer on my phone?</h3><p><code>okfs --bind 0.0.0.0 --qr</code> prints a QR code with a secret link. Scan it on a phone on the same network.</p></div>
@@ -354,44 +185,44 @@ footer .credit { margin-left: auto; color: var(--ink-2); }
     </div>
   </section>
 
-  <section id="install" aria-labelledby="install-h">
-    <div class="sec-head"><div class="mk">Order form</div><div><h2 id="install-h">Install</h2></div></div>
-    <div class="coupon indent">
-      <span class="cut" aria-hidden="true">&#9986;</span>
-      <h3>Clip and paste into a terminal.</h3>
-      <p class="sub">No postage. Tick one.</p>
-      <fieldset class="ways">
-        <legend class="sr">How to install</legend>
-        <label><input type="radio" name="way" value="nix" checked>nix</label>
-        <label><input type="radio" name="way" value="release">release archive</label>
-        <label><input type="radio" name="way" value="cargo">cargo</label>
+  <section id="install" class="scroll-mt-3 pt-16" aria-labelledby="install-h">
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Order form</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="install-h">Install</h2></div></div>
+    <div class="relative border-2 border-dashed border-ink bg-paper-2 px-7 py-6.5 phone:px-4 phone:py-5.5 ml-46 tablet:ml-0">
+      <span class="absolute -top-3.5 left-5.5 bg-paper px-2 [font:400_18px/1_var(--mono)]" aria-hidden="true">&#9986;</span>
+      <h3 class="mt-0 mb-1 font-serif font-[600] text-[26px] leading-[1.1] [font-variation-settings:'opsz'_72,'SOFT'_100,'WONK'_1]">Clip and paste into a terminal.</h3>
+      <p class="mb-4.5 [font:400_13px/1.4_var(--mono)] text-ink-2">No postage. Tick one.</p>
+      <fieldset class="m-0 mb-4 flex flex-wrap gap-x-5.5 gap-y-2 border-0 p-0 [font:400_15px/1.3_var(--mono)]">
+        <legend class="absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]">How to install</legend>
+        <label class="inline-flex cursor-pointer items-center gap-2"><input class="m-0 grid size-[18px] appearance-none place-items-center border-[1.5px] border-ink checked:after:[font:600_14px/1_var(--mono)] checked:after:text-spot checked:after:content-['✕']" type="radio" name="way" value="nix" checked>nix</label>
+        <label class="inline-flex cursor-pointer items-center gap-2"><input class="m-0 grid size-[18px] appearance-none place-items-center border-[1.5px] border-ink checked:after:[font:600_14px/1_var(--mono)] checked:after:text-spot checked:after:content-['✕']" type="radio" name="way" value="release">release archive</label>
+        <label class="inline-flex cursor-pointer items-center gap-2"><input class="m-0 grid size-[18px] appearance-none place-items-center border-[1.5px] border-ink checked:after:[font:600_14px/1_var(--mono)] checked:after:text-spot checked:after:content-['✕']" type="radio" name="way" value="cargo">cargo</label>
       </fieldset>
       <div class="way" data-way="nix">
-        <div class="line"><code>nix run github:jrnxf/okfs -- ~/photos</code><button type="button">Copy</button></div>
-        <div class="line"><code>nix profile install github:jrnxf/okfs</code><button type="button">Copy</button></div>
-        <p class="fine">The first line runs it once in ~/photos. The second puts it on your PATH; nix profile upgrade okfs updates it.</p>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">nix run github:jrnxf/okfs -- ~/photos</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">nix profile install github:jrnxf/okfs</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <p class="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">The first line runs it once in ~/photos. The second puts it on your PATH; nix profile upgrade okfs updates it.</p>
       </div>
       <div class="way" data-way="release" hidden>
-        <div class="line"><code>tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')</code><button type="button">Copy</button></div>
-        <div class="line"><code>gh release download "$tag" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'</code><button type="button">Copy</button></div>
-        <div class="line"><code>tar -xzf okfs-*-aarch64-apple-darwin.tar.gz</code><button type="button">Copy</button></div>
-        <p class="fine">That is a Mac with Apple silicon; the binary is okfs in the folder the archive makes. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. The first release, v0.1.0-pre.1, is on its way.</p>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">gh release download "$tag" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">tar -xzf okfs-*-aarch64-apple-darwin.tar.gz</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <p class="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">That is a Mac with Apple silicon; the binary is okfs in the folder the archive makes. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. The first release, v0.1.0-pre.1, is on its way.</p>
       </div>
       <div class="way" data-way="cargo" hidden>
-        <div class="line"><code>cargo install --git https://github.com/jrnxf/okfs</code><button type="button">Copy</button></div>
-        <div class="line"><code>okfs ~/photos</code><button type="button">Copy</button></div>
-        <p class="fine">It needs a Rust toolchain and bun, which builds the page.</p>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">cargo install --git https://github.com/jrnxf/okfs</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <div class="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2"><code class="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">okfs ~/photos</code><button class="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" type="button">Copy</button></div>
+        <p class="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">It needs a Rust toolchain and bun, which builds the page.</p>
       </div>
     </div>
   </section>
 </main>
-<footer>
-  <div class="wrap">
-    <svg class="logo" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
+<footer class="mt-[90px] border-t-3 [border-top-style:double] border-t-rule">
+  <div class="mx-auto max-w-[1220px] px-8 phone:px-4 flex flex-wrap items-center gap-x-6.5 gap-y-3 pt-5.5 pb-10 [font:400_13px/1.5_var(--mono)]">
+    <svg class="logo w-[100px]" viewBox="0 0 2647 850" role="img" aria-label="okfs"><use href="#okfs-logo" width="2647" height="850"/></svg>
     <a href="/demo/">live demo</a>
     <a href="https://github.com/jrnxf/okfs">source</a>
     <a href="https://github.com/jrnxf/okfs/releases">releases</a>
-    <span class="credit">Set in Fraunces and IBM Plex Mono, under the SIL Open Font License.</span>
+    <span class="ml-auto text-ink-2">Set in Fraunces and IBM Plex Mono, under the SIL Open Font License.</span>
   </div>
 </footer>
 <!--okfs:site-->

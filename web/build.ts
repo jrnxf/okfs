@@ -10,6 +10,7 @@ import { gzipSync } from "node:zlib";
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { BunPlugin } from "bun";
+import { buildCss, uiSources } from "../ui/css";
 
 const web = import.meta.dir;
 const repo = join(web, "..");
@@ -56,7 +57,7 @@ const site = await bundle("src/site.js");
 
 // okfs's stylesheet, as ui/build.ts makes it, with the latin fonts only (the demo folder is plain latin).
 const FONTS = ["geist-latin-wght-normal", "geist-mono-latin-wght-normal", "newsreader-latin-opsz-normal", "newsreader-latin-opsz-italic"];
-let css = (await Promise.all(["fonts", "tokens", "core", "app"].map((name) => Bun.file(join(ui, `src/styles/${name}.css`)).text()))).join("\n");
+let css = await buildCss(join(ui, "src/styles/app.css"), uiSources());
 css = css.replace(/@font-face\s*{[^}]*latin-ext[^}]*}/g, "");
 const fontFiles: Record<string, string> = {
   "geist-latin-wght-normal": "geist/files/geist-latin-wght-normal.woff2",
@@ -115,7 +116,10 @@ const safe = (text: string) => text.replace(/<\/(script)/gi, "<\\/$1").replace(/
 if (/<(body|head)\b|<\/(body|head)>/i.test(landing)) throw new Error("the landing script holds a <body> or <head> tag");
 
 let page = readFileSync(join(web, "src/landing.html"), "utf8");
-if (!page.includes("<!--okfs:data-->")) throw new Error("landing.html has no <!--okfs:data--> marker");
+for (const marker of ["<!--okfs:data-->", "{{landing-css}}"]) if (!page.includes(marker)) throw new Error(`landing.html has no ${marker}`);
+// Its stylesheet, with the utilities its markup and its script use.
+const landingCss = await buildCss(join(web, "src/landing.css"), ["src/landing.html", "src/landing.js"].map((file) => join(web, file)));
+page = page.replace("{{landing-css}}", () => landingCss);
 // The page's own two faces, latin only, written into its stylesheet: the site is one file.
 const pageFonts: Record<string, string> = {
   "mona-sans": "@fontsource-variable/mona-sans/files/mona-sans-latin-wdth-normal.woff2",
@@ -147,8 +151,13 @@ if (/<(body|head)\b|<\/(body|head)>/i.test(site)) throw new Error("the site scri
 const dataJson = JSON.stringify(Object.fromEntries(dataBlocks.map(([id, type, text]) => [id, { type, text }])));
 const dataFile = `okfs-demo.${createHash("sha256").update(dataJson).digest("hex").slice(0, 12)}.json`;
 let front = readFileSync(join(web, "src/site.html"), "utf8");
-for (const marker of ["{{okfs-data}}", "<!--okfs:site-->"]) if (!front.includes(marker)) throw new Error(`site.html has no ${marker}`);
-front = front.replaceAll("{{okfs-data}}", `/${dataFile}`).replace("<!--okfs:site-->", () => `<script>${safe(site)}</script>`);
+for (const marker of ["{{okfs-data}}", "<!--okfs:site-->", "{{site-css}}"]) if (!front.includes(marker)) throw new Error(`site.html has no ${marker}`);
+// Its stylesheet, with the utilities its markup and its script use.
+const siteCss = await buildCss(join(web, "src/site.css"), ["src/site.html", "src/site.js"].map((file) => join(web, file)));
+front = front
+  .replaceAll("{{okfs-data}}", `/${dataFile}`)
+  .replace("{{site-css}}", () => siteCss)
+  .replace("<!--okfs:site-->", () => `<script>${safe(site)}</script>`);
 const siteFonts: Record<string, string> = {
   "fraunces.woff2": "@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2",
   "ibm-plex-mono-400.woff2": "@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2",

@@ -11,6 +11,7 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
+import { AGE, BAR, BAR_BTN, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
 import { DELETE_KEY } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
@@ -33,6 +34,24 @@ export const EMPTY_FOLDER = "This folder is empty";
 /** A click on a button of a header leaves the focus where it was, so the keys go on working on the list. */
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
+/** A pane, or a copy of one sliding out: see slide.ts. */
+const GHOST = "ghost:pointer-events-none ghost:absolute ghost:z-1";
+/** The file's pane: its bar, its preview, and on a phone the bar at its foot. A pane that has gone from the slots is
+ * kept in the page, hidden, while the panes slide: the slide shows it as it slides out. */
+const PANE = `order-1 min-h-0 min-w-0 flex-1 flex-col bg-surface ${GHOST}`;
+const PV = "pv relative flex h-full min-h-0 flex-col";
+/** The name in a pane's bar, and what is known of it, which gives up its room first. */
+const BAR_NAME = "min-w-0 flex-[0_1_auto] truncate font-strong phone:flex-1";
+const BAR_FACTS = "num min-w-0 flex-1 truncate text-xs text-muted phone:hidden";
+/** A button that only a file at the full width has. */
+const OPEN_ONLY = "hidden viewing:inline-flex";
+/** A row of the menu behind a phone's More button. Its names are a bar's names: see `BAR_NAME`. */
+const MORE_ROW = `${MENU_ROW} phone:h-11`;
+const MORE_NAME = "flex-[0_1_auto] font-strong phone:flex-1";
+const COL_NOTE = `label flex h-(--row-h) items-center ${LIST_PAD}`;
+/** Previous and next at the foot of a phone's sheet: in reach of a thumb. */
+const STEP = "btn h-11 min-w-[112px] justify-center gap-1.5 px-3.5 text-fg";
+
 /**
  * A folder's bar: its name, how much it holds, when it changed, and what can be done with it. The main list has
  * one as every column does, so a folder's rows sit at the same height in every slot, and on one grid with the
@@ -45,6 +64,7 @@ export function FolderBar({
   mtime,
   doomed,
   missing = false,
+  inList = false,
 }: {
   name: string;
   path: string;
@@ -53,20 +73,24 @@ export function FolderBar({
   doomed: Doomed | null;
   /** Nothing is at the path: the bar names it and says nothing more, and offers nothing to do with it. */
   missing?: boolean;
+  /** Over the main list, where a phone's top bar already names the folder, and its delete button does this one's. */
+  inList?: boolean;
 }) {
   const facts = [...(count === undefined ? [] : [fmt.items(count)]), ...(mtime === undefined ? [] : [fmt.rel(mtime)])];
   return (
-    <div class="ph" onMouseDown={keepFocus}>
+    <div class={inList ? `${BAR} phone:hidden` : BAR} onMouseDown={keepFocus}>
       {!missing && <KindIcon kind="folder" />}
-      <span class="nm trunc">{name}</span>
-      <span class="facts trunc num" title={mtime === undefined ? undefined : fmt.abs(mtime)}>{facts.join(" · ")}</span>
+      <span class={BAR_NAME}>{name}</span>
+      <span class={BAR_FACTS} title={mtime === undefined ? undefined : fmt.abs(mtime)}>
+        {facts.join(" · ")}
+      </span>
       {!missing && (
-        <a class="btn" href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
+        <a class={`btn ${BAR_BTN}`} href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
           <Icon name="download" />
         </a>
       )}
       {doomed && (
-        <button class="btn" aria-label="Delete" title="Delete" onClick={() => store.askDelete(doomed)}>
+        <button class={`btn ${BAR_BTN}`} aria-label="Delete" title="Delete" onClick={() => store.askDelete(doomed)}>
           <Icon name="trash" />
         </button>
       )}
@@ -88,35 +112,43 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
     if (listing && item) visit(listing, item, open);
   };
   return (
-    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path} data-level={level}>
+    // A column is a slot wide, on the list's own ground, and its rows are the list's rows.
+    <section
+      class={`flex w-[calc(100%/(var(--slots,4)-1))] min-h-0 min-w-0 flex-none flex-col ${GHOST} ghost:bg-bg ${edge ? "" : "border-r border-r-line"}`}
+      aria-label={folder.name}
+      data-pane={folder.path}
+      data-level={level}
+    >
       <FolderBar name={folder.name} path={folder.path} count={own?.total ?? folder.count} mtime={folder.mtime} doomed={config.delete ? folder : null} />
-      <div class="cols label">
+      <div class={`${HEADS} ${ROW_GRID}`}>
         <span />
-        <span class="hd">
+        <span class={HEAD}>
           Name
-          <Icon name="up" />
+          <Icon name="up" class="size-2.75 text-accent" />
         </span>
-        <span class="hd r">Size</span>
-        <span class="hd r">Mod.</span>
+        <span class={`${HEAD} justify-end`}>Size</span>
+        <span class={`${HEAD} justify-end`}>Mod.</span>
       </div>
-      <div class="col-rows" onClick={go(false)} onDblClick={go(true)}>
+      <div class="col-rows min-h-0 flex-1 overflow-auto overscroll-contain" onClick={go(false)} onDblClick={go(true)}>
         {listing?.entries.map((item, at) => {
           const entry = toEntry(item, listing.path, at);
+          // The entry the next slot shows is marked.
+          const mark = item.n === led ? "bg-hover shadow-[inset_3px_0_0_var(--line-strong)]" : ROW_REST;
           return (
-            <div class={item.n === led ? "row at" : "row"} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
+            <div class={`${ROW} ${ROW_GRID} h-(--row-h) ${mark}`} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
               <KindIcon kind={entry.kind} />
-              <span class="nm trunc">
-                <b>{entry.name}</b>
+              <span class="min-w-0 truncate">
+                <b class={nameWeight(entry.dir)}>{entry.name}</b>
               </span>
-              <span class="sz num">{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
-              <span class="tm num" title={fmt.abs(entry.mtime)}>
+              <span class={SIZE}>{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
+              <span class={AGE} title={fmt.abs(entry.mtime)}>
                 {fmt.rel(entry.mtime)}
               </span>
             </div>
           );
         })}
-        {more > 0 && <div class="col-note label">and {fmt.count(more)} more</div>}
-        {listing?.total === 0 && <div class="col-note label">{EMPTY_FOLDER}</div>}
+        {more > 0 && <div class={COL_NOTE}>and {fmt.count(more)} more</div>}
+        {listing?.total === 0 && <div class={COL_NOTE}>{EMPTY_FOLDER}</div>}
       </div>
     </section>
   );
@@ -137,26 +169,26 @@ function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
     return () => document.removeEventListener("pointerdown", outside, true);
   }, [open]);
   return (
-    <span class="more">
-      <button class="btn" aria-label="More" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+    <span class="more static hidden phone:inline-flex">
+      <button class={`btn ${BAR_BTN}`} aria-label="More" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Icon name="more" />
       </button>
       {open && (
-        <div class="more-menu pop" role="menu" onClick={() => setOpen(false)}>
+        <div class={`fixed top-full right-2 z-60 w-[220px] rounded-lg bg-surface p-1.5 shadow ${POP_IN} phone:absolute phone:z-30`} role="menu" onClick={() => setOpen(false)}>
           {wrappable && (
-            <button class="tm-row" role="menuitem" onClick={() => store.flipWrap()}>
+            <button class={MORE_ROW} role="menuitem" onClick={() => store.flipWrap()}>
               <Icon name="wrap" />
-              <span class="nm">{store.wraps(file) ? "Stop wrapping lines" : "Wrap long lines"}</span>
+              <span class={MORE_NAME}>{store.wraps(file) ? "Stop wrapping lines" : "Wrap long lines"}</span>
             </button>
           )}
-          <a class="tm-row" role="menuitem" href={urls.raw(file.path)} download>
+          <a class={`${MORE_ROW} text-fg no-underline`} role="menuitem" href={urls.raw(file.path)} download>
             <Icon name="download" />
-            <span class="nm">Download</span>
+            <span class={MORE_NAME}>Download</span>
           </a>
           {config.delete && (
-            <button class="tm-row" role="menuitem" onClick={() => store.askDelete(file)}>
+            <button class={MORE_ROW} role="menuitem" onClick={() => store.askDelete(file)}>
               <Icon name="trash" />
-              <span class="nm">Delete</span>
+              <span class={MORE_NAME}>Delete</span>
             </button>
           )}
         </div>
@@ -169,15 +201,18 @@ function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
 function StepBar({ file }: { file: Entry }) {
   const files = store.files();
   return (
-    <nav class="stepbar" aria-label="Files in this folder">
-      <button class="btn" aria-label="Previous file" onClick={() => store.step(-1)}>
+    <nav
+      class="hidden flex-none items-center justify-between gap-2 border-t border-t-line bg-surface px-(--pad) pt-1.5 pb-[calc(6px+env(safe-area-inset-bottom))] text-s text-muted phone:viewing:flex"
+      aria-label="Files in this folder"
+    >
+      <button class={STEP} aria-label="Previous file" onClick={() => store.step(-1)}>
         <Icon name="left" />
         Previous
       </button>
       <span class="num">
         {files.indexOf(file) + 1} / {files.length}
       </span>
-      <button class="btn" aria-label="Next file" onClick={() => store.step(1)}>
+      <button class={STEP} aria-label="Next file" onClick={() => store.step(1)}>
         Next
         <Icon name="right" />
       </button>
@@ -282,7 +317,7 @@ function useGoing(here: boolean, shown: Entry | null): Entry | null {
   return entry;
 }
 
-export function Side({ slots }: { slots: number }) {
+export function Side({ slots, matches = false }: { slots: number; matches?: boolean }) {
   const { s } = store;
   const cur = store.cur();
   const file = s.open ?? (cur && !cur.dir ? cur : null);
@@ -328,42 +363,44 @@ export function Side({ slots }: { slots: number }) {
     const wrappable = store.wrappable();
     header = (
       <>
-        <button class="btn only-open" aria-label="Back to the list" onClick={() => store.close()}>
+        <button class={`btn ${BAR_BTN} ${OPEN_ONLY}`} aria-label="Back to the list" onClick={() => store.close()}>
           <Icon name="left" />
         </button>
         <KindIcon kind={file.kind} />
-        <span class="nm trunc">{file.name}</span>
-        <span class="facts trunc num">{[...learned, fmt.size(file.size), fmt.abs(file.mtime)].join(" · ")}</span>
-        <span class="pos num only-open">
+        <span class={BAR_NAME}>{file.name}</span>
+        <span class={BAR_FACTS}>{[...learned, fmt.size(file.size), fmt.abs(file.mtime)].join(" · ")}</span>
+        <span class={`num px-1 text-xs whitespace-nowrap text-faint ${OPEN_ONLY} phone:viewing:hidden`}>
           {files.indexOf(file) + 1} / {files.length}
         </span>
-        <button class="btn only-open step" aria-label="Previous file" onClick={() => store.step(-1)}>
+        {/* previous and next move to the foot of a phone's sheet, and the rest of the file's actions behind one button */}
+        <button class={`btn ${BAR_BTN} ${OPEN_ONLY} phone:viewing:hidden`} aria-label="Previous file" onClick={() => store.step(-1)}>
           <Icon name="up" />
         </button>
-        <button class="btn only-open step" aria-label="Next file" onClick={() => store.step(1)}>
+        <button class={`btn ${BAR_BTN} ${OPEN_ONLY} phone:viewing:hidden`} aria-label="Next file" onClick={() => store.step(1)}>
           <Icon name="down" />
         </button>
         {hasSource(file) && (
-          <button class="btn" aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw(file)}>
+          <button class={`btn ${BAR_BTN}`} aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw(file)}>
             <Icon name="code" />
           </button>
         )}
         {wrappable === file && (
-          <button class="btn wide" aria-label="Wrap long lines" aria-pressed={store.wraps(file)} title={store.wraps(file) ? "Stop wrapping long lines (w)" : "Wrap long lines (w)"} onClick={() => store.flipWrap()}>
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Wrap long lines" aria-pressed={store.wraps(file)} title={store.wraps(file) ? "Stop wrapping long lines (w)" : "Wrap long lines (w)"} onClick={() => store.flipWrap()}>
             <Icon name="wrap" />
           </button>
         )}
-        <a class="btn wide" href={urls.raw(file.path)} download aria-label="Download" title="Download">
+        <a class={`btn ${BAR_BTN} phone:hidden`} href={urls.raw(file.path)} download aria-label="Download" title="Download">
           <Icon name="download" />
         </a>
         {config.delete && (
-          <button class="btn wide" aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
             <Icon name="trash" />
           </button>
         )}
         <More file={file} wrappable={wrappable === file} />
         {!ledFile && (
-          <button class="btn widen" aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
+          // On a phone the back arrow already does this, and the name needs the room.
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
             <Icon name={s.open ? "pane" : "expand"} />
           </button>
         )}
@@ -373,27 +410,35 @@ export function Side({ slots }: { slots: number }) {
 
   return (
     // The slots are counted for the pane: the matches take one more than a folder's list does.
-    <section class="right" style={`--slots: ${slots}`} onPointerMove={onMove} onPointerLeave={onLeave}>
+    <section
+      class={`right flex min-h-0 min-w-0 phone:fixed phone:inset-0 phone:z-20 phone:hidden phone:viewing:flex ${
+        // Beside the matches, which take two slots. A file that is opened is a sheet over a phone's list.
+        matches ? "col-[3/-1]" : "col-[2/-1] viewing:col-[1] phone:col-[1]"
+      }`}
+      style={`--slots: ${slots}`}
+      onPointerMove={onMove}
+      onPointerLeave={onLeave}
+    >
       {/* First in the page and last on screen: a column that comes or goes never moves the pane, whose frames
           would load again if it did. It goes by the path of the file it shows, as a column goes by its folder's:
           the same file is the same pane, which slides with the columns. One that has just gone slides out as it
           was, live: see `useGoing`. */}
       {here ? (
-        <div class="pane" key="pane" ref={pane} data-pane={shown?.path ?? ""}>
+        <div class={`${PANE} flex`} key="pane" ref={pane} data-pane={shown?.path ?? ""}>
           {/* With nothing to preview, as in an empty folder or at a missing address, there is nothing to head. */}
           {header && (
-            <div class="ph" onMouseDown={keepFocus}>
+            <div class={BAR} onMouseDown={keepFocus}>
               {header}
             </div>
           )}
-          <div class="pv">{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}</div>
+          <div class={PV}>{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}</div>
           {s.open && shown && !ledFile && <StepBar file={shown} />}
         </div>
       ) : (
         going && (
-          <div class="pane going" key="pane" ref={pane} data-going={going.path} aria-hidden="true" inert>
-            <div class="ph">{header}</div>
-            <div class="pv">
+          <div class={`${PANE} hidden`} key="pane" ref={pane} data-going={going.path} aria-hidden="true" inert>
+            <div class={BAR}>{header}</div>
+            <div class={PV}>
               <Preview entry={going} stamp={store.stamp(going)} report={report} raw={store.isRaw(going)} wrap={store.wraps(going)} />
             </div>
           </div>
