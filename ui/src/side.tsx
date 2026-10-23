@@ -11,13 +11,14 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
-import { AGE, BAR, BAR_BTN, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
+import { AGE, BAR, BAR_BTN, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
 import { DELETE_KEY } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
 import { SLIDE_MS } from "./slide";
 import { type Chain, type Left, columnsOf, focusOf, standIn } from "./slots";
 import { type Doomed, type Entry, store, toEntry } from "./store";
+import { pick, uploads } from "./upload";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
 function visit(listing: Listing, item: Item, open: boolean): void {
@@ -63,6 +64,7 @@ export function FolderBar({
   count,
   mtime,
   doomed,
+  adds = false,
   missing = false,
   inList = false,
 }: {
@@ -71,6 +73,8 @@ export function FolderBar({
   count: number | undefined;
   mtime: number | undefined;
   doomed: Doomed | null;
+  /** Files and folders can be added to it: it offers to upload into it and to make a new file. */
+  adds?: boolean;
   /** Nothing is at the path: the bar names it and says nothing more, and offers nothing to do with it. */
   missing?: boolean;
   /** Over the main list, where a phone's top bar already names the folder, and its delete button does this one's. */
@@ -84,6 +88,16 @@ export function FolderBar({
       <span class={BAR_FACTS} title={mtime === undefined ? undefined : fmt.abs(mtime)}>
         {facts.join(" · ")}
       </span>
+      {adds && !missing && (
+        <>
+          <button class={`btn ${BAR_BTN}`} aria-label="Upload files here" title="Upload files here (u)" onClick={() => pick(path)}>
+            <Icon name="upload" />
+          </button>
+          <button class={`btn ${BAR_BTN}`} aria-label="New file" title="New file (n)" onClick={() => store.setNaming("file")}>
+            <Icon name="plus" />
+          </button>
+        </>
+      )}
       {!missing && (
         <a class={`btn ${BAR_BTN}`} href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
           <Icon name="download" />
@@ -114,7 +128,7 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
   return (
     // A column is a slot wide, on the list's own ground, and its rows are the list's rows.
     <section
-      class={`flex w-[calc(100%/(var(--slots,4)-1))] min-h-0 min-w-0 flex-none flex-col ${GHOST} ghost:bg-bg ${edge ? "" : "border-r border-r-line"}`}
+      class={`flex w-[calc(100%/(var(--slots,4)-1))] min-h-0 min-w-0 flex-none flex-col ${GHOST} ghost:bg-bg ${edge ? "" : "border-r border-r-line"}${uploads.target === folder.path ? ` ${DROP_PANE}` : ""}`}
       aria-label={folder.name}
       data-pane={folder.path}
       data-level={level}
@@ -135,7 +149,13 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
           // The entry the next slot shows is marked.
           const mark = item.n === led ? "bg-hover shadow-[inset_3px_0_0_var(--line-strong)]" : ROW_REST;
           return (
-            <div class={`${ROW} ${ROW_GRID} h-(--row-h) ${mark}`} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
+            <div
+              class={`${ROW} ${ROW_GRID} h-(--row-h) ${mark}${entry.dir && uploads.target === entry.path ? ` ${DROP_ROW}` : ""}`}
+              data-i={at}
+              data-dir={entry.dir ? "" : undefined}
+              data-drop={entry.dir ? entry.path : undefined}
+              key={at}
+            >
               <KindIcon kind={entry.kind} />
               <span class="min-w-0 truncate">
                 <b class={nameWeight(entry.dir)}>{entry.name}</b>

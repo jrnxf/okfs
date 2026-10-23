@@ -5,7 +5,7 @@ import { DeleteError } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { KindIcon } from "./icons";
-import { MENU_ROW, POP_IN, SCRIM } from "./look";
+import { ASK, ASK_BTN, ASK_DO, ASK_IN, DIALOG, DIALOG_HEAD, MENU_ROW, POP_IN, SCRIM } from "./look";
 import { DELETE_KEY, MOD } from "./palette";
 import { type Doomed, store } from "./store";
 import { type Scheme, active, isDark, setScheme, setTheme } from "./theme";
@@ -74,10 +74,6 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
   );
 }
 
-/** The list of keys and the delete dialog: a card over the page. */
-const DIALOG = "w-[min(420px,100%)] rounded-lg bg-surface shadow";
-const DIALOG_HEAD = "[font:var(--weight-strong)_var(--text)_var(--font-ui)]";
-const ASK_BTN = "h-[calc(30px*var(--density))] px-[calc(12px*var(--density))] phone:h-[38px] phone:flex-1 phone:justify-center";
 
 type Key = [string[], string];
 
@@ -99,6 +95,9 @@ const keys = (): Key[] => [
   [["t"], "Light or dark"],
   [["."], store.s.hidden ? "Hide hidden files" : "Show hidden files"],
   [["esc"], store.trail() ? "Back to the matches" : "Close the file or the filter"],
+  ...(store.addsTo() !== null
+    ? [[["u"], "Upload files into this folder"] satisfies Key, [["n"], "New file in this folder"] satisfies Key]
+    : []),
   ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies Key] : []),
   [["?"], "This list"],
 ];
@@ -178,9 +177,9 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
   }
   return (
     // The delete dialog is rare and asks for a decision: it comes up over a fading backdrop rather than appearing.
-    <div class={`${SCRIM} transition-opacity duration-150 ease-[ease] starting:opacity-0`} onPointerDown={(event) => event.target === event.currentTarget && close()}>
+    <div class={ASK_IN} onPointerDown={(event) => event.target === event.currentTarget && close()}>
       <div
-        class={`${DIALOG} grid gap-3 px-5 py-4.5 transition-[opacity,transform] duration-180 ease-out starting:opacity-0 starting:[transform:scale(0.96)] motion-reduce:starting:[transform:none]`}
+        class={ASK}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="ask-title"
@@ -201,7 +200,7 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
             {failure}
           </p>
         )}
-        <div class="mt-1 flex justify-end gap-2">
+        <div class={ASK_DO}>
           <button class={`btn btn-line ${ASK_BTN}`} ref={cancel} disabled={busy} onClick={close}>
             Cancel
           </button>

@@ -141,6 +141,8 @@ export interface State {
   matches: Matches | null;
   /** What the delete dialog is asking about, while it is up. */
   doomed: Doomed | null;
+  /** What the dialog that names a new file or folder makes, and in which folder, while it is up. */
+  naming: Naming | null;
   /** Counts the times the list caught up with the disk by itself. The list does not scroll for those. */
   caught: number;
   /** A word on what was just done, such as a link copied, while it is shown. See `say`. */
@@ -148,6 +150,12 @@ export interface State {
 }
 
 type HistoryMode = "push" | "replace" | "none";
+
+/** A new file or folder to name, in the folder `dir`. */
+export interface Naming {
+  kind: "file" | "folder";
+  dir: string;
+}
 
 /** What a history entry remembers besides its address. */
 interface Mark {
@@ -240,6 +248,7 @@ export class Store {
     finding: false,
     matches: null,
     doomed: null,
+    naming: null,
     caught: 0,
     notice: null,
   };
@@ -1113,6 +1122,26 @@ export class Store {
     } catch {
       this.say("The browser would not copy the link");
     }
+  }
+
+  /** The folder new files go into: the one on screen, while one is and adding is on. Never over the matches. */
+  addsTo(): string | null {
+    const { s } = this;
+    return config.upload && s.status === "ready" && !s.finding ? s.path : null;
+  }
+
+  /** Puts up the dialog that names a new file or folder in the folder on screen, or takes it down. */
+  setNaming(kind: Naming["kind"] | null): void {
+    const dir = this.addsTo();
+    this.s.naming = kind && dir !== null ? { kind, dir } : null;
+    this.emit();
+  }
+
+  /** Shows a file or folder just made, under the cursor in its folder, when that folder is the one on screen. */
+  async made(path: string): Promise<void> {
+    const { s } = this;
+    if (parentOf(path) !== s.path) return;
+    await this.showDir(s.path, { select: nameOf(path), listing: true, history: "none" });
   }
 
   /** The folder being shown, as something to delete. The served folder itself is never offered. */

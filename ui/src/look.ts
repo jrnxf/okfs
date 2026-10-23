@@ -55,3 +55,21 @@ export const SCRIM = "fixed inset-0 z-50 grid [align-items:start] justify-items-
 export const EMPTY = "absolute inset-0 grid place-content-center justify-items-center gap-1.5 p-6 text-center text-muted";
 export const EMPTY_HEAD = "font-strong text-muted";
 export const EMPTY_HINT = "text-s text-faint";
+
+/** A folder row that a drag of files is over: what is let go there is uploaded into that folder. */
+export const DROP_ROW = "bg-accent-soft rounded outline-[1.5px] outline-dashed outline-accent -outline-offset-3";
+
+/** A list or a column that a drag of files is over, away from its folder rows. */
+export const DROP_PANE = "rounded-lg outline-[1.5px] outline-dashed outline-accent -outline-offset-4";
+
+/** The list of keys and the dialogs that ask: a card over the page. */
+export const DIALOG = "w-[min(420px,100%)] rounded-lg bg-surface shadow";
+export const DIALOG_HEAD = "[font:var(--weight-strong)_var(--text)_var(--font-ui)]";
+
+/** A dialog that asks for a decision, and the backdrop it comes up over, fading in: they are rare. */
+export const ASK_IN = `${SCRIM} transition-opacity duration-150 ease-[ease] starting:opacity-0`;
+export const ASK = `${DIALOG} grid gap-3 px-5 py-4.5 transition-[opacity,transform] duration-180 ease-out starting:opacity-0 starting:[transform:scale(0.96)] motion-reduce:starting:[transform:none]`;
+
+/** A dialog's buttons, at its foot. */
+export const ASK_DO = "mt-1 flex justify-end gap-2";
+export const ASK_BTN = "h-[calc(30px*var(--density))] min-w-0 px-[calc(12px*var(--density))] phone:h-[38px] phone:flex-1 phone:justify-center";
