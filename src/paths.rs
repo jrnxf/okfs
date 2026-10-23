@@ -49,6 +49,26 @@ impl Entry {
     }
 }
 
+/// Where a new entry would go. See `Root::target`.
+#[derive(Debug)]
+pub struct Target {
+    /// The path it was asked for by, cleaned: no leading slash, no empty segments.
+    pub rel: String,
+    /// The real folder it goes in.
+    pub dir: PathBuf,
+    /// That folder's real place, relative to the served folder.
+    pub folder: String,
+    /// Its own name.
+    pub name: String,
+}
+
+impl Target {
+    /// Where it goes on disk.
+    pub fn abs(&self) -> PathBuf {
+        self.dir.join(&self.name)
+    }
+}
+
 /// Why a request path names nothing that may be removed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum NoEntry {
@@ -142,8 +162,9 @@ impl Root {
         self.hidden
     }
 
+    /// True for a name that may be shown. A write's file in progress never is, even with `--hidden`.
     fn shows(&self, name: &str) -> bool {
-        self.hidden || !name.starts_with('.')
+        (self.hidden || !name.starts_with('.')) && !is_part(name)
     }
 
     /// Splits a request path into segments, refusing anything that is not a plain name.
@@ -225,6 +246,40 @@ impl Root {
             abs: held.path(),
             folder,
             kind,
+        })
+    }
+
+    /// Where a new entry asked for by a request path would go: its last name, in the folder
+    /// the rest of the path names. The folder is followed as `resolve` follows it, and has to
+    /// be inside the served folder. The name has to be one that `segments` takes, and is
+    /// refused when it holds a control character, such as a line break. Nothing is looked
+    /// up under the name itself: it may be there already or not.
+    pub fn target(&self, request: &str) -> Result<Target, NoEntry> {
+        let segments = self.segments(request).ok_or(NoEntry::NotServed)?;
+        let Some((name, above)) = segments.split_last() else {
+            return Err(NoEntry::Root);
+        };
+        if name.chars().any(char::is_control) {
+            return Err(NoEntry::NotServed);
+        }
+        let mut joined = self.dir.clone();
+        joined.extend(above);
+        let dir = joined
+            .canonicalize()
+            .ok()
+            .filter(|dir| self.contains(dir) && dir.is_dir())
+            .ok_or(NoEntry::Missing)?;
+        let folder = dir
+            .strip_prefix(&self.dir)
+            .ok()
+            .and_then(Path::to_str)
+            .ok_or(NoEntry::Missing)?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        Ok(Target {
+            rel: segments.join("/"),
+            dir,
+            folder,
+            name: (*name).to_owned(),
         })
     }
 
@@ -347,6 +402,15 @@ impl Root {
         }
         Ok(out)
     }
+}
+
+/// The start and the end of the name of a file that a write is still putting together. See `write`.
+pub const PART: (&str, &str) = (".okfs-", ".part");
+
+/// True for the name of a file that a write is still putting together. It is never shown.
+pub fn is_part(name: &str) -> bool {
+    let (start, end) = PART;
+    name.len() > start.len() + end.len() && name.starts_with(start) && name.ends_with(end)
 }
 
 /// Joins a folder path and a name, both relative to the served folder.

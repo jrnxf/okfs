@@ -1,4 +1,4 @@
-//! Behavior that can break without anyone noticing: the safety rules, deleting, ranges,
+//! Behavior that can break without anyone noticing: the safety rules, deleting, writing, ranges,
 //! listings, bounded inputs and the theme gate. Each test drives the real router.
 
 use std::fs;
@@ -75,6 +75,15 @@ impl Site {
     fn deleting(&self) -> axum::Router {
         self.app(Options {
             allow_delete: true,
+            ..Options::default()
+        })
+    }
+
+    /// With adding and changing files switched on.
+    fn writing(&self) -> axum::Router {
+        self.app(Options {
+            allow_upload: true,
+            allow_edit: true,
             ..Options::default()
         })
     }
@@ -3007,4 +3016,591 @@ async fn without_a_key_nothing_asks_for_one() {
     let (response, _) = send(&app, on_home("GET", "/?key=anything", NAVIGATE)).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!response.headers().contains_key(header::SET_COOKIE));
+}
+
+/// A write of a file as the page sends it: its own origin, the header a form cannot add, and
+/// what the write is for, `("if-none-match", "*")` or `("if-match", tag)`.
+fn page_write(path: &str, wanted: (&str, &str), body: impl Into<Body>) -> Request<Body> {
+    Request::put(format!("/api/file?path={path}"))
+        .header(header::HOST, HOME)
+        .header(header::ORIGIN, format!("http://{HOME}"))
+        .header("x-okfs", "write")
+        .header(wanted.0, wanted.1)
+        .body(body.into())
+        .unwrap()
+}
+
+/// A new folder as the page asks for it.
+fn page_folder(path: &str) -> Request<Body> {
+    Request::post(format!("/api/folder?path={path}"))
+        .header(header::HOST, HOME)
+        .header(header::ORIGIN, format!("http://{HOME}"))
+        .header("x-okfs", "write")
+        .body(Body::empty())
+        .unwrap()
+}
+
+const NEW: (&str, &str) = ("if-none-match", "*");
+
+/// The status and the JSON a write is answered with.
+async fn wrote(app: &axum::Router, request: Request<Body>) -> (StatusCode, Value) {
+    let (response, body) = send(app, request).await;
+    (response.status(), serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// The tag a file is sent with, as the page reads it.
+async fn tag_of(app: &axum::Router, path: &str) -> String {
+    let (response, _) = get(app, &format!("/raw/{path}")).await;
+    response.headers()[header::ETAG].to_str().unwrap().to_owned()
+}
+
+/// The names in a folder on disk that a write is still putting together, or left behind.
+fn parts_in(dir: &Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".okfs-"))
+        .collect()
+}
+
+#[tokio::test]
+async fn writing_is_off_unless_asked_for_and_each_flag_allows_only_its_own() {
+    let site = Site::new();
+    let before = snapshot(&site.served);
+    let tag = tag_of(&site.router(), "a.txt").await;
+    let cases = [
+        (Options::default(), "--allow-upload", "--allow-edit"),
+        // Changing files does not add any, and adding does not change any.
+        (
+            Options {
+                allow_edit: true,
+                ..Options::default()
+            },
+            "--allow-upload",
+            "",
+        ),
+        (
+            Options {
+                allow_upload: true,
+                ..Options::default()
+            },
+            "",
+            "--allow-edit",
+        ),
+        (
+            Options {
+                allow_delete: true,
+                ..Options::default()
+            },
+            "--allow-upload",
+            "--allow-edit",
+        ),
+    ];
+    for (options, no_new, no_change) in cases {
+        let app = site.app(options);
+        for (request, flag) in [
+            (page_write("fresh.txt", NEW, "new"), no_new),
+            (page_folder("fresh"), no_new),
+            (page_write("a.txt", ("if-match", &tag), "changed"), no_change),
+        ] {
+            if flag.is_empty() {
+                continue;
+            }
+            let (response, body) = send(&app, request).await;
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{flag}");
+            assert!(String::from_utf8_lossy(&body).contains(flag), "{flag}");
+        }
+    }
+    assert_eq!(snapshot(&site.served), before);
+    assert!(!site.served.join("fresh").exists());
+
+    // The page shows its controls only for what the server allows.
+    for (options, upload, edit) in [
+        (Options::default(), false, false),
+        (
+            Options {
+                allow_upload: true,
+                ..Options::default()
+            },
+            true,
+            false,
+        ),
+        (
+            Options {
+                allow_edit: true,
+                max_upload: Some(1024),
+                ..Options::default()
+            },
+            false,
+            true,
+        ),
+    ] {
+        let (_, body) = get(&site.app(options), "/").await;
+        let html = String::from_utf8_lossy(&body).into_owned();
+        assert!(html.contains(&format!("\"upload\":{upload}")), "{html}");
+        assert!(html.contains(&format!("\"edit\":{edit}")), "{html}");
+        assert_eq!(html.contains("\"max_upload\":1024"), edit);
+    }
+}
+
+#[tokio::test]
+async fn a_new_file_is_added_whole_and_never_lands_on_a_name_that_is_taken() {
+    let site = Site::new();
+    let app = site.app(Options {
+        allow_upload: true,
+        ..Options::default()
+    });
+    let (status, answer) = wrote(&app, page_write("sub/fresh.txt", NEW, "fresh")).await;
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+    assert_eq!(answer["path"], "sub/fresh.txt");
+    assert_eq!(answer["s"], 5);
+    assert_eq!(answer["etag"], tag_of(&app, "sub/fresh.txt").await);
+    assert_eq!(fs::read_to_string(site.served.join("sub/fresh.txt")).unwrap(), "fresh");
+    // It is listed and searched at once.
+    assert!(names(&json(&app, "/api/list?path=sub").await).contains(&"fresh.txt"));
+    assert_eq!(json(&app, "/api/search?q=fresh").await["total"], 1);
+
+    // A name that is taken is refused, with what is there for the page to set beside it.
+    let (status, answer) = wrote(&app, page_write("a.txt", NEW, "over")).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{answer}");
+    assert_eq!(answer["s"], 20);
+    assert_eq!(answer["etag"], tag_of(&app, "a.txt").await);
+    assert!(answer["m"].as_i64().unwrap() > 0);
+    assert_eq!(
+        fs::read_to_string(site.served.join("a.txt")).unwrap(),
+        "0123456789abcdefghij"
+    );
+    let (status, answer) = wrote(&app, page_write("sub", NEW, "over")).await;
+    assert_eq!(
+        (status, &answer["d"]),
+        (StatusCode::PRECONDITION_FAILED, &Value::Bool(true))
+    );
+    // So is a link, even one that leads nowhere, and nothing is told of where it leads.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(site.served.join("gone.txt"), site.served.join("dangling.txt")).unwrap();
+        for name in ["dangling.txt", "link-out.txt", "link-in.txt"] {
+            let (status, answer) = wrote(&app, page_write(name, NEW, "over")).await;
+            assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{name}");
+            assert!(!answer.to_string().contains("secret"), "{name}: {answer}");
+        }
+        assert!(
+            fs::symlink_metadata(site.served.join("dangling.txt"))
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(site.outside.join("secret.txt")).unwrap(), SECRET);
+    }
+
+    // Keeping both puts the new file beside the old under the next free name.
+    for expected in ["a (1).txt", "a (2).txt"] {
+        let (status, answer) = wrote(&app, page_write("a.txt&keep=1", NEW, expected)).await;
+        assert_eq!((status, answer["path"].as_str()), (StatusCode::CREATED, Some(expected)));
+        assert_eq!(fs::read_to_string(site.served.join(expected)).unwrap(), expected);
+    }
+    assert_eq!(
+        fs::read_to_string(site.served.join("a.txt")).unwrap(),
+        "0123456789abcdefghij"
+    );
+
+    // An empty file is a file: a new one made from the palette.
+    let (status, _) = wrote(&app, page_write("empty.md", NEW, "")).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(fs::read(site.served.join("empty.md")).unwrap(), b"");
+
+    for dir in [&site.served, &site.served.join("sub")] {
+        assert!(parts_in(dir).is_empty(), "{dir:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_file_is_changed_only_while_it_is_still_the_version_read() {
+    let site = Site::new();
+    let app = site.writing();
+    let read = tag_of(&app, "a.txt").await;
+    let (status, answer) = wrote(&app, page_write("a.txt", ("if-match", &read), "saved once")).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["path"], "a.txt");
+    assert_eq!(fs::read_to_string(site.served.join("a.txt")).unwrap(), "saved once");
+    let now = tag_of(&app, "a.txt").await;
+    assert_eq!(answer["etag"], now);
+    assert_ne!(now, read);
+
+    // A save from what was read before that is refused, and told what the file is now.
+    let (status, answer) = wrote(&app, page_write("a.txt", ("if-match", &read), "stale")).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(
+        (answer["etag"].as_str(), &answer["s"]),
+        (Some(now.as_str()), &Value::from(10))
+    );
+    assert_eq!(fs::read_to_string(site.served.join("a.txt")).unwrap(), "saved once");
+    // A weak tag names the same version.
+    let (status, _) = wrote(
+        &app,
+        page_write("a.txt", ("if-match", &format!("W/{now}")), "saved twice"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A write that says neither what it adds nor what it replaces is refused, as is one that says both.
+    let mut bare = page_write("a.txt", NEW, "bare");
+    bare.headers_mut().remove("if-none-match");
+    assert_eq!(send(&app, bare).await.0.status(), StatusCode::PRECONDITION_REQUIRED);
+    let mut both = page_write("a.txt", NEW, "both");
+    both.headers_mut().insert("if-match", now.parse().unwrap());
+    assert_eq!(send(&app, both).await.0.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        send(&app, page_write("a.txt", ("if-match", "*"), "any"))
+            .await
+            .0
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(fs::read_to_string(site.served.join("a.txt")).unwrap(), "saved twice");
+
+    // A file that went away since it was read says so.
+    let tag = tag_of(&app, "file2.txt").await;
+    fs::remove_file(site.served.join("file2.txt")).unwrap();
+    let (status, answer) = wrote(&app, page_write("file2.txt", ("if-match", &tag), "back")).await;
+    assert_eq!(
+        (status, &answer["gone"]),
+        (StatusCode::PRECONDITION_FAILED, &Value::Bool(true))
+    );
+    assert!(!site.served.join("file2.txt").exists());
+    // A folder is not a file.
+    let (status, _) = wrote(&app, page_write("sub", ("if-match", "\"1-0\""), "x")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(parts_in(&site.served).is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_change_through_a_link_writes_the_real_file_and_the_link_stays() {
+    use std::os::unix::fs::PermissionsExt;
+    let site = Site::new();
+    let app = site.writing();
+    let real = site.served.join("sub/b.txt");
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+    let tag = tag_of(&app, "link-in.txt").await;
+    let (status, answer) = wrote(&app, page_write("link-in.txt", ("if-match", &tag), "through")).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["path"], "link-in.txt");
+    assert!(
+        fs::symlink_metadata(site.served.join("link-in.txt"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_to_string(&real).unwrap(), "through");
+    assert_eq!(fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o640);
+    assert!(parts_in(&site.served.join("sub")).is_empty() && parts_in(&site.served).is_empty());
+}
+
+#[tokio::test]
+async fn no_write_leaves_the_served_folder_or_reaches_a_dotfile() {
+    let site = Site::new();
+    let app = site.writing();
+    let served_before = snapshot(&site.served);
+    let outside_before = snapshot(&site.outside);
+    let escapes = [
+        "",
+        "/",
+        "../outside/new.txt",
+        "sub/../../outside/new.txt",
+        "%2E%2E/outside/new.txt",
+        "link-out-dir/new.txt",
+        "link-out-dir/secret.txt",
+        "nope/new.txt",
+        ".hidden",
+        ".new",
+        "sub/.new",
+        ".okfs-0011223344556677.part",
+        "line%0Abreak.txt",
+        "tab%09.txt",
+        "nul%00.txt",
+    ];
+    for path in escapes {
+        for wanted in [NEW, ("if-match", "\"0-0\"")] {
+            let (status, answer) = wrote(&app, page_write(path, wanted, SECRET)).await;
+            assert!(status.is_client_error(), "{path} {wanted:?}: {status} {answer}");
+        }
+        let (response, _) = send(&app, page_folder(path)).await;
+        assert!(response.status().is_client_error(), "{path}: {}", response.status());
+    }
+    // A link that leads out is never written through, even with its tag in hand.
+    #[cfg(unix)]
+    {
+        let meta = fs::metadata(site.outside.join("secret.txt")).unwrap();
+        let stamp = meta.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap();
+        let tag = format!("\"{:x}-{:x}\"", stamp.as_nanos(), meta.len());
+        let (status, _) = wrote(&app, page_write("link-out.txt", ("if-match", &tag), "over")).await;
+        assert!(status.is_client_error(), "{status}");
+    }
+    assert_eq!(snapshot(&site.served), served_before);
+    assert_eq!(snapshot(&site.outside), outside_before);
+    assert!(parts_in(&site.served).is_empty() && parts_in(&site.outside).is_empty());
+}
+
+#[tokio::test]
+async fn a_write_is_never_shown_until_it_is_whole_and_a_cut_off_one_leaves_nothing() {
+    let site = Site::new();
+    let app = site.serving(
+        true,
+        Options {
+            allow_upload: true,
+            ..Options::default()
+        },
+    );
+    // A part left behind is never listed, searched or served, even with --hidden.
+    fs::write(site.served.join(".okfs-00112233.part"), SECRET).unwrap();
+    let listing = json(&app, "/api/list?path=&all=1").await;
+    assert!(names(&listing).contains(&".hidden"));
+    assert!(!listing.to_string().contains(".okfs-"), "{listing}");
+    assert_eq!(
+        get(&app, "/raw/.okfs-00112233.part").await.0.status(),
+        StatusCode::NOT_FOUND
+    );
+    fs::remove_file(site.served.join(".okfs-00112233.part")).unwrap();
+
+    // A body that breaks off part way writes nothing.
+    let pieces = futures_util::stream::iter([
+        Ok(bytes::Bytes::from_static(b"the first half")),
+        Err(std::io::Error::other("the connection dropped")),
+    ]);
+    let (status, _) = wrote(&app, page_write("cut.txt", NEW, Body::from_stream(pieces))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!site.served.join("cut.txt").exists());
+    assert!(parts_in(&site.served).is_empty());
+}
+
+#[tokio::test]
+async fn a_large_file_streams_to_disk_and_max_upload_bounds_it() {
+    let site = Site::new();
+    // Past the 2 MB a request body is held to by default: an upload is never held in memory.
+    let big = vec![b'x'; 3 * 1024 * 1024 + 7];
+    let app = site.writing();
+    let (status, answer) = wrote(&app, page_write("big.bin", NEW, big.clone())).await;
+    assert_eq!(status, StatusCode::CREATED, "{answer}");
+    assert_eq!(fs::read(site.served.join("big.bin")).unwrap(), big);
+
+    let app = site.app(Options {
+        allow_upload: true,
+        allow_edit: true,
+        max_upload: Some(1024),
+        ..Options::default()
+    });
+    // Refused by the length it says, before any of it is read.
+    let (status, answer) = wrote(&app, page_write("small.bin", NEW, vec![b'x'; 1025])).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(answer["error"].as_str().unwrap().contains("--max-upload"));
+    // And by what comes, when it says no length.
+    let pieces =
+        futures_util::stream::iter((0..4).map(|_| Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b'x'; 300]))));
+    let (status, _) = wrote(&app, page_write("small.bin", NEW, Body::from_stream(pieces))).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(!site.served.join("small.bin").exists());
+    // A save is bound the same way.
+    let tag = tag_of(&app, "a.txt").await;
+    let (status, _) = wrote(&app, page_write("a.txt", ("if-match", &tag), vec![b'x'; 2048])).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        fs::read_to_string(site.served.join("a.txt")).unwrap(),
+        "0123456789abcdefghij"
+    );
+    let (status, _) = wrote(&app, page_write("small.bin", NEW, vec![b'x'; 1024])).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(parts_in(&site.served).is_empty());
+}
+
+#[tokio::test]
+async fn a_folder_is_made_one_level_at_a_time_and_never_over_an_entry() {
+    let site = Site::new();
+    let app = site.app(Options {
+        allow_upload: true,
+        ..Options::default()
+    });
+    let (status, answer) = wrote(&app, page_folder("sub/photos")).await;
+    assert_eq!(
+        (status, &answer["path"]),
+        (StatusCode::CREATED, &Value::from("sub/photos"))
+    );
+    assert!(site.served.join("sub/photos").is_dir());
+    assert!(names(&json(&app, "/api/list?path=sub").await).contains(&"photos"));
+    let (status, answer) = wrote(&app, page_folder("sub/photos")).await;
+    assert_eq!(
+        (status, &answer["d"]),
+        (StatusCode::PRECONDITION_FAILED, &Value::Bool(true))
+    );
+    let (status, answer) = wrote(&app, page_folder("a.txt")).await;
+    assert_eq!(
+        (status, &answer["s"]),
+        (StatusCode::PRECONDITION_FAILED, &Value::from(20))
+    );
+    // A folder under one that is not there yet is not made: each level is asked for.
+    let (status, _) = wrote(&app, page_folder("sub/new/deeper")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!site.served.join("sub/new").exists());
+    // A file goes into the new folder.
+    let (status, _) = wrote(&app, page_write("sub/photos/tide.jpg", NEW, "jpg")).await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_write_is_told_to_every_open_page() {
+    let site = Site::new();
+    let app = site.writing();
+    let mut other_tab = listen(&app).await;
+    let (status, _) = wrote(&app, page_write("sub/fresh.txt", NEW, "fresh")).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (event, data) = next_change(&mut other_tab).await.unwrap();
+    assert_eq!(
+        (event.as_str(), data),
+        ("change", serde_json::json!({ "dir": "sub", "files": ["fresh.txt"] }))
+    );
+    let tag = tag_of(&app, "a.txt").await;
+    let (status, _) = wrote(&app, page_write("a.txt", ("if-match", &tag), "saved")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (event, data) = next_change(&mut other_tab).await.unwrap();
+    assert_eq!(
+        (event.as_str(), data),
+        ("change", serde_json::json!({ "dir": "", "files": ["a.txt"] }))
+    );
+    // The search knows its new size at once.
+    let found = json(&app, "/api/search?q=a.txt").await;
+    let hit = found["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|hit| hit["path"] == "a.txt");
+    assert!(hit.is_some_and(|hit| hit["s"] == 5), "{found}");
+    // A write that is refused changes nothing, and tells nothing.
+    let (status, _) = wrote(&app, page_write("a.txt", NEW, "again")).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(next_change(&mut other_tab).await, None);
+}
+
+#[tokio::test]
+async fn another_site_cannot_make_a_browser_write() {
+    let site = Site::new();
+    let app = site.app(Options {
+        allow_upload: true,
+        allow_edit: true,
+        check_host: true,
+        ..Options::default()
+    });
+    let before = snapshot(&site.served);
+    let headers: [Headers; 8] = [
+        &[],
+        &[("x-okfs", "write")],
+        // The header of a delete is not the header of a write.
+        &[("x-okfs", "delete"), ("origin", "http://localhost:8080")],
+        &[("origin", "http://localhost:8080")],
+        &[("x-okfs", "write"), ("origin", "https://evil.example")],
+        &[("x-okfs", "write"), ("origin", "http://localhost:3000")],
+        &[("x-okfs", "write"), ("origin", "null")],
+        &[
+            ("x-okfs", "write"),
+            ("origin", "http://localhost:8080"),
+            ("origin", "https://evil.example"),
+        ],
+    ];
+    for headers in headers {
+        for (method, uri) in [("PUT", "/api/file?path=fresh.txt"), ("POST", "/api/folder?path=fresh")] {
+            let mut request = Request::builder().method(method).uri(uri).header(header::HOST, HOME);
+            for (name, value) in headers {
+                request = request.header(*name, *value);
+            }
+            let request = request.header("if-none-match", "*").body(Body::from(SECRET)).unwrap();
+            let (status, answer) = wrote(&app, request).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {headers:?}: {answer}");
+        }
+    }
+    assert_eq!(snapshot(&site.served), before);
+    assert!(!site.served.join("fresh").exists());
+    // The page's own write passes.
+    let (status, _) = wrote(&app, page_write("fresh.txt", NEW, "ok")).await;
+    assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn only_okfs_may_frame_the_page_while_any_write_is_on_and_only_the_editor_gets_a_nonce() {
+    let site = Site::new();
+    let flags = [
+        (Options::default(), false, false),
+        (
+            Options {
+                allow_upload: true,
+                ..Options::default()
+            },
+            true,
+            false,
+        ),
+        (
+            Options {
+                allow_edit: true,
+                ..Options::default()
+            },
+            true,
+            true,
+        ),
+    ];
+    for (options, framed, nonce) in flags {
+        let app = site.app(options);
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            let (page, body) = browse(&app, "/sub/").await;
+            let policy = page_policy(&page);
+            assert_eq!(
+                policy.contains(&"frame-ancestors 'self'".to_owned()),
+                framed,
+                "{policy:?}"
+            );
+            let style = policy
+                .iter()
+                .find(|directive| directive.starts_with("style-src"))
+                .unwrap();
+            let html = String::from_utf8_lossy(&body).into_owned();
+            if nonce {
+                // The style rule carries this page's nonce, which the page is told, and no other.
+                let given = style
+                    .strip_prefix("style-src 'self' 'nonce-")
+                    .unwrap()
+                    .trim_end_matches('\'');
+                assert_eq!(given.len(), 22, "{style}");
+                assert!(html.contains(&format!("\"nonce\":\"{given}\"")));
+                seen.push(given.to_owned());
+            } else {
+                assert_eq!(style, "style-src 'self'");
+                assert!(!html.contains("\"nonce\""));
+            }
+        }
+        // A fresh one for each page.
+        if nonce {
+            assert_ne!(seen[0], seen[1]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_page_with_the_cookie_writes_and_one_without_never_does() {
+    let site = Site::new();
+    let app = keyed(
+        &site,
+        Options {
+            allow_upload: true,
+            ..Options::default()
+        },
+    );
+    let page: Headers = &[
+        ("x-okfs", "write"),
+        ("origin", "http://localhost:8080"),
+        ("if-none-match", "*"),
+    ];
+    for uri in ["/api/file?path=fresh.txt", "/api/folder?path=fresh"] {
+        let method = if uri.contains("file") { "PUT" } else { "POST" };
+        let (response, _) = send(&app, on_home(method, uri, page)).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+        let (response, _) = send(&app, on_home(method, uri, &[page[0], page[1], page[2], COOKIE])).await;
+        assert_eq!(response.status(), StatusCode::CREATED, "{uri}");
+    }
+    assert!(site.served.join("fresh.txt").is_file() && site.served.join("fresh").is_dir());
 }
