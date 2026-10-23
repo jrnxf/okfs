@@ -310,3 +310,40 @@ test("the editor opens on a text file only while editing is on, and leaving unsa
     config.edit = false;
   }
 });
+
+test("nothing moves off a file with unsaved changes without asking, and a file deleted on disk stays in the editor", async () => {
+  const { config } = await import("./config");
+  const store = showing("notes.md", "other.md");
+  const [notes] = store.s.entries;
+  Object.assign(config, { edit: true, upload: true, delete: true });
+  const fetching = globalThis.fetch;
+  const stop = store.watchUnsaved(() => true);
+  try {
+    store.edit(notes ?? null);
+    // A new file or folder leads away from the edited file: the question comes first, and the dialog after it.
+    store.setNaming("file");
+    expect([store.s.naming, store.s.editing?.path]).toEqual([null, "notes.md"]);
+    expect(store.s.leaving).not.toBeNull();
+    store.leaveAnyway(false);
+    store.askDelete(notes ?? null);
+    expect([store.s.doomed, store.s.editing?.path]).toEqual([null, "notes.md"]);
+    store.leaveAnyway(true);
+    expect([store.s.doomed?.path, store.s.editing]).toEqual(["notes.md", null]);
+    store.cancelDelete();
+
+    // The folder is read again without the edited file: the editor keeps it, and is told it changed.
+    store.edit(notes ?? null);
+    const stamp = notes ? store.stamp(notes) : "";
+    const listing = { path: "", m: 1, entries: [{ n: "other.md", d: false, s: 10, m: 1 }], total: 1 };
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify(listing)))) as unknown as typeof fetch;
+    store.changed("", []);
+    for (let i = 0; i < 10 && store.s.caught === 0; i++) await new Promise((done) => setTimeout(done, 0));
+    expect(store.s.caught).toBe(1);
+    expect([store.s.open?.path, store.s.editing?.path]).toEqual(["notes.md", "notes.md"]);
+    expect(notes && store.stamp(notes)).not.toBe(stamp);
+  } finally {
+    stop();
+    globalThis.fetch = fetching;
+    Object.assign(config, { edit: false, upload: false, delete: false });
+  }
+});

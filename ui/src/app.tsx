@@ -299,6 +299,8 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       const { s } = store;
       const { key } = event;
+      // A key the editor took is its own, as Esc is when it leaves.
+      if (event.defaultPrevented) return;
       // A dialog takes every key while it is up.
       if (s.doomed || s.naming || s.leaving || uploads.asking) return;
       if ((event.ctrlKey || event.metaKey) && key.toLowerCase() === "k") {

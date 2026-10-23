@@ -732,9 +732,14 @@ export class Store {
     s.cursor = (nearest === undefined ? undefined : place.get(nearest)) ?? 0;
     if (s.open) {
       const still = now.get(s.open.name);
-      s.open = still && !still.dir ? still : null;
-      // The address of a file that is gone gives way to its folder's.
-      if (!s.open) this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
+      if (still && !still.dir) s.open = still;
+      // A file that is edited stays open when it is gone, and the editor says so: what it holds is not lost.
+      else if (s.editing?.path === s.open.path) this.restamp(s.open.path);
+      else {
+        s.open = null;
+        // The address of a file that is gone gives way to its folder's.
+        this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
+      }
     }
 
     if (all) this.distrust();
@@ -1154,8 +1159,15 @@ export class Store {
   /** Puts up the dialog that names a new file or folder in the folder on screen, or takes it down. */
   setNaming(kind: Naming["kind"] | null): void {
     const dir = this.addsTo();
-    this.s.naming = kind && dir !== null ? { kind, dir } : null;
-    this.emit();
+    if (!kind || dir === null) {
+      this.s.naming = null;
+      this.emit();
+      return;
+    }
+    // The dialog leads to the file or folder it makes, away from the file that is edited.
+    this.leave(() => {
+      this.s.naming = { kind, dir };
+    });
   }
 
   /** Shows a file or folder just made, under the cursor in its folder, when that folder is the one on screen. */
@@ -1238,8 +1250,9 @@ export class Store {
   askDelete(doomed: Doomed | null = this.s.open ?? this.cur()): void {
     // A match is deleted from its own folder, where the list shows what is left.
     if (!config.delete || !doomed || this.s.finding) return;
-    this.s.doomed = doomed;
-    this.emit();
+    this.leave(() => {
+      this.s.doomed = doomed;
+    });
   }
 
   cancelDelete(): void {

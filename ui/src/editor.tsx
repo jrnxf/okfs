@@ -2,7 +2,7 @@
 // file changes on disk meanwhile, and CodeMirror under them, fetched the first time a file is edited.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { WriteError, putFile, urls } from "./api";
+import { type Want, WriteError, putFile, urls } from "./api";
 import type { Editing } from "./cm";
 import { config } from "./config";
 import * as fmt from "./fmt";
@@ -69,14 +69,14 @@ export function Editor({ file }: { file: Entry }) {
     });
   };
 
-  const save = async (over?: string) => {
+  const save = async (to?: Want) => {
     const now = editor.current;
     const from = base.current;
     if (!now || !from || saving) return;
     setSaving(true);
     const text = now.text();
     try {
-      const want = over === undefined || over === "" ? (from.etag ? { over: from.etag } : { new: true as const }) : { over };
+      const want = to ?? (from.etag ? { over: from.etag } : { new: true as const });
       const written = await putFile(file.path, new Blob([writeText(text, from.form)]), want);
       // The live feed tells of this save too: it carries this tag, and the editor knows it as its own.
       base.current = { text, form: from.form, etag: written.etag };
@@ -228,7 +228,7 @@ export function Editor({ file }: { file: Entry }) {
               Show theirs
             </button>
           )}
-          <button class={`btn btn-line ${DISK_BTN}`} disabled={saving} onClick={() => void save(theirs.gone ? undefined : theirs.etag)}>
+          <button class={`btn btn-line ${DISK_BTN}`} disabled={saving} onClick={() => void save(theirs.gone || !theirs.etag ? { new: true } : { over: theirs.etag })}>
             {theirs.gone ? "Save mine again" : "Save mine over it"}
           </button>
         </div>
