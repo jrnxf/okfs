@@ -40,6 +40,7 @@ import {
   rectangularSelection,
 } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
+import { pasted } from "./text";
 
 /** What the page holds of an editor it put up. */
 export interface Editing {
@@ -188,6 +189,7 @@ export function mount(parent: HTMLElement, text: string, options: Mount): Editin
         dropCursor(),
         EditorState.allowMultipleSelections.of(true),
         EditorState.lineSeparator.of("\n"),
+        EditorView.clipboardInputFilter.of(pasted),
         indentOnInput(),
         syntaxHighlighting(colors),
         bracketMatching(),

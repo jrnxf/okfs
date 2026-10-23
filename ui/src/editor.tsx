@@ -11,7 +11,7 @@ import { ASK, ASK_BTN, ASK_DO, ASK_IN, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DIALOG
 import { MOD } from "./palette";
 import { call } from "./reach";
 import { type Entry, store } from "./store";
-import { type Form, linesChanged, readText, writeText } from "./text";
+import { type Form, linesSaved, mixedNote, readText, writeText } from "./text";
 import { reasonOf } from "./upload";
 
 /** Whether the text is saved, beside the file's name. */
@@ -65,7 +65,7 @@ export function Editor({ file }: { file: Entry }) {
     cancelAnimationFrame(counting.current);
     counting.current = requestAnimationFrame(() => {
       const text = editor.current?.text();
-      if (text !== undefined && base.current) setChanged(linesChanged(base.current.text, text));
+      if (text !== undefined && base.current) setChanged(linesSaved(base.current.text, text, base.current.form));
     });
   };
 
@@ -79,7 +79,7 @@ export function Editor({ file }: { file: Entry }) {
       const want = to ?? (from.etag ? { over: from.etag } : { new: true as const });
       const written = await putFile(file.path, new Blob([writeText(text, from.form)]), want);
       // The live feed tells of this save too: it carries this tag, and the editor knows it as its own.
-      base.current = { text, form: from.form, etag: written.etag };
+      base.current = { text, form: { ...from.form, mixed: 0 }, etag: written.etag };
       setTheirs(null);
       count();
       store.say(`Saved “${file.name}”`);
@@ -223,6 +223,7 @@ export function Editor({ file }: { file: Entry }) {
           <kbd class="h-auto min-w-0 border-0 bg-transparent p-0 text-inherit opacity-75 phone:hidden">{MOD === "⌘" ? "⌘S" : "Ctrl S"}</kbd>
         </button>
       </div>
+      {form?.mixed ? <div class="flex-none border-b border-b-line px-3 py-1.75 text-s text-muted">{mixedNote(form)}</div> : null}
       {theirs && (
         <div
           class="flex flex-none items-center gap-2.5 border-b border-b-line bg-[color-mix(in_srgb,var(--kind-data)_12%,var(--surface))] px-3 py-1.75 text-s phone:flex-wrap"

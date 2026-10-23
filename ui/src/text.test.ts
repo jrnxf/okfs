@@ -1,7 +1,7 @@
 // A file's text in and out of the editor: its line endings and its byte-order mark are kept as they were found.
 
 import { expect, test } from "bun:test";
-import { linesChanged, readText, writeText } from "./text";
+import { linesChanged, linesSaved, mixedNote, pasted, readText, writeText } from "./text";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 
@@ -17,8 +17,8 @@ test("a file is saved with the line endings and the byte-order mark it was read 
   }
   // Lines the editor adds are written the file's way.
   const read = readText(bytes("﻿one\r\ntwo\r\n"));
-  expect(read?.form).toEqual({ crlf: true, bom: true });
-  expect(writeText(`${read?.text}three\n`, read?.form ?? { crlf: false, bom: false })).toBe("﻿one\r\ntwo\r\nthree\r\n");
+  expect(read?.form).toEqual({ crlf: true, bom: true, mixed: 0 });
+  expect(writeText(`${read?.text}three\n`, read?.form ?? { crlf: false, bom: false, mixed: 0 })).toBe("﻿one\r\ntwo\r\nthree\r\n");
   // A lone \r is a character of a line, not the end of one.
   expect(readText(bytes("50%\r100%\n"))?.text).toBe("50%\r100%\n");
   expect(readText(bytes('id,note\r\n1,"a\rb"\r\n'))?.text).toBe('id,note\n1,"a\rb"\n');
@@ -38,4 +38,25 @@ test("the lines changed are counted from the first that differs to the last", ()
   expect(linesChanged("a\nb\nc", "a\nb\nx\ny\nc")).toBe(2);
   expect(linesChanged("a\nb\nc\nd", "a\nd")).toBe(2);
   expect(linesChanged("a", "")).toBe(1);
+});
+
+test("a file that mixes line endings says so, and a change counts the endings a save makes the same", () => {
+  const crlfs = readText(bytes("a\r\nb\r\nc\n"));
+  const lfs = readText(bytes("x\ny\nz\r\n"));
+  expect([crlfs?.form.mixed, lfs?.form.mixed]).toEqual([1, 1]);
+  expect(crlfs && mixedNote(crlfs.form)).toBe("This file mixes CRLF and LF line endings. Saving writes CRLF at the end of every line.");
+  expect(lfs && mixedNote(lfs.form)).toBe("This file mixes CRLF and LF line endings. Saving writes LF at the end of every line.");
+  const one = readText(bytes("a\r\nb\r\n"));
+  expect(one && mixedNote(one.form)).toBe("");
+  if (!crlfs || !one) return;
+  // Nothing changed is nothing to save; one line changed in a mixed file saves the other ending too.
+  expect(linesSaved(crlfs.text, crlfs.text, crlfs.form)).toBe(0);
+  expect(linesSaved(crlfs.text, crlfs.text.replace("a", "A"), crlfs.form)).toBe(2);
+  expect(linesSaved(one.text, one.text.replace("a", "A"), one.form)).toBe(1);
+  expect(writeText(crlfs.text.replace("a", "A"), crlfs.form)).toBe("A\r\nb\r\nc\r\n");
+});
+
+test("text pasted or dropped into the editor ends its lines the editor's way, and keeps a lone carriage return", () => {
+  expect(pasted("x\r\ny\r\n")).toBe("x\ny\n");
+  expect(pasted("50%\r100%\n")).toBe("50%\r100%\n");
 });
