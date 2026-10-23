@@ -756,7 +756,7 @@ export function App() {
             <kbd class="phone:hidden">{MOD} K</kbd>
           </button>
           {/* A phone has no folder bar above the list to hold these, and a tap on a folder goes in. */}
-          {adds !== null && (
+          {adds !== null && !s.trashView && (
             <>
               <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="Upload files here" onClick={() => pick(adds)}>
                 <Icon name="upload" />
@@ -766,7 +766,7 @@ export function App() {
               </button>
             </>
           )}
-          {here && (
+          {here && !s.trashView && (
             <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label={config.trash ? "Move this folder to Trash" : "Delete this folder"} onClick={() => store.askDelete(here)}>
               <Icon name="trash" />
             </button>
