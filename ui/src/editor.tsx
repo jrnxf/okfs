@@ -11,7 +11,7 @@ import { ASK, ASK_BTN, ASK_DO, ASK_IN, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DIALOG
 import { MOD } from "./palette";
 import { call } from "./reach";
 import { type Entry, store } from "./store";
-import { type Form, linesSaved, mixedNote, readText, writeText } from "./text";
+import { type Read, linesSaved, mixedNote, readText, writeText } from "./text";
 import { reasonOf } from "./upload";
 
 /** Whether the text is saved, beside the file's name. */
@@ -20,9 +20,7 @@ const STATE = "inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-m
 const DISK_BTN = "h-[calc(26px*var(--density))] px-2.5 phone:h-9";
 
 /** What the editor started from: the file as it was read or last saved, and the tag of that version. */
-interface Base {
-  text: string;
-  form: Form;
+interface Base extends Read {
   etag: string;
 }
 
@@ -65,7 +63,7 @@ export function Editor({ file }: { file: Entry }) {
     cancelAnimationFrame(counting.current);
     counting.current = requestAnimationFrame(() => {
       const text = editor.current?.text();
-      if (text !== undefined && base.current) setChanged(linesSaved(base.current.text, text, base.current.form));
+      if (text !== undefined && base.current) setChanged(linesSaved(base.current, text));
     });
   };
 
@@ -79,7 +77,8 @@ export function Editor({ file }: { file: Entry }) {
       const want = to ?? (from.etag ? { over: from.etag } : { new: true as const });
       const written = await putFile(file.path, new Blob([writeText(text, from.form)]), want);
       // The live feed tells of this save too: it carries this tag, and the editor knows it as its own.
-      base.current = { text, form: { ...from.form, mixed: 0 }, etag: written.etag };
+      const form = { ...from.form, mixed: 0 };
+      base.current = { text, form, found: writeText(text, { ...form, bom: false }), etag: written.etag };
       setTheirs(null);
       count();
       store.say(`Saved “${file.name}”`);
