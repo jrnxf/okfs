@@ -49,14 +49,17 @@ test("a file that mixes line endings says so, and a change counts the endings a 
   const one = readText(bytes("a\r\nb\r\n"));
   expect(one && mixedNote(one.form)).toBe("");
   if (!crlfs || !one) return;
-  // Nothing changed is nothing to save; one line changed in a mixed file saves the other ending too, and the lines
-  // from the first that differs to the last are counted.
+  // Nothing changed is nothing to save; one line changed in a mixed file saves the other ending too.
   expect(linesSaved(crlfs, crlfs.text)).toBe(0);
-  expect(linesSaved(crlfs, crlfs.text.replace("a", "A"))).toBe(3);
+  expect(linesSaved(crlfs, crlfs.text.replace("a", "A"))).toBe(2);
   expect(linesSaved(one, one.text.replace("a", "A"))).toBe(1);
   // A change to the line whose ending a save makes the file's own is that one line.
   expect(linesSaved(crlfs, crlfs.text.replace("c", "C"))).toBe(1);
   expect(linesSaved(crlfs, "a\nb\n")).toBe(1);
+  // The lines between a change and an ending far from it are not counted.
+  const long = readText(bytes(`${Array.from({ length: 999 }, (_, i) => `line ${i}\n`).join("")}last\r\n`));
+  expect(long?.form).toEqual({ crlf: false, bom: false, mixed: 1 });
+  if (long) expect(linesSaved(long, long.text.replace("line 0", "first"))).toBe(2);
   expect(writeText(crlfs.text.replace("a", "A"), crlfs.form)).toBe("A\r\nb\r\nc\r\n");
 });
 

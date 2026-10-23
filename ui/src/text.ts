@@ -52,12 +52,19 @@ export function mixedNote(form: Form): string {
 }
 
 /**
- * How many lines of the file a save of `after` changes, counted on the file as found and as it would be written: a
- * line whose ending only is made the file's own counts too. Nothing, while the text is what was read.
+ * How many lines of the file a save of `after` changes: those that differ, and outside them each line whose ending
+ * only is made the file's own. Nothing, while the text is what was read.
  */
 export function linesSaved(read: Read, after: string): number {
-  if (read.text === after) return 0;
-  return linesChanged(read.found, writeText(after, { ...read.form, bom: false }));
+  const { count, start, end } = changedSpan(read.text, after);
+  if (!count || !read.form.mixed) return count;
+  const found = read.found.split("\n");
+  let endings = 0;
+  for (let i = 0; i < found.length - 1; i++) {
+    if (i >= start && i < found.length - end) continue;
+    if ((found[i] ?? "").endsWith("\r") !== read.form.crlf) endings++;
+  }
+  return count + endings;
 }
 
 /** The bytes to save for the editor's text, written the way the file was found. */
@@ -71,12 +78,17 @@ export function writeText(text: string, form: Form): string {
  * the start and at the end is not counted. Zero when they are the same.
  */
 export function linesChanged(before: string, after: string): number {
-  if (before === after) return 0;
+  return changedSpan(before, after).count;
+}
+
+/** The lines that differ between two texts: how many, how many are the same at the start, and at the end. */
+function changedSpan(before: string, after: string): { count: number; start: number; end: number } {
+  if (before === after) return { count: 0, start: 0, end: 0 };
   const a = before.split("\n");
   const b = after.split("\n");
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let end = 0;
   while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
-  return Math.max(a.length - start - end, b.length - start - end, 1);
+  return { count: Math.max(a.length - start - end, b.length - start - end, 1), start, end };
 }
