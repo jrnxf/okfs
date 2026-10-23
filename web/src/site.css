@@ -12,10 +12,12 @@
   --serif: "Fraunces", Georgia, serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
   --paper: #f3ecdc; --paper-2: #eae0ca; --ink: #191918; --ink-2: #5d5547; --rule: #191918; --spot: #e8501c; --spot-ink: #a8360d; --on-spot: #191918;
   --beige: #ddd3bb; --beige-2: #c9bc9f; --beige-3: #b3a585; --glass: #10130f;
+  --win: color-mix(in srgb, #3d8a3a 17%, var(--paper));
 }
 [data-theme="dark"] {
   --paper: #1a1815; --paper-2: #23201b; --ink: #ede6d6; --ink-2: #aaa192; --rule: #ede6d6; --spot: #ff6a36; --spot-ink: #ff6a36;
   --beige: #cfc4aa; --beige-2: #b6a98b; --beige-3: #9b8e71; --glass: #050605;
+  --win: color-mix(in srgb, #5fb85a 20%, var(--paper));
 }
 
 /* The page's colors and faces, by name: a scheme switch changes the variables, and every utility follows. */
@@ -34,6 +36,7 @@
   --color-on-spot: var(--on-spot);
   --color-beige: var(--beige);
   --color-glass: var(--glass);
+  --color-win: var(--win);
   --font-serif: var(--serif);
   --font-mono: var(--mono);
 }
