@@ -267,3 +267,46 @@ test("u and n add to the folder on screen only while adding is on, and never ove
     config.upload = false;
   }
 });
+
+test("the editor opens on a text file only while editing is on, and leaving unsaved changes asks first", async () => {
+  const { config } = await import("./config");
+  const store = showing("notes.md", "photo.jpg", "sub/");
+  const [notes, photo, sub] = store.s.entries;
+  const press = (key: string): Press => ({ key, shift: false, chord: false, typing: false, pressing: false });
+  expect(store.editable(notes ?? null)).toBe(false);
+  config.edit = true;
+  try {
+    expect([notes, photo, sub].map((entry) => store.editable(entry ?? null))).toEqual([true, false, false]);
+    keys.keyFor(store, host, press("e"))?.();
+    expect(store.s.editing?.path).toBe("notes.md");
+    expect(store.s.open?.path).toBe("notes.md");
+    // While a file is edited the list's keys do nothing, except Esc, which leaves.
+    expect(keys.keyFor(store, host, press("j"))).toBeUndefined();
+
+    let unsaved = true;
+    const stop = store.watchUnsaved(() => unsaved);
+    let left = false;
+    store.leave(() => {
+      left = true;
+    });
+    expect(left).toBe(false);
+    expect(store.s.leaving).not.toBeNull();
+    store.leaveAnyway(false);
+    expect([left, store.s.editing?.path]).toEqual([false, "notes.md"]);
+    store.leave(() => {
+      left = true;
+    });
+    store.leaveAnyway(true);
+    expect([left, store.s.editing]).toEqual([true, null]);
+
+    // With nothing unsaved it leaves at once.
+    store.edit(notes ?? null);
+    unsaved = false;
+    keys.keyFor(store, host, press("Escape"))?.();
+    expect(store.s.editing).toBeNull();
+    expect(store.s.leaving).toBeNull();
+    stop();
+  } finally {
+    config.edit = false;
+  }
+});

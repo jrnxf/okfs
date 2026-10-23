@@ -24,6 +24,7 @@ import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
 import { prefs } from "./prefs";
 import { NoAnswer } from "./reach";
+import { MAX_EDIT } from "./text";
 import { columnsUrl, forgetAnswers, preload } from "./preview";
 import { COLUMN_ROWS } from "./slots";
 
@@ -143,6 +144,10 @@ export interface State {
   doomed: Doomed | null;
   /** What the dialog that names a new file or folder makes, and in which folder, while it is up. */
   naming: Naming | null;
+  /** The file the editor has in place of its preview, while it is open. It is the open file. */
+  editing: Entry | null;
+  /** What waits on the question whether to leave unsaved changes, while it is asked: see `leave`. */
+  leaving: (() => void) | null;
   /** Counts the times the list caught up with the disk by itself. The list does not scroll for those. */
   caught: number;
   /** A word on what was just done, such as a link copied, while it is shown. See `say`. */
@@ -150,6 +155,9 @@ export interface State {
 }
 
 type HistoryMode = "push" | "replace" | "none";
+
+/** The kinds of file the editor opens: text a person writes. */
+const EDITED = new Set<Kind>(["md", "html", "text", "code", "csv", "json"]);
 
 /** A new file or folder to name, in the folder `dir`. */
 export interface Naming {
@@ -249,6 +257,8 @@ export class Store {
     matches: null,
     doomed: null,
     naming: null,
+    editing: null,
+    leaving: null,
     caught: 0,
     notice: null,
   };
@@ -280,6 +290,8 @@ export class Store {
   /** The stamp of each file shown by its address, and the time and size the file had when it was loaded. See `stamp`. */
   private readonly stamps = new Map<string, { stamp: string; seen?: string }>();
   private stamped = 0;
+  /** True while the editor holds changes that are not saved. The editor says: see `watchUnsaved`. */
+  private unsaved: () => boolean = () => false;
   private noticed: ReturnType<typeof setTimeout> | undefined;
 
   subscribe(listener: () => void): () => void {
@@ -288,6 +300,8 @@ export class Store {
   }
 
   private emit(): void {
+    // The editor goes with its file: one that is no longer open is no longer edited.
+    if (this.s.editing && this.s.open?.path !== this.s.editing.path) this.s.editing = null;
     // A move of the cursor starts the columns of the folder it lands on afresh, even one the pointer picked in before.
     if (this.picks !== NO_PICKS && this.picks.root !== this.columnsRoot()) this.picks = NO_PICKS;
     this.forgetLeft();
@@ -771,6 +785,12 @@ export class Store {
   /** Follows the address bar after back or forward. */
   private route(): Promise<void> {
     const { s } = this;
+    // The address moved away from a file with unsaved changes: it is put back while the question is asked.
+    if (s.editing && this.unsaved()) {
+      history.pushState(history.state, "", urls.view(s.editing.path, false));
+      this.leave(() => history.back());
+      return Promise.resolve();
+    }
     const { path, dir } = parseLocation();
     const find = findOf(location.search);
     if (find !== null && dir) return this.showMatches(find, path);
@@ -835,6 +855,7 @@ export class Store {
   close(): void {
     const { s } = this;
     if (!s.open) return;
+    if (s.editing) return this.leave(() => this.close());
     // Opened from the list in this visit: going back is the same as closing, and keeps history short.
     if (mark().opened) {
       history.back();
@@ -1142,6 +1163,68 @@ export class Store {
     const { s } = this;
     if (parentOf(path) !== s.path) return;
     await this.showDir(s.path, { select: nameOf(path), listing: true, history: "none" });
+  }
+
+  /** True for a file the editor can open: text of a kind it knows, no larger than it opens, while changing files is on. */
+  editable(entry: Entry | null): entry is Entry {
+    if (!config.edit || !entry || entry.dir || entry.size > MAX_EDIT) return false;
+    return EDITED.has(entry.kind) || entry.ext === "svg" || entry.ext === "";
+  }
+
+  /** Opens the editor on a file, the open one or the one under the cursor unless one is given, at the full width. */
+  edit(entry: Entry | null = this.s.open ?? this.cur()): void {
+    const { s } = this;
+    if (!this.editable(entry) || s.finding) return;
+    if (s.open?.path !== entry.path) {
+      const listed = s.entries.find((one) => one.path === entry.path);
+      if (!listed) return;
+      this.openEntry(listed, "push");
+    }
+    s.editing = s.open;
+    this.emit();
+  }
+
+  /** Puts the preview back in place of the editor. Whatever it held that was not saved is let go. */
+  stopEdit(): void {
+    this.s.editing = null;
+    this.s.leaving = null;
+    this.emit();
+  }
+
+  /** The editor tells how to learn whether it holds unsaved changes. */
+  watchUnsaved(unsaved: () => boolean): () => void {
+    this.unsaved = unsaved;
+    return () => {
+      if (this.unsaved === unsaved) this.unsaved = () => false;
+    };
+  }
+
+  /**
+   * Does `then`, which leaves the editor, at once when nothing in it is unsaved. Otherwise it asks first, and `then`
+   * waits on the answer: see `leaveAnyway`.
+   */
+  leave(then: () => void): void {
+    const { s } = this;
+    if (!s.editing || !this.unsaved()) {
+      s.editing = null;
+      then();
+      this.emit();
+      return;
+    }
+    s.leaving = then;
+    this.emit();
+  }
+
+  /** The answer to the question whether to leave unsaved changes: leave and lose them, or stay in the editor. */
+  leaveAnyway(go: boolean): void {
+    const { s } = this;
+    const then = s.leaving;
+    s.leaving = null;
+    if (go && then) {
+      s.editing = null;
+      then();
+    }
+    this.emit();
   }
 
   /** The folder being shown, as something to delete. The served folder itself is never offered. */

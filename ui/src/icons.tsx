@@ -31,6 +31,7 @@ const LINE: Record<string, string> = {
   download: '<path d="M8 2.25v8M4.75 7.25L8 10.5l3.25-3.25M2.75 13.25h10.5"/>',
   upload: '<path d="M8 10.5v-8M4.75 5.5L8 2.25l3.25 3.25M2.75 13.25h10.5"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
+  pen: '<path d="M10.25 2.75l3 3-7.5 7.5H2.75v-3z"/><path d="M8.75 4.25l3 3"/>',
   swatch:
     '<circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5"/><path d="M8 2.25a5.75 5.75 0 010 11.5z" fill="currentColor"/>',
   expand: '<path d="M9.5 2.75h3.75V6.5M6.5 13.25H2.75V9.5M13.25 2.75L9 7M2.75 13.25L7 9"/>',

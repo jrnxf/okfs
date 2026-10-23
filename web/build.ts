@@ -31,6 +31,18 @@ const virtualAddress: BunPlugin = {
   },
 };
 
+// The demo is read only, so it never opens the editor: CodeMirror, a chunk of its own in okfs, stays out of the page.
+const noEditor: BunPlugin = {
+  name: "no-editor",
+  setup(build) {
+    build.onResolve({ filter: /^\.\/cm$/ }, () => ({ path: "cm", namespace: "no-editor" }));
+    build.onLoad({ filter: /.*/, namespace: "no-editor" }, () => ({
+      contents: 'export function mount() { throw new Error("the demo does not edit files"); }',
+      loader: "js",
+    }));
+  },
+};
+
 async function bundle(entry: string, plugins: BunPlugin[] = [], format: "iife" | "esm" = "iife"): Promise<string> {
   const result = await Bun.build({
     entrypoints: [join(web, entry)],
@@ -49,7 +61,7 @@ async function bundle(entry: string, plugins: BunPlugin[] = [], format: "iife" |
 
 const frameBoot = await bundle("src/demo-boot.ts", [virtualAddress]);
 // A module: it waits, at its top level, for the page around the frame to hand over the files (wait-for-host.ts).
-const frameMain = await bundle("src/demo-main.tsx", [virtualAddress], "esm");
+const frameMain = await bundle("src/demo-main.tsx", [virtualAddress, noEditor], "esm");
 const worker = await bundle("src/worker.js");
 const pictures = await bundle("src/pictures-worker.js");
 const landing = await bundle("src/landing.js");

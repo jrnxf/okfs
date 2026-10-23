@@ -44,6 +44,8 @@ export function pressOf(event: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey
 /** What a press does on the list or on an open file, or nothing when the press is not the list's to take. */
 export function keyFor(store: Store, host: KeyHost, press: Press): (() => void) | undefined {
   if (press.typing || press.chord) return undefined;
+  // While a file is edited only Esc is the list's, and it leaves the editor: any other key would leave its file.
+  if (store.s.editing) return press.key === "Escape" ? () => store.leave(() => undefined) : undefined;
   if (press.pressing && (press.key === " " || press.key === "Enter")) return undefined;
   if (press.shift && press.key === "D") return () => store.askDelete();
   return listKeys(store, host)[press.key];
@@ -94,11 +96,15 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
   };
 }
 
-/** The keys that add to the folder on screen, while adding is on: upload into it, and a new file in it. */
+/**
+ * The keys that change what is there: edit the text file, while changing files is on, and upload into the folder on
+ * screen and make a new file in it, while adding is on.
+ */
 function adding(store: Store): Record<string, () => void> {
   const dir = store.addsTo();
-  if (dir === null || store.s.open) return {};
-  return { u: () => pick(dir), n: () => store.setNaming("file") };
+  const edits: Record<string, () => void> = store.editable(store.s.open ?? store.cur()) ? { e: () => store.edit() } : {};
+  if (dir === null || store.s.open) return edits;
+  return { ...edits, u: () => pick(dir), n: () => store.setNaming("file") };
 }
 
 /** The keys on the matches: as on a folder, except that the ways out of the folder go back to it, and `s` sorts the matches. */

@@ -39,6 +39,10 @@ export const nameWeight = (dir: boolean): string => (dir ? "font-medium" : "font
 export const BAR =
   "box-content flex h-[calc(30px*var(--density))] min-w-0 flex-none items-center gap-2.5 border-b border-b-line pr-[calc(var(--pad)*0.5)] pl-[calc(var(--pad)*1.25)] phone:relative phone:h-[calc(46px*var(--density))]";
 
+/** The name in a pane's bar, and what is known of it, which gives up its room first. */
+export const BAR_NAME = "min-w-0 flex-[0_1_auto] truncate font-strong phone:flex-1";
+export const BAR_FACTS = "num min-w-0 flex-1 truncate text-xs text-muted phone:hidden";
+
 /** A button in a pane's bar. */
 export const BAR_BTN = "h-[calc(24px*var(--density))] px-1.5 phone:h-[34px] phone:px-2.25";
 
