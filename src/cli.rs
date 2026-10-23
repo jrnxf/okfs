@@ -31,12 +31,15 @@ Examples:
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
   okfs --theme ./mine.css         start in your own theme
   okfs theme check ./mine.css     check a theme file against the contract
+  okfs --allow-upload             let visitors add files and folders
+  okfs --allow-edit               let visitors change text files
   okfs --allow-delete             let visitors delete files and folders
   okfs --rescan 6h                read the whole tree again every 6 hours instead of watching it
   okfs completions zsh            print the completions for a shell
 
-Everything is read only unless you pass --allow-delete. There is no upload and no editing.
-Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.";
+Everything is read only unless you pass --allow-upload, --allow-edit or --allow-delete.
+Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.
+With any of the three, the key is asked for on loopback too.";
 
 /// A web file browser. Run it in a folder and flip through every file inside.
 #[derive(Parser)]
@@ -98,9 +101,23 @@ struct Serve {
     #[arg(long, value_name = "NAME")]
     allow_host: Vec<String>,
 
+    /// Let anyone who can reach the address add files and folders. A file never replaces one that is
+    /// there. Off by default
+    #[arg(long, help_heading = "Writes")]
+    allow_upload: bool,
+
+    /// Let anyone who can reach the address change the files that are there: edit text files, and
+    /// replace a file with an upload of the same name. Off by default
+    #[arg(long, help_heading = "Writes")]
+    allow_edit: bool,
+
     /// Let anyone who can reach the address delete files and folders. Off by default
-    #[arg(long)]
+    #[arg(long, help_heading = "Writes")]
     allow_delete: bool,
+
+    /// The largest file an upload or a save may be: --max-upload 4G. No limit without it
+    #[arg(long, value_name = "SIZE", value_parser = byte_size, help_heading = "Writes")]
+    max_upload: Option<u64>,
 
     /// Let in anyone who reaches an address beyond loopback, with no key in the link. For a proxy in
     /// front that signs people in itself
@@ -216,6 +233,24 @@ fn address(text: &str) -> Result<IpAddr, String> {
         .map_err(|_| "not an IP address such as 127.0.0.1 or 0.0.0.0, or localhost".to_owned())
 }
 
+/// A size in bytes, with an optional unit: `500K`, `20M`, `4G` or `1T`, each 1024 times the last.
+/// `KB`, `KiB` and the like mean the same, in any case.
+fn byte_size(text: &str) -> Result<u64, String> {
+    let refused = || format!("{text} is not a size such as 500M or 4G");
+    let digits = text.trim().trim_end_matches(|c: char| !c.is_ascii_digit());
+    let unit = text.trim()[digits.len()..].to_ascii_lowercase();
+    let number: u64 = digits.parse().map_err(|_| refused())?;
+    let power = match unit.trim_end_matches("ib").trim_end_matches('b') {
+        "" => 0,
+        "k" => 1,
+        "m" => 2,
+        "g" => 3,
+        "t" => 4,
+        _ => return Err(refused()),
+    };
+    number.checked_mul(1024u64.pow(power)).ok_or_else(refused)
+}
+
 /// The port okfs listens on when none is given.
 const PORT: u16 = 8080;
 /// Ports tried after it when it is busy and none was given, at most.
@@ -267,6 +302,18 @@ async fn stopped() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+/// What a visitor can do, in words: `read`, `read and delete`, `read, upload and edit`.
+fn abilities(upload: bool, edit: bool, delete: bool) -> String {
+    let can: Vec<&str> = [(true, "read"), (upload, "upload"), (edit, "edit"), (delete, "delete")]
+        .into_iter()
+        .filter_map(|(on, word)| on.then_some(word))
+        .collect();
+    match can.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => "read".to_owned(),
+    }
+}
+
 /// Whether to open the browser: not when asked not to, not when output goes anywhere but a
 /// terminal (a service, a pipe), and not over SSH, where it would open on the far machine.
 fn should_open(no_open: bool, terminal: bool, ssh: bool) -> bool {
@@ -304,8 +351,10 @@ fn serve(args: Serve) -> Result<(), String> {
         return Err(format!("--header {} is not a file", header.display()));
     }
 
-    // Beyond loopback, anyone on the network could otherwise read the folder.
-    let key = if args.key || (!args.no_key && !args.bind.is_loopback()) {
+    // Beyond loopback, anyone on the network could otherwise read the folder. On loopback, any other
+    // account on the machine could otherwise change it.
+    let writes = args.allow_upload || args.allow_edit || args.allow_delete;
+    let key = if args.key || (!args.no_key && (!args.bind.is_loopback() || writes)) {
         Some(Key::new()?)
     } else {
         None
@@ -327,6 +376,9 @@ fn serve(args: Serve) -> Result<(), String> {
         allow_hosts: args.allow_host,
         check_host: true,
         allow_delete: args.allow_delete,
+        allow_upload: args.allow_upload,
+        allow_edit: args.allow_edit,
+        max_upload: args.max_upload,
         cache: dirs::cache_dir().map(|dir| dir.join("okfs").join("thumbs")),
         drawer: this_program(),
         pdf_limit: crate::pdf::LIMIT,
@@ -349,10 +401,13 @@ fn serve(args: Serve) -> Result<(), String> {
             .local_addr()
             .map_err(|error| format!("cannot listen on {}: {error}", args.bind))?;
         println!("okfs {}", env!("CARGO_PKG_VERSION"));
-        let writes = if args.allow_delete {
-            "visitors can delete"
-        } else {
-            "read only"
+        let can = abilities(args.allow_upload, args.allow_edit, args.allow_delete);
+        let writes = match can.strip_prefix("read") {
+            Some("") => "read only".to_owned(),
+            _ => format!(
+                "visitors can {}",
+                can.trim_start_matches("read, ").trim_start_matches("read and ")
+            ),
         };
         println!("  serving  {} ({writes})", root.dir().display());
         if let Follow::Rescan(every) = follow {
@@ -367,7 +422,6 @@ fn serve(args: Serve) -> Result<(), String> {
             let label = if index == 0 { "at" } else { "" };
             println!("  {label:<8} {}", lan::link(*ip, address.port(), key));
         }
-        let can = if args.allow_delete { "read and delete" } else { "read" };
         if key.is_some() {
             println!("  key      on: anyone with one of these links can {can} every file shown");
         } else if !args.bind.is_loopback() {
@@ -414,7 +468,28 @@ fn serve(args: Serve) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::should_open;
+    use super::{abilities, byte_size, should_open};
+
+    #[test]
+    fn a_size_reads_with_or_without_its_unit() {
+        assert_eq!(byte_size("512"), Ok(512));
+        assert_eq!(byte_size("500K"), Ok(500 * 1024));
+        assert_eq!(byte_size("20mb"), Ok(20 << 20));
+        assert_eq!(byte_size("4G"), Ok(4 << 30));
+        assert_eq!(byte_size("4GiB"), Ok(4 << 30));
+        assert_eq!(byte_size("1t"), Ok(1 << 40));
+        for wrong in ["", "G", "4X", "-1", "1.5G", "4 GB", "99999999999T"] {
+            assert!(byte_size(wrong).is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn what_a_visitor_can_do_reads_as_a_list() {
+        assert_eq!(abilities(false, false, false), "read");
+        assert_eq!(abilities(false, false, true), "read and delete");
+        assert_eq!(abilities(true, true, false), "read, upload and edit");
+        assert_eq!(abilities(true, true, true), "read, upload, edit and delete");
+    }
 
     #[test]
     fn opens_only_in_a_local_terminal_unless_told_not_to() {

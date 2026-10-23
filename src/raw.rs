@@ -1,5 +1,6 @@
 //! The file itself, with ranges and revalidation.
 
+use std::fs::Metadata;
 use std::io::SeekFrom;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -89,12 +90,28 @@ fn etag_matches(list: &str, etag: &str) -> bool {
         .any(|tag| tag == "*" || tag == etag)
 }
 
+/// The tag a file is sent with, from its time and its size. A write that replaces a file has to
+/// name the tag of the file it read.
+pub fn etag(meta: &Metadata) -> String {
+    let stamp = meta
+        .modified()
+        .unwrap_or(UNIX_EPOCH)
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("\"{:x}-{:x}\"", stamp.as_nanos(), meta.len())
+}
+
+/// True when a tag a request names, `If-Match` style, is the file's: weak and strong are alike.
+pub fn same_etag(asked: &str, etag: &str) -> bool {
+    asked.trim().trim_start_matches("W/") == etag
+}
+
 /// Answers a request for a file that has already been resolved inside the served folder.
 pub async fn serve(found: Resolved, request: &HeaderMap) -> std::io::Result<Response<Body>> {
     let len = found.meta.len();
     let modified = found.meta.modified().unwrap_or(UNIX_EPOCH);
     let stamp = modified.duration_since(UNIX_EPOCH).unwrap_or_default();
-    let etag = format!("\"{:x}-{len:x}\"", stamp.as_nanos());
+    let etag = etag(&found.meta);
     // HTTP dates carry whole seconds.
     let modified = UNIX_EPOCH + std::time::Duration::from_secs(stamp.as_secs());
     let last_modified = httpdate::fmt_http_date(modified);

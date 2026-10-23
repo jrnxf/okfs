@@ -721,6 +721,19 @@ impl Index {
         }
     }
 
+    /// Folds a file that okfs itself just wrote into the index, its name, time and size, and tells
+    /// the pages, with the file named as written. The watcher does this by itself a moment later,
+    /// and not at all under `--rescan`; a write calls it so every page sees the file at once.
+    pub fn wrote(&self, file: &Path) {
+        let Some(dir) = self.dir_of(file) else {
+            return;
+        };
+        self.refresh(&dir);
+        self.restamp(HashSet::from([file.to_owned()]));
+        let files = self.shown_file(file).into_iter().collect();
+        self.feed.tell(Change::Folder { dir, files });
+    }
+
     /// Reads one folder again and folds what changed into the index. True when the
     /// folder does not list what it listed before.
     fn refresh(&self, dir: &str) -> bool {
