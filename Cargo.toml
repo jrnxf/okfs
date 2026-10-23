@@ -2,7 +2,7 @@
 name = "okfs"
 version = "0.1.0-dev.1"
 edition = "2024"
-description = "A web file browser. Run it in a folder and flip through every file inside."
+description = "An open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search."
 readme = "README.md"
 license = "MIT"
 keywords = ["file-server", "file-browser", "http", "preview"]
