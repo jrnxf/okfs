@@ -1,6 +1,7 @@
 // The keys that work on the list and on an open file. The palette, the dialogs and the filter take their own.
 
 import type { Store } from "./store";
+import { pick } from "./upload";
 
 /** What the keys need from the page around the list. */
 export interface KeyHost {
@@ -89,7 +90,15 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     s: () => store.setSort(),
     t: host.flipScheme,
     "?": () => store.setHelp(true),
+    ...adding(store),
   };
+}
+
+/** The keys that add to the folder on screen, while adding is on: upload into it, and a new file in it. */
+function adding(store: Store): Record<string, () => void> {
+  const dir = store.addsTo();
+  if (dir === null || store.s.open) return {};
+  return { u: () => pick(dir), n: () => store.setNaming("file") };
 }
 
 /** The keys on the matches: as on a folder, except that the ways out of the folder go back to it, and `s` sorts the matches. */

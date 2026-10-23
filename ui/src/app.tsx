@@ -10,7 +10,7 @@ import { keyFor, pressOf } from "./keys";
 import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInfo } from "./matches";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
-import { AGE, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
+import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
 import { Prose, lookAhead, pagesAhead } from "./preview";
 import { NEEDS_KEY, NOT_ANSWERING, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
@@ -19,7 +19,9 @@ import { useSlide } from "./slide";
 import { slots } from "./slots";
 import { type Entry, SORT_LABEL, type SortKey, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
+import { drop, pick, uploads } from "./upload";
 import { type Cell, VList } from "./vlist";
+import { ClashDialog, NameDialog, Tray } from "./write-ui";
 
 /** At this width and below, the list takes the whole screen and a file opens as a sheet over it. */
 const PHONE = 760;
@@ -38,6 +40,25 @@ function useTick(subscribe: (listener: () => void) => () => void): void {
 }
 
 const subscribeStore = (listener: () => void) => store.subscribe(listener);
+const subscribeUploads = (listener: () => void) => uploads.subscribe(listener);
+
+/** True for a drag that carries files from outside the page, as opposed to text or a link. */
+const carriesFiles = (event: DragEvent): boolean => event.dataTransfer?.types.includes("Files") === true;
+
+/**
+ * The folder a drag of files over `target` would upload into: the folder row under it, in the list or in a column,
+ * or else the column it is over, or else the folder on screen. `null` when nothing can be added there.
+ */
+function dropTarget(target: EventTarget | null): string | null {
+  const here = store.addsTo();
+  if (here === null) return null;
+  const el = target instanceof Element ? target : null;
+  const row = el?.closest<HTMLElement>("[data-drop]");
+  if (row?.dataset.drop !== undefined) return row.dataset.drop;
+  const column = el?.closest<HTMLElement>("[data-level][data-pane]");
+  return column?.dataset.pane ?? here;
+}
+
 /** The slots are cut from the window's width: see `slotsFor`. */
 const subscribeResize = (listener: () => void) => {
   addEventListener("resize", listener);
@@ -188,6 +209,7 @@ function Empty() {
 
 export function App() {
   useTick(subscribeStore);
+  useTick(subscribeUploads);
   useTick(onThemeChange);
   useTick(subscribeResize);
   const { s } = store;
@@ -226,6 +248,7 @@ export function App() {
   const filterShown = !finding && (filtering || s.filter !== "");
 
   const here = store.here();
+  const adds = store.addsTo();
   const flippable = store.flippable();
   const wrappable = store.wrappable();
 
@@ -269,8 +292,8 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       const { s } = store;
       const { key } = event;
-      // The delete dialog takes every key while it is up.
-      if (s.doomed) return;
+      // A dialog takes every key while it is up.
+      if (s.doomed || s.naming || uploads.asking) return;
       if ((event.ctrlKey || event.metaKey) && key.toLowerCase() === "k") {
         event.preventDefault();
         store.setPalette(!s.palette);
@@ -303,6 +326,37 @@ export function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [focusFilter]);
+
+  // A file dropped anywhere else on the page would leave it for the file: it is uploaded where it is let go, or nowhere.
+  useEffect(() => {
+    if (!config.upload) return;
+    const hold = (event: DragEvent) => {
+      if (carriesFiles(event)) event.preventDefault();
+    };
+    document.addEventListener("dragover", hold);
+    document.addEventListener("drop", hold);
+    return () => {
+      document.removeEventListener("dragover", hold);
+      document.removeEventListener("drop", hold);
+    };
+  }, []);
+  const onDragOver = (event: DragEvent) => {
+    const target = carriesFiles(event) ? dropTarget(event.target) : null;
+    if (target === null || !event.dataTransfer) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    uploads.aim(target);
+  };
+  const onDragLeave = (event: DragEvent) => {
+    if (!(event.relatedTarget instanceof Node && main.current?.contains(event.relatedTarget))) uploads.aim(null);
+  };
+  const onDrop = (event: DragEvent) => {
+    const target = carriesFiles(event) ? dropTarget(event.target) : null;
+    uploads.aim(null);
+    if (target === null || !event.dataTransfer) return;
+    event.preventDefault();
+    drop(event.dataTransfer, target);
+  };
 
   // The pointer drives the cursor, at once, as long as no key has taken over. A pointer on its way to the preview
   // is let past the rows between: see `aim.ts`.
@@ -385,7 +439,16 @@ export function App() {
     const on = index === s.cursor;
     const style = { top: `${cell.top}px`, left: `${cell.left}px`, width: `${cell.width}px`, height: `${cell.height}px` };
     return (
-      <div class={`${ROW} ${ROW_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}`} role="option" aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style} key={index}>
+      <div
+        class={`${ROW} ${ROW_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}${entry.dir && uploads.target === entry.path ? ` ${DROP_ROW}` : ""}`}
+        role="option"
+        aria-selected={on}
+        data-i={index}
+        data-dir={entry.dir ? "" : undefined}
+        data-drop={entry.dir ? entry.path : undefined}
+        style={style}
+        key={index}
+      >
         <KindIcon kind={entry.kind} />
         <span class="min-w-0 truncate">
           <b class={nameWeight(entry.dir)}>{entry.name}</b>
@@ -426,7 +489,17 @@ export function App() {
             <span class="flex-1 text-left phone:hidden">Find anything</span>
             <kbd class="phone:hidden">{MOD} K</kbd>
           </button>
-          {/* A phone has no pane beside the list to hold this, and a tap on a folder goes in. */}
+          {/* A phone has no folder bar above the list to hold these, and a tap on a folder goes in. */}
+          {adds !== null && (
+            <>
+              <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="Upload files here" onClick={() => pick(adds)}>
+                <Icon name="upload" />
+              </button>
+              <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="New file" onClick={() => store.setNaming("file")}>
+                <Icon name="plus" />
+              </button>
+            </>
+          )}
           {here && (
             <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="Delete this folder" onClick={() => store.askDelete(here)}>
               <Icon name="trash" />
@@ -452,12 +525,19 @@ export function App() {
           html={config.header}
         />
       )}
-      <div class="main relative grid min-h-0 grid-cols-[repeat(var(--slots,4),minmax(0,1fr))] overflow-clip viewing:grid-cols-[minmax(0,1fr)] phone:grid-cols-[minmax(0,1fr)]" ref={main} style={`--slots: ${cut}`}>
+      <div
+        class="main relative grid min-h-0 grid-cols-[repeat(var(--slots,4),minmax(0,1fr))] overflow-clip viewing:grid-cols-[minmax(0,1fr)] phone:grid-cols-[minmax(0,1fr)]"
+        ref={main}
+        style={`--slots: ${cut}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <section
           class={`left flex min-h-0 min-w-0 flex-col ghost:pointer-events-none ghost:absolute ghost:z-1 ghost:bg-bg viewing:not-ghost:hidden ${
             // The matches take two slots, or all of them when the window has two. A phone draws each in two lines.
             finding ? `phone:[--row-h:calc(52px*var(--density))] ${wide ? "col-[span_2] border-r border-r-line phone:border-r-0" : "col-span-full"}` : "border-r border-r-line phone:border-r-0"
-          }`}
+          }${uploads.target !== null && uploads.target === s.path ? ` ${DROP_PANE}` : ""}`}
           data-pane={s.path}
           onPointerMove={onListMove}
           onPointerLeave={onListLeave}
@@ -474,6 +554,7 @@ export function App() {
               count={s.status === "ready" ? s.all.length : undefined}
               mtime={s.status === "ready" ? s.mtime : undefined}
               doomed={here}
+              adds={adds !== null}
               missing={s.status === "missing"}
             />
           )}
@@ -597,6 +678,9 @@ export function App() {
       {s.palette && <Palette />}
       {s.help && <Help />}
       {s.doomed && <ConfirmDelete key={s.doomed.path} doomed={s.doomed} />}
+      <Tray />
+      {uploads.asking && <ClashDialog />}
+      {s.naming && <NameDialog kind={s.naming.kind} dir={s.naming.dir} />}
       {menu && <ThemeMenu anchor={menu} onClose={closeMenu} />}
     </>
   );

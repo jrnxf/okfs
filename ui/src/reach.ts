@@ -77,14 +77,25 @@ export async function call(url: string, init: RequestInit = {}): Promise<Respons
     setDown(NOT_ANSWERING);
     throw new NoAnswer();
   }
-  if (GATEWAY.has(response.status)) {
+  const refused = heard(response.status, () => response.headers.get("www-authenticate"));
+  if (refused) throw refused;
+  return response;
+}
+
+/**
+ * What an answer says of whether okfs can be reached, by its status and, for a 401, its `WWW-Authenticate`: a `NoAnswer` when a
+ * proxy answered for it or it refused the key, and `null` when okfs itself answered. For a request made some other
+ * way than `call`, as an upload is.
+ */
+export function heard(status: number, scheme: () => string | null): NoAnswer | null {
+  if (GATEWAY.has(status)) {
     setDown(NOT_ANSWERING);
-    throw new NoAnswer();
+    return new NoAnswer();
   }
-  if (response.status === 401 && response.headers.get("www-authenticate") === KEY_SCHEME) {
+  if (status === 401 && scheme() === KEY_SCHEME) {
     setDown(NEEDS_KEY);
-    throw new NoAnswer(NEEDS_KEY);
+    return new NoAnswer(NEEDS_KEY);
   }
   setDown(null);
-  return response;
+  return null;
 }

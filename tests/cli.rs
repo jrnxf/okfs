@@ -213,6 +213,53 @@ fn on_loopback_no_key_is_asked_for_unless_told_to() {
 }
 
 #[test]
+fn on_loopback_any_write_asks_for_the_key_unless_told_not_to() {
+    for flags in [
+        &["--allow-upload"][..],
+        &["--allow-edit"],
+        &["--allow-delete"],
+        &["--allow-upload", "--allow-edit", "--max-upload", "4G"],
+    ] {
+        let (_tmp, okfs) = site(flags);
+        let key = okfs
+            .key
+            .clone()
+            .unwrap_or_else(|| panic!("no key with {flags:?}: {}", okfs.said));
+        assert!(okfs.said.contains("  key      on:"), "{}", okfs.said);
+        assert_eq!(
+            ask(okfs.port, "localhost", "/raw/docs/note.txt", "").0,
+            401,
+            "{flags:?}"
+        );
+        assert_eq!(
+            ask(okfs.port, "localhost", &format!("/raw/docs/note.txt?key={key}"), "").0,
+            200,
+            "{flags:?}"
+        );
+    }
+    let (_tmp, okfs) = site(&["--allow-upload", "--allow-edit", "--allow-delete"]);
+    assert!(
+        okfs.said.contains("(visitors can upload, edit and delete)"),
+        "{}",
+        okfs.said
+    );
+    assert!(
+        okfs.said.contains(
+            "  key      on: anyone with one of these links can read, upload, edit and delete every file shown"
+        ),
+        "{}",
+        okfs.said
+    );
+    // A proxy on the same machine that signs people in itself still turns it off.
+    let (_tmp, okfs) = site(&["--allow-upload", "--no-key"]);
+    assert_eq!(okfs.key, None);
+
+    let (ended, error) = run(&["--no-open", "--max-upload", "lots", "."]);
+    assert!(!ended.success());
+    assert!(error.contains("lots is not a size such as 500M or 4G"), "{error}");
+}
+
+#[test]
 fn with_no_key_anyone_who_reaches_the_address_gets_in_and_is_told_so() {
     let (_tmp, okfs) = site(&["--bind", "0.0.0.0", "--no-key"]);
     assert_eq!(okfs.key, None);
@@ -357,7 +404,7 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
         assert!(output.status.success(), "{shell}");
         let text = String::from_utf8_lossy(&output.stdout);
         assert!(
-            text.contains("okfs") && text.contains("allow-delete"),
+            text.contains("okfs") && text.contains("allow-delete") && text.contains("allow-upload"),
             "{shell}: {text}"
         );
     }
@@ -368,7 +415,10 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
     assert!(output.status.success());
     let page = String::from_utf8_lossy(&output.stdout);
     assert!(page.starts_with(".ie") || page.contains(".TH okfs 1"), "{page}");
-    assert!(page.contains("allow\\-delete"), "{page}");
+    assert!(
+        page.contains("allow\\-delete") && page.contains("allow\\-edit"),
+        "{page}"
+    );
 
     let (ended, error) = run(&["completions", "tcsh"]);
     assert!(!ended.success());
