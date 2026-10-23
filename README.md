@@ -384,7 +384,7 @@ There is no limit on size unless you give one: `--max-upload 4G`.
 
 ### Deleting
 
-okfs is read only until you start it with `--allow-delete`:
+okfs deletes nothing until you start it with `--allow-delete`:
 
 ```sh
 okfs --allow-delete
