@@ -624,11 +624,11 @@ fn with_a_certificate_okfs_serves_https_alone_with_the_key_and_the_host_check() 
     // Plain http gets no answer at all, so neither the key nor a file ever crosses in the clear.
     let mut plain = TcpStream::connect(("127.0.0.1", port)).unwrap();
     plain.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-    write!(
+    // okfs may drop the connection before the request is all written, which is a refusal too.
+    let _ = write!(
         plain,
         "GET /raw/docs/note.txt?key={key} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
-    )
-    .unwrap();
+    );
     let mut answer = Vec::new();
     let _ = plain.read_to_end(&mut answer);
     assert!(!answer.starts_with(b"HTTP/"), "{}", String::from_utf8_lossy(&answer));
