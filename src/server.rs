@@ -93,6 +93,8 @@ pub struct Options {
     /// A code that lets one browser in once in place of the key, for the browser okfs opens itself:
     /// see `key::Once`. Only with a key.
     pub once: Option<Arc<Once>>,
+    /// okfs serves https itself, from `--tls-cert` and `--tls-key`.
+    pub tls: bool,
 }
 
 impl Default for Options {
@@ -111,6 +113,7 @@ impl Default for Options {
             allow_delete: false,
             key: None,
             once: None,
+            tls: false,
         }
     }
 }
@@ -335,7 +338,7 @@ fn admit(app: &App, request: &Request) -> Option<Response> {
     if !by_address && !by_code && !key::cookies(headers, &cookie).any(|value| key.matches(value)) {
         return Some(needs_key(headers));
     }
-    let set = || key::set_cookie(&cookie, key, key::over_https(headers));
+    let set = || key::set_cookie(&cookie, key, app.options.tls || key::over_https(headers));
     // A code is traded for the cookie that holds the key, and for nothing else: it lets in no
     // request beyond the one that hands the cookie over.
     if by_code {

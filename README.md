@@ -91,7 +91,7 @@ okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the key
 
 okfs is for looking at a folder. Its previews, columns and search are made for flipping through many files quickly with the keyboard, and its defaults are safe: loopback only, read only, dotfiles hidden, a key beyond loopback.
 
-It does less than the tools that manage files, on purpose. It has no upload and no accounts, and it has no TLS of its own (see [Behind a proxy or a tunnel](#behind-a-proxy-or-a-tunnel)). For uploads, use dufs or copyparty. For a file manager with users, use File Browser Quantum. File Browser itself was archived in September 2026.
+It does less than the tools that manage files, on purpose. It has no upload and no accounts. For uploads, use dufs or copyparty. For a file manager with users, use File Browser Quantum. File Browser itself was archived in September 2026.
 
 | | okfs | `python -m http.server` | miniserve | dufs | copyparty |
 | --- | --- | --- | --- | --- | --- |
@@ -101,7 +101,7 @@ It does less than the tools that manage files, on purpose. It has no upload and 
 | Previews | images, video, audio, PDF, Markdown, code, CSV, JSON, zip, HTML | none | none | none | thumbnails, audio spectrograms |
 | Search of the whole tree | instant, in memory | none | none | yes | yes, indexed |
 | Live updates | yes | none | none | none | not checked |
-| TLS | through a proxy | since Python 3.14 | yes | yes | yes |
+| TLS | yes, optional | since Python 3.14 | yes | yes | yes |
 
 This is how each tool read on 2026-10-21, from its documentation. Check the project you are comparing before you rely on a cell.
 
@@ -151,6 +151,8 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `--key` | Ask for the key on a loopback address too, as behind a tunnel that anyone can reach. |
 | `--no-key` | Let in anyone who reaches an address beyond loopback, with no key. For a proxy that signs people in itself. See [Letting other machines in](#letting-other-machines-in). |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
+| `--tls-cert <FILE>` | Serve https with this certificate, in PEM. Needs `--tls-key`. See [HTTPS](#https). |
+| `--tls-key <FILE>` | The private key of the `--tls-cert` certificate, in PEM. Needs `--tls-cert`. |
 | `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
 | `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
@@ -242,13 +244,30 @@ A request without the key is refused. A browser that opens the link is given a c
 
 What the key does and does not do:
 
-- It stops anyone who can reach the address but does not have the link. It does not stop anyone who can watch the traffic. okfs speaks plain HTTP, so on open Wi-Fi, or on a network whose password others know, a program that captures packets reads the key and then every file. Treat the link as you would a password sent over plain HTTP. For anything beyond a network you trust, put a TLS proxy in front (see [Behind a proxy or a tunnel](#behind-a-proxy-or-a-tunnel)).
+- It stops anyone who can reach the address but does not have the link. It does not stop anyone who can watch the traffic. Without a certificate okfs speaks plain HTTP, so on open Wi-Fi, or on a network whose password others know, a program that captures packets reads the key and then every file. Treat such a link as you would a password sent over plain HTTP. For anything beyond a network you trust, serve [HTTPS](#https) or put a TLS proxy in front (see [Behind a proxy or a tunnel](#behind-a-proxy-or-a-tunnel)).
 - The cookie is `HttpOnly` and `SameSite=Strict`, which keeps scripts and other sites' pages from using it. A browser still sends a cookie to every port of the same host. Any other web service on the same machine, on any port, therefore receives the key from a browser that has opened okfs. Do not run okfs on a machine that also runs listeners you do not trust.
 - On a machine with other users, another account can read the command that opens the browser. So the browser okfs opens itself gets a one-time `?once=` code in place of the key. The first request that brings the code trades it for the cookie, and a code no browser has used dies after 60 seconds.
 - The key is not a login. Anyone who has the link has all of it: with `--allow-delete`, that includes deleting.
 - An HTML page from the served folder cannot load its own stylesheet, scripts or images while the key is on. It is sandboxed in an origin of its own, a browser sends it no cookie, and the key is not put in its address on purpose, so its requests for the folder's other files are refused. The page shows with no styling, and its links to other files fail. Without a key, the same page loads them.
 
 `--no-key` turns the key off. Use it only when something in front of okfs already decides who gets in, such as a proxy that signs people in, or on a network where everyone may read the folder. `--key` asks for the key on a loopback address too, for a tunnel that exposes it to anyone.
+
+### HTTPS
+
+Give okfs a certificate and its private key, both PEM files, and it serves https instead of http:
+
+```sh
+okfs --bind 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
+```
+
+The two flags go together: one without the other is refused. Every address okfs prints starts with `https://`, and so do the `--qr` code and the link the browser opens with. The key, the one-time code and the host check work as they do over http, and the key's cookie is marked `Secure`. The port answers https alone: a browser that asks it for plain http gets no answer, so the key never crosses in the clear.
+
+okfs does not make a certificate. Two ways to get one:
+
+- [mkcert](https://github.com/FiloSottile/mkcert) makes one for the addresses you name, signed by a certificate authority of its own: `mkcert 192.168.1.20 localhost 127.0.0.1`. The browsers on the machine that ran `mkcert -install` trust it. A phone or another computer trusts it once you install mkcert's root certificate on it (`mkcert -CAROOT` says where it is). Until then they warn about it.
+- A certificate for a name of your own, such as the one a reverse proxy or Let's Encrypt keeps for `files.example.com`. Point that name at the machine and pass `--allow-host files.example.com` too, as okfs answers only to [names it is given](#behind-a-proxy-or-a-tunnel).
+
+okfs reads the files once, when it starts. Restart it after the certificate is renewed.
 
 ### Behind a proxy or a tunnel
 
@@ -262,7 +281,7 @@ A name of your own on the network, such as `my-laptop.local`, needs `--allow-hos
 
 The host check is not a password. A program other than a browser can send any name it likes, so okfs behind a proxy that asks people to sign in is still open to anything that can reach its own address directly. Keep that address where only the proxy can reach it: listen on loopback with the proxy on the same machine, or let a firewall through to okfs's port from the proxy alone. On loopback okfs asks for no key. If okfs has to listen beyond loopback behind a proxy that signs people in, pass `--no-key`, or the proxy's users are asked for a key they do not have.
 
-okfs has no TLS of its own. A proxy that ends TLS gives you https, and okfs then marks its key cookie `Secure` when the proxy sends `X-Forwarded-Proto: https`. A tunnel such as Cloudflare Tunnel or Tailscale Funnel does the same job without a proxy of your own: run okfs on loopback, name the tunnel's host with `--allow-host`, and add `--key` unless the tunnel signs people in.
+A proxy that ends TLS gives you https without `--tls-cert`, and okfs then marks its key cookie `Secure` when the proxy sends `X-Forwarded-Proto: https`. A tunnel such as Cloudflare Tunnel or Tailscale Funnel does the same job without a proxy of your own: run okfs on loopback, name the tunnel's host with `--allow-host`, and add `--key` unless the tunnel signs people in.
 
 okfs cannot live under a path such as `example.com/files/`. Every address it uses starts at `/`, and there is no base-path option. Give it a host name of its own, such as `files.example.com`.
 
@@ -470,7 +489,7 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 - A PDF is drawn in a process of its own, which is handed the open file and no path, and is ended after 5 seconds. A PDF that is broken, or made to break a reader, costs that one picture: its preview is then the browser's viewer alone. PDFs over 64 MB are not drawn.
 - Only dotfiles are withheld. A file that a `.gitignore` names is still listed, searched and served, as is every other file that is not a dotfile (see [A big folder](#a-big-folder): the ignore rules only decide what is searched and watched). A folder named in a `.gitignore` can be opened at its address. Put nothing in the served folder that you do not want a visitor to read, a `secrets.yml` listed in a `.gitignore` included, or move it out.
 - The page itself loads nothing from another site, but Markdown it renders can: an image in a README that points at a remote address is fetched by each visitor's browser from that address. A file in the folder can therefore make every visitor's browser contact a site of its choosing.
-- okfs has no accounts. On loopback, only programs on your machine can reach it. Beyond loopback, anyone with the key can read every file in the folder, and the key crosses plain HTTP (see [Letting other machines in](#letting-other-machines-in)). With `--no-key`, anyone who can reach the address can read every file.
+- okfs has no accounts. On loopback, only programs on your machine can reach it. Beyond loopback, anyone with the key can read every file in the folder, and without [HTTPS](#https) the key crosses plain HTTP (see [Letting other machines in](#letting-other-machines-in)). With `--no-key`, anyone who can reach the address can read every file.
 
 With `--allow-delete`:
 

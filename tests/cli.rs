@@ -3,11 +3,15 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
+use tokio_rustls::rustls::crypto::ring;
+use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName};
+use tokio_rustls::rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 /// A running okfs, stopped when dropped.
 struct Running {
@@ -86,7 +90,16 @@ fn status(okfs: &Running, host: &str) -> u16 {
 /// What okfs answers `path` with, asked as curl does, over the loopback address with this Host
 /// and these further header lines.
 fn ask(port: u16, host: &str, path: &str, headers: &str) -> (u16, String) {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    ask_over(None, port, host, path, headers)
+}
+
+/// `ask`, over https when there is a certificate, trusting it alone.
+fn ask_over(cert: Option<&Cert>, port: u16, host: &str, path: &str, headers: &str) -> (u16, String) {
+    let tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut stream: Box<dyn ReadWrite> = match cert {
+        Some(cert) => Box::new(StreamOwned::new(cert.client(), tcp)),
+        None => Box::new(tcp),
+    };
     write!(
         stream,
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n{headers}Connection: close\r\n\r\n"
@@ -96,6 +109,56 @@ fn ask(port: u16, host: &str, path: &str, headers: &str) -> (u16, String) {
     stream.read_to_string(&mut answer).unwrap();
     let status = answer.split(' ').nth(1).unwrap().parse().unwrap();
     (status, answer)
+}
+
+trait ReadWrite: Read + Write {}
+impl<T: Read + Write> ReadWrite for T {}
+
+/// A certificate for 127.0.0.1 and localhost, made for one test, in the files okfs reads it from.
+struct Cert {
+    _dir: TempDir,
+    der: CertificateDer<'static>,
+    cert: PathBuf,
+    key: PathBuf,
+}
+
+impl Cert {
+    fn new() -> Self {
+        let made = rcgen::generate_simple_self_signed(["127.0.0.1".to_owned(), "localhost".to_owned()]).unwrap();
+        let dir = TempDir::new().unwrap();
+        let (cert, key) = (dir.path().join("cert.pem"), dir.path().join("key.pem"));
+        fs::write(&cert, made.cert.pem()).unwrap();
+        fs::write(&key, made.signing_key.serialize_pem()).unwrap();
+        Self {
+            _dir: dir,
+            der: made.cert.der().clone(),
+            cert,
+            key,
+        }
+    }
+
+    /// The flags that serve with it.
+    fn args(&self) -> [&str; 4] {
+        [
+            "--tls-cert",
+            self.cert.to_str().unwrap(),
+            "--tls-key",
+            self.key.to_str().unwrap(),
+        ]
+    }
+
+    /// A client's side of a connection to 127.0.0.1 that trusts this certificate and no other.
+    fn client(&self) -> ClientConnection {
+        let mut roots = RootCertStore::empty();
+        roots.add(self.der.clone()).unwrap();
+        let config = ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let name = ServerName::try_from("127.0.0.1").unwrap();
+        ClientConnection::new(Arc::new(config), name).unwrap()
+    }
 }
 
 #[test]
@@ -398,6 +461,18 @@ impl Drop for InTerminal {
 #[cfg(target_os = "linux")]
 #[test]
 fn the_browser_okfs_opens_gets_a_one_time_code_and_never_the_key() {
+    opens_the_browser_with_a_one_time_code(None);
+}
+
+/// And over https, the code it gets opens an https address.
+#[cfg(target_os = "linux")]
+#[test]
+fn with_tls_the_browser_okfs_opens_gets_a_one_time_code_over_https() {
+    opens_the_browser_with_a_one_time_code(Some(&Cert::new()));
+}
+
+#[cfg(target_os = "linux")]
+fn opens_the_browser_with_a_one_time_code(cert: Option<&Cert>) {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = TempDir::new().unwrap();
@@ -412,8 +487,11 @@ fn the_browser_okfs_opens_gets_a_one_time_code_and_never_the_key() {
     )
     .unwrap();
     fs::set_permissions(&browser, fs::Permissions::from_mode(0o755)).unwrap();
+    let tls = cert
+        .map(|cert| format!("'{}' ", cert.args().join("' '")))
+        .unwrap_or_default();
     let okfs = format!(
-        "'{}' --bind 127.0.0.1 --key --port 0 '{}'",
+        "'{}' --bind 127.0.0.1 --key --port 0 {tls}'{}'",
         env!("CARGO_BIN_EXE_okfs"),
         served.display()
     );
@@ -447,6 +525,8 @@ fn the_browser_okfs_opens_gets_a_one_time_code_and_never_the_key() {
         }
     };
     // The link printed for people is unchanged: it carries the key.
+    let scheme = if cert.is_some() { "https" } else { "http" };
+    assert!(link.starts_with(&format!("{scheme}://")), "{link}");
     let (at, key) = link.split_once("/?key=").expect("the printed link carries the key");
     let port: u16 = at.rsplit(':').next().unwrap().parse().unwrap();
 
@@ -467,23 +547,146 @@ fn the_browser_okfs_opens_gets_a_one_time_code_and_never_the_key() {
     );
     let code = started
         .trim()
-        .strip_prefix(&format!("http://127.0.0.1:{port}/?once="))
+        .strip_prefix(&format!("{scheme}://127.0.0.1:{port}/?once="))
         .unwrap_or_else(|| panic!("the browser was started with no one-time code: {started}"));
     assert_eq!(code.len(), key.len());
 
     let host = format!("127.0.0.1:{port}");
     let navigate = "Sec-Fetch-Mode: navigate\r\n";
-    let (status, answer) = ask(port, &host, &format!("/?once={code}"), navigate);
+    let (status, answer) = ask_over(cert, port, &host, &format!("/?once={code}"), navigate);
     assert_eq!(status, 200, "{answer}");
     assert!(
         answer.contains(&format!("set-cookie: okfs-key-{port}={key};")),
         "{answer}"
     );
+    // Over https the browser keeps the cookie to https.
+    assert_eq!(answer.contains("; Secure\r\n"), cert.is_some(), "{answer}");
     // Spent: whoever reads the browser's command line from now on finds a code that opens nothing.
-    let (status, answer) = ask(port, &host, &format!("/?once={code}"), navigate);
+    let (status, answer) = ask_over(cert, port, &host, &format!("/?once={code}"), navigate);
     assert_eq!(status, 401, "{answer}");
     assert!(!answer.contains(key), "{answer}");
-    assert_eq!(ask(port, &host, &format!("/api/list?path=docs&once={code}"), "").0, 401);
+    assert_eq!(
+        ask_over(cert, port, &host, &format!("/api/list?path=docs&once={code}"), "").0,
+        401
+    );
     // The key itself still opens it.
-    assert_eq!(ask(port, &host, &format!("/api/list?path=docs&key={key}"), "").0, 200);
+    assert_eq!(
+        ask_over(cert, port, &host, &format!("/api/list?path=docs&key={key}"), "").0,
+        200
+    );
+}
+
+#[test]
+fn with_a_certificate_okfs_serves_https_alone_with_the_key_and_the_host_check() {
+    let cert = Cert::new();
+    let (_tmp, okfs) = site(&[&["--bind", "0.0.0.0"][..], &cert.args()].concat());
+    let (port, key) = (okfs.port, okfs.key.clone().expect("a key in the address"));
+    let links: Vec<&str> = okfs.said.lines().filter(|line| line.contains("://")).collect();
+    assert!(
+        !links.is_empty()
+            && links
+                .iter()
+                .all(|line| line.contains(" https://") && line.ends_with(&format!("/?key={key}"))),
+        "{}",
+        okfs.said
+    );
+
+    let host = format!("192.168.1.20:{port}");
+    let (status, answer) = ask_over(Some(&cert), port, &host, "/raw/docs/note.txt", "");
+    assert_eq!(status, 401, "{answer}");
+    let (status, answer) = ask_over(Some(&cert), port, &host, &format!("/raw/docs/note.txt?key={key}"), "");
+    assert_eq!(status, 200, "{answer}");
+    assert!(answer.ends_with("\r\n\r\nnote"), "{answer}");
+    let cookie = format!("Cookie: okfs-key-{port}={key}\r\n");
+    assert_eq!(ask_over(Some(&cert), port, &host, "/raw/docs/note.txt", &cookie).0, 200);
+    // A browser trades the key in its address for a cookie it keeps to https.
+    let navigate = "Sec-Fetch-Mode: navigate\r\n";
+    let (status, answer) = ask_over(Some(&cert), port, &host, &format!("/?key={key}"), navigate);
+    assert_eq!(status, 200, "{answer}");
+    assert!(
+        answer.contains(&format!(
+            "set-cookie: okfs-key-{port}={key}; Path=/; HttpOnly; SameSite=Strict; Secure\r\n"
+        )),
+        "{answer}"
+    );
+    assert_eq!(
+        ask_over(
+            Some(&cert),
+            port,
+            "evil.example",
+            &format!("/raw/docs/note.txt?key={key}"),
+            ""
+        )
+        .0,
+        403
+    );
+
+    // Plain http gets no answer at all, so neither the key nor a file ever crosses in the clear.
+    let mut plain = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    plain.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(
+        plain,
+        "GET /raw/docs/note.txt?key={key} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = Vec::new();
+    let _ = plain.read_to_end(&mut answer);
+    assert!(!answer.starts_with(b"HTTP/"), "{}", String::from_utf8_lossy(&answer));
+    // And okfs goes on serving after it.
+    assert_eq!(
+        ask_over(
+            Some(&cert),
+            port,
+            "localhost",
+            &format!("/api/list?path=docs&key={key}"),
+            ""
+        )
+        .0,
+        200
+    );
+}
+
+#[test]
+fn a_certificate_needs_its_key_and_a_key_its_certificate() {
+    let cert = Cert::new();
+    let (cert_path, key_path) = (cert.cert.to_str().unwrap(), cert.key.to_str().unwrap());
+    for (given, missing) in [
+        (["--tls-cert", cert_path], "--tls-key"),
+        (["--tls-key", key_path], "--tls-cert"),
+    ] {
+        let (ended, error) = run(&[&["--no-open"][..], &given, &["."]].concat());
+        assert!(!ended.success(), "{given:?}");
+        assert!(
+            error.contains("required arguments were not provided"),
+            "{given:?}: {error}"
+        );
+        assert!(error.contains(missing), "{given:?}: {error}");
+    }
+
+    let other = Cert::new();
+    let (ended, error) = run(&[
+        "--no-open",
+        "--tls-cert",
+        cert_path,
+        "--tls-key",
+        other.key.to_str().unwrap(),
+        ".",
+    ]);
+    assert!(!ended.success());
+    assert!(error.contains("cannot serve with --tls-cert"), "{error}");
+
+    let (ended, error) = run(&[
+        "--no-open",
+        "--tls-cert",
+        "/nowhere/cert.pem",
+        "--tls-key",
+        key_path,
+        ".",
+    ]);
+    assert!(!ended.success());
+    assert!(error.contains("cannot read --tls-cert /nowhere/cert.pem"), "{error}");
+
+    let (ended, error) = run(&["--no-open", "--tls-cert", key_path, "--tls-key", key_path, "."]);
+    assert!(!ended.success());
+    assert!(error.contains("holds no certificate"), "{error}");
 }
