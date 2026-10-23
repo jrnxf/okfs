@@ -21,12 +21,24 @@ nix profile install github:jrnxf/okfs   # or install it
 
 `nix profile upgrade okfs` brings an installed copy up to date.
 
-Without nix, each [release](https://github.com/jrnxf/okfs/releases) has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, with a `.sha256` beside it. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
+Without nix, download a release. While okfs is in development its releases are pre-releases, tagged `v0.1.0-pre.N` (the first ones were `v0.1.0-dev.N`). `gh release download` with no tag takes the newest full release, which can be older than the newest pre-release, so ask for the newest one by name.
+
+Each release after v0.1.0-dev.14 has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, with a `.sha256` beside it. The targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin` and `x86_64-apple-darwin`. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
 
 ```sh
-gh release download --repo jrnxf/okfs --pattern '*aarch64-apple-darwin.tar.gz*'
+tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')
+gh release download "$tag" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'
+shasum -a 256 -c okfs-*-aarch64-apple-darwin.tar.gz.sha256
 tar -xzf okfs-*-aarch64-apple-darwin.tar.gz
 ./okfs-*-aarch64-apple-darwin/okfs --version
+```
+
+Every release, v0.1.0-dev.14 and earlier included, also has `okfs-x86_64-unknown-linux-gnu`, an x86-64 Linux binary on its own, with its `.sha256`. Until a release after v0.1.0-dev.14 is out, that binary is the only download:
+
+```sh
+gh release download "$tag" --repo jrnxf/okfs --pattern 'okfs-x86_64-unknown-linux-gnu*'
+sha256sum -c okfs-x86_64-unknown-linux-gnu.sha256
+chmod +x okfs-x86_64-unknown-linux-gnu
 ```
 
 Or build it. You need a Rust toolchain and [bun](https://bun.sh): bun builds the page while cargo builds the binary.

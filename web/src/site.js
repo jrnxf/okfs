@@ -196,14 +196,14 @@ const WAYS = {
     "The first line runs it once in ~/photos. The second puts it on your PATH; nix profile upgrade okfs updates it.",
   ],
   release: [
-    "gh release download --repo jrnxf/okfs --pattern 'okfs-x86_64-unknown-linux-gnu*'",
-    "sha256sum -c okfs-x86_64-unknown-linux-gnu.sha256",
-    "That is x86-64 Linux: then chmod +x okfs-x86_64-unknown-linux-gnu. Each release also has okfs-<version>-<target>.tar.gz for Linux (x86-64, arm64) and macOS (Apple silicon, Intel), with completions and a man page.",
+    "tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')",
+    "gh release download \"$tag\" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'",
+    "That is a Mac with Apple silicon: then tar -xzf the archive. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each release after v0.1.0-dev.14 has these archives, with completions and a man page; older ones have only okfs-x86_64-unknown-linux-gnu.",
   ],
   cargo: [
-    "cargo install --path .",
+    "cargo install --git https://github.com/jrnxf/okfs",
     "okfs ~/photos",
-    "From a checkout of the repository. It needs a Rust toolchain and bun, which builds the page.",
+    "It needs a Rust toolchain and bun, which builds the page.",
   ],
 };
 function showWay(way) {

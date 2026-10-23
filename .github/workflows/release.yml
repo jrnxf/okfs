@@ -5,8 +5,10 @@ name: release
 # tag: the build writes it into Cargo.toml, so a release needs no version-bump commit.
 #
 # - A tag `v<version>` pushed by hand publishes that release, then points the Homebrew formula at
-#   it. A tag with a hyphen, such as `v0.2.0-rc.1`, publishes a pre-release: it never shows as
-#   Latest, and the formula stays where it is.
+#   it. A tag with a hyphen publishes a pre-release: it never shows as Latest, and the formula stays
+#   where it is. Development builds are tagged `v<next version>-pre.N`, such as `v0.1.0-pre.1`:
+#   Homebrew and Cargo order `pre` below the release, which `dev` is not to Homebrew. Every
+#   pre-release carries the same archives as a full release.
 # - A pull request that changes this file, the notices' settings or the dependencies builds every
 #   binary and the notices without publishing, to prove the build before a release depends on it.
 #   Running the workflow by hand (workflow_dispatch) does the same.
