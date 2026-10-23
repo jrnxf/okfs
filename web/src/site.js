@@ -198,7 +198,7 @@ const WAYS = {
   release: [
     "tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')",
     "gh release download \"$tag\" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'",
-    "That is a Mac with Apple silicon: then tar -xzf the archive. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each release after v0.1.0-dev.14 has these archives, with completions and a man page; older ones have only okfs-x86_64-unknown-linux-gnu.",
+    "That is a Mac with Apple silicon: then tar -xzf the archive. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. The first release, v0.1.0-pre.1, is on its way.",
   ],
   cargo: [
     "cargo install --git https://github.com/jrnxf/okfs",
