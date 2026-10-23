@@ -23,10 +23,14 @@ nix profile install github:jrnxf/okfs   # or install it
 
 `nix profile upgrade okfs` brings an installed copy up to date.
 
-Without nix, each [release](https://github.com/jrnxf/okfs/releases) has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, with a `.sha256` beside it. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
+Without nix, download a release. okfs has none yet: the first is `v0.1.0-pre.1`. Until v0.1.0, releases are pre-releases, tagged `v0.1.0-pre.N`, and `gh release download` with no tag takes only a full release, so ask for the newest one by name.
+
+Each release has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, with a `.sha256` beside it. The targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin` and `x86_64-apple-darwin`. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
 
 ```sh
-gh release download --repo jrnxf/okfs --pattern '*aarch64-apple-darwin.tar.gz*'
+tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')
+gh release download "$tag" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'
+shasum -a 256 -c okfs-*-aarch64-apple-darwin.tar.gz.sha256
 tar -xzf okfs-*-aarch64-apple-darwin.tar.gz
 ./okfs-*-aarch64-apple-darwin/okfs --version
 ```
