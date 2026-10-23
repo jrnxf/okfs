@@ -27,6 +27,11 @@ const fmt = (n) => n.toLocaleString("en-US");
 const scheme = () => (html.dataset.theme === "light" ? "light" : "dark");
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+// The search box's answers, in two columns. landing.html starts the list with the empty one.
+const HIT_BASE = "grid-cols-[18px_minmax(0,1fr)] gap-x-2 break-inside-avoid py-2";
+const HIT = `${HIT_BASE} group grid cursor-pointer border-b border-b-rule`;
+const HIT_EMPTY = `${HIT_BASE} block cursor-default border-0 text-[15px] text-ink-3 [column-span:all]`;
+
 // ---------- the page's own controls ----------
 
 const schemeListeners = new Set();
@@ -184,14 +189,19 @@ const WIDTHS = [[46, 58, 40, 64, 52, 44, 60, 38, 56, 48, 66, 42, 54, 50, 62, 36,
 $$("#bones .col").forEach((col, i) => {
   for (const w of WIDTHS[i] ?? []) {
     const row = document.createElement("div");
-    row.className = "row";
-    row.innerHTML = `<i style="width:${w}%"></i>`;
+    // The cursor's row, at the top of the list.
+    const cursor = i === 0 && col.childElementCount === 0;
+    row.className = `flex h-8.5 flex-none items-center gap-2.5 before:h-3 before:w-3.5 before:rounded-[3px] before:bg-ok-bone before:content-[''] motion-safe:before:animate-breathe under-760:h-10.5 ${
+      cursor ? "-mx-3.5 bg-[color-mix(in_srgb,var(--spot)_12%,var(--ok-bg))] px-3.5 shadow-[inset_3px_0_0_var(--spot)]" : ""
+    }`;
+    row.innerHTML = `<i class="block h-2 rounded-[4px] bg-ok-bone motion-safe:animate-breathe" style="width:${w}%"></i>`;
     col.append(row);
   }
 });
 const say = document.createElement("div");
-say.className = "say";
-say.innerHTML = `<b id="boot-text">Starting okfs</b><span id="boot-sub">in this tab, from this page alone</span>`;
+say.className =
+  "say absolute top-11.5 right-0 bottom-7.5 grid w-1/2 place-content-center text-center [font:13px/1.5_var(--mono)] text-ok-faint under-760:w-full [&.err_b]:text-spot";
+say.innerHTML = `<b class="block font-[400] text-ink" id="boot-text">Starting okfs</b><span id="boot-sub">in this tab, from this page alone</span>`;
 $("#bones").append(say);
 
 // ---------- driving okfs from outside its frame ----------
@@ -256,7 +266,9 @@ const chipButtons = chips.map(([k, short, label, run]) => {
   b.disabled = true;
   b.title = label;
   b.setAttribute("aria-label", label);
-  b.innerHTML = `<kbd>${esc(k)}</kbd>${esc(short)}`;
+  b.className =
+    "cursor-pointer border-0 border-l border-l-rule bg-transparent px-3 py-0 text-ink-2 hover:bg-bg-2 hover:text-ink disabled:cursor-default disabled:bg-transparent disabled:opacity-45 [&.running]:bg-bg-2 [&.running]:text-ink under-1100:h-10 under-1100:truncate under-1100:border-r under-1100:border-l-0 under-1100:border-r-rule under-1100:px-1.5 under-1100:last:border-r-0 under-760:nth-[4n]:border-r-0 under-760:nth-[n+5]:border-t under-760:nth-[n+5]:border-t-rule";
+  b.innerHTML = `<kbd class="mr-1.5 text-spot">${esc(k)}</kbd>${esc(short)}`;
   $("#keys").append(b);
   return [b, run];
 });
@@ -283,6 +295,7 @@ async function main() {
     const handle = demo.mount(container, {
       start: at,
       title: title ?? "okfs, running in this page",
+      class: "absolute inset-0 block size-full border-0 opacity-0 transition-opacity duration-400 ease-page [&.on]:opacity-100",
       on: {
         nav: (m) => {
           path = prettyPath(typeof m === "string" ? m : m.url);
@@ -394,13 +407,13 @@ async function main() {
   const hits = $("#hits");
   const marked = (text, idx, offset) => {
     const at = new Set(idx.map((i) => i - offset));
-    return [...text].map((c, i) => (at.has(i) ? `<mark>${esc(c)}</mark>` : esc(c))).join("");
+    return [...text].map((c, i) => (at.has(i) ? `<mark class="bg-transparent text-spot">${esc(c)}</mark>` : esc(c))).join("");
   };
   let asked = 0;
   async function search(q) {
     const id = ++asked;
     if (!q.trim()) {
-      hits.innerHTML = `<li class="empty">Type a few letters of any name, or pick one above.</li>`;
+      hits.innerHTML = `<li class="${HIT_EMPTY}">Type a few letters of any name, or pick one above.</li>`;
       $("#find-ms").textContent = "-";
       $("#find-total").textContent = "0";
       return;
@@ -418,10 +431,10 @@ async function main() {
             const name = h.path.slice(slash + 1);
             const dir = slash < 0 ? "/" : h.path.slice(0, slash);
             const shown = h.name ? marked(name, h.idx, 0) : marked(name, h.idx, slash + 1);
-            return `<li data-path="${esc(h.path)}" data-dir="${h.dir ? 1 : 0}"><span class="glyph">${h.dir ? "/" : ""}</span><span class="name">${shown}</span><span class="dir">${esc(dir)}</span></li>`;
+            return `<li class="${HIT}" data-path="${esc(h.path)}" data-dir="${h.dir ? 1 : 0}"><span class="[font:13px/1.6_var(--mono)] text-ink-3">${h.dir ? "/" : ""}</span><span class="truncate [font:600_19px/1.3_var(--sans)] group-hover:text-spot">${shown}</span><span class="col-[2] truncate [font:12.5px/1.4_var(--mono)] text-ink-3">${esc(dir)}</span></li>`;
           })
           .join("")
-      : `<li class="empty">Nothing matches. okfs looked through all ${fmt(found.indexed)} names.</li>`;
+      : `<li class="${HIT_EMPTY}">Nothing matches. okfs looked through all ${fmt(found.indexed)} names.</li>`;
   }
   find.addEventListener("input", () => void search(find.value));
   hits.addEventListener("click", (e) => {
@@ -433,6 +446,7 @@ async function main() {
   for (const q of ["tide", "img_0042", "north pier 2024", "button.tsx", "readme", "survey pdf", "kelp flac"]) {
     const b = document.createElement("button");
     b.type = "button";
+    b.className = "cursor-pointer border-0 bg-transparent p-0 text-ink-2 hover:text-spot";
     b.textContent = q;
     b.addEventListener("click", async () => {
       find.value = "";
@@ -465,6 +479,7 @@ async function main() {
   const showHud = (k) => {
     const label = { ArrowDown: "↓", ArrowUp: "↑", ArrowLeft: "←", ArrowRight: "→", Enter: "⏎", Escape: "esc", " ": "space", Backspace: "⌫" }[k] ?? k;
     const el = document.createElement("kbd");
+    el.className = "animate-[hud_.9s_var(--ease)_forwards] border border-rule px-1.5 py-0.75 [font:12px/1_var(--mono)] text-ink";
     el.textContent = label;
     hud.append(el);
     while (hud.children.length > 6) hud.firstChild.remove();
@@ -531,7 +546,9 @@ async function main() {
     b.type = "button";
     b.dataset.path = path;
     b.style.setProperty("--c", color);
-    b.innerHTML = `<i></i>${label}`;
+    b.className =
+      "inline-flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-ink-2 hover:text-ink aria-pressed:text-ink aria-pressed:underline aria-pressed:decoration-spot aria-pressed:decoration-2 aria-pressed:underline-offset-6";
+    b.innerHTML = `<i class="size-[9px] rounded-[50%] bg-(--c)"></i>${label}`;
     b.addEventListener("click", () => {
       pressKind(path);
       if (previews) void previews.drive.go(path);
@@ -574,9 +591,13 @@ async function main() {
     const b = document.createElement("button");
     b.type = "button";
     b.dataset.id = t.id;
+    // A row of five, then of three, and on a phone a list with the swatches beside the name.
+    b.className =
+      "group grid w-full cursor-pointer gap-1.5 border-0 border-r border-r-rule bg-transparent px-4 pt-4 pb-4.5 text-left aria-pressed:shadow-[inset_0_3px_0_var(--spot)] [li:last-child>&]:border-r-0 under-1180:[li:nth-child(3)>&]:border-r-0 under-1180:[li:nth-child(n+4)>&]:border-t under-1180:[li:nth-child(n+4)>&]:border-t-rule under-760:grid-cols-[auto_minmax(0,1fr)] under-760:items-center under-760:gap-x-3.5 under-760:border-t under-760:border-r-0 under-760:border-t-rule under-760:[li:first-child>&]:border-t-0";
     const [bg, fg, accent] = t.dark;
     const [lbg, , laccent] = t.light;
-    b.innerHTML = `<span class="sw" aria-hidden="true"><i style="background:${lbg}"></i><i style="background:${bg}"></i><i style="background:${fg}"></i><i style="background:${accent}"></i><i style="background:${laccent}"></i></span><b>${esc(t.name)}</b><span>${blurbs[t.id] ?? ""}</span>`;
+    const dot = "size-3.5 rounded-[50%] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ink)_18%,transparent)]";
+    b.innerHTML = `<span class="flex gap-0.75 text-[14px] text-ink-2 under-760:[grid-row:span_2]" aria-hidden="true">${[lbg, bg, fg, accent, laccent].map((c) => `<i class="${dot}" style="background:${c}"></i>`).join("")}</span><b class="font-sans text-[20px] leading-[1.1] font-[700] font-stretch-[112%] group-hover:text-spot">${esc(t.name)}</b><span class="text-[14px] text-ink-2">${blurbs[t.id] ?? ""}</span>`;
     b.addEventListener("click", () => {
       themeId = t.id;
       showTheme();

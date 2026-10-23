@@ -139,12 +139,13 @@ export async function boot() {
 
   /**
    * okfs's page in a frame inside `container`, opening at `start` (an address such as "/photos/"). Returns a
-   * handle that drives it: `call(op, ...args)` runs one of frame-host.ts's `drive` operations.
+   * handle that drives it: `call(op, ...args)` runs one of frame-host.ts's `drive` operations. `class` is the
+   * frame's look, as the page around it wants it.
    */
-  function mount(container, { start = "/", title = "okfs, live", on = {} } = {}) {
+  function mount(container, { start = "/", title = "okfs, live", on = {}, class: look = "" } = {}) {
     const frame = document.createElement("iframe");
     frame.title = title;
-    frame.className = "okfs-frame";
+    frame.className = look ? `okfs-frame ${look}` : "okfs-frame";
     const path = decodeURIComponent(new URL(start, "http://okfs.demo").pathname).replace(/^\/|\/$/g, "");
     const node = path ? backend.lookup(path) : { isDir: true };
     const config = { ...answers.config, target: { path, kind: !node ? "missing" : node.isDir ? "dir" : "file" } };

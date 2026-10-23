@@ -76,7 +76,10 @@ export class Glide {
     timing: KeyframeAnimationOptions,
   ) {
     this.bar = document.createElement("div");
-    this.bar.className = "glide";
+    // It tints what is under it rather than covering it, so the rows sliding under it show through: on a light
+    // ground the darker of the two is drawn, on a dark one the lighter. The rows' own highlight waits until it lands.
+    this.bar.className =
+      "glide pointer-events-none absolute top-0 left-0 z-2 bg-accent-soft shadow-[inset_3px_0_0_var(--accent)] mix-blend-darken dark:mix-blend-lighten";
     this.bar.setAttribute("aria-hidden", "true");
     Object.assign(this.bar.style, { width: `${to.w}px`, height: `${to.h}px` });
     strip.append(this.bar);

@@ -5,6 +5,7 @@ import { DeleteError } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { KindIcon } from "./icons";
+import { MENU_ROW, POP_IN, SCRIM } from "./look";
 import { DELETE_KEY, MOD } from "./palette";
 import { type Doomed, store } from "./store";
 import { type Scheme, active, isDark, setScheme, setTheme } from "./theme";
@@ -45,28 +46,38 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
     redraw((n) => n + 1);
   };
   return (
-    <div class="pop" role="dialog" aria-label="Theme" ref={pop}>
-      <div class="seg">
+    // It grows out of the button that opened it, which sets its origin. It is opened by a click, now and then.
+    <div class={`fixed z-60 w-[248px] rounded-lg bg-surface p-1.5 shadow ${POP_IN}`} role="dialog" aria-label="Theme" ref={pop}>
+      <div class="mb-1.5 grid auto-cols-[1fr] grid-flow-col gap-0.5 rounded bg-sunken p-0.5">
         {SCHEMES.map((scheme) => (
-          <button aria-pressed={active.scheme === scheme} onClick={then(() => setScheme(scheme))}>
+          <button
+            class="h-[calc(26px*var(--density))] rounded-[max(0px,calc(var(--radius)-2px))] text-s text-muted transition-[transform] duration-160 ease-out active:[transform:scale(0.97)] aria-pressed:bg-surface aria-pressed:text-fg aria-pressed:shadow-[0_0_0_var(--line-w)_var(--line)]"
+            aria-pressed={active.scheme === scheme}
+            onClick={then(() => setScheme(scheme))}
+          >
             {scheme[0]?.toUpperCase() + scheme.slice(1)}
           </button>
         ))}
       </div>
       {config.themes.map((theme) => (
-        <button class="tm-row" aria-pressed={active.theme === theme.id} onClick={then(() => setTheme(theme.id))}>
-          <span class="tm-sw">
+        <button class={MENU_ROW} aria-pressed={active.theme === theme.id} onClick={then(() => setTheme(theme.id))}>
+          <span class="inline-flex flex-none overflow-hidden rounded-[99px] shadow-[0_0_0_1px_var(--line-strong)] *:h-4 *:w-2.5">
             {(dark ? theme.dark : theme.light).map((color) => (
               <i style={{ background: color }} />
             ))}
           </span>
-          <span class="nm">{theme.name}</span>
+          <span class="flex-1">{theme.name}</span>
         </button>
       ))}
-      <div class="tm-foot">A theme is one file that sets tokens. Layout never changes.</div>
+      <div class="mt-1 border-t border-t-line px-2 pt-2 pb-1 text-xs leading-[1.4] text-faint">A theme is one file that sets tokens. Layout never changes.</div>
     </div>
   );
 }
+
+/** The list of keys and the delete dialog: a card over the page. */
+const DIALOG = "w-[min(420px,100%)] rounded-lg bg-surface shadow";
+const DIALOG_HEAD = "[font:var(--weight-strong)_var(--text)_var(--font-ui)]";
+const ASK_BTN = "h-[calc(30px*var(--density))] px-[calc(12px*var(--density))] phone:h-[38px] phone:flex-1 phone:justify-center";
 
 type Key = [string[], string];
 
@@ -94,18 +105,18 @@ const keys = (): Key[] => [
 
 export function Help() {
   return (
-    <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && store.setHelp(false)}>
-      <div class="help" role="dialog" aria-label="Keyboard shortcuts">
-        <h2>Keyboard</h2>
-        <dl>
+    <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setHelp(false)}>
+      <div class={`${DIALOG} px-5 py-4.5`} role="dialog" aria-label="Keyboard shortcuts">
+        <h2 class={`mt-0 mb-2.5 ${DIALOG_HEAD}`}>Keyboard</h2>
+        <dl class="m-0 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.75">
           {keys().map(([caps, what]) => (
             <>
-              <dt>
+              <dt class="flex gap-1">
                 {caps.map((key) => (
                   <kbd>{key}</kbd>
                 ))}
               </dt>
-              <dd>{what}</dd>
+              <dd class="m-0 text-muted">{what}</dd>
             </>
           ))}
         </dl>
@@ -166,26 +177,35 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
     else what = `This folder holds ${fmt.items(doomed.count)}${hidden}. It will be removed with everything in it.`;
   }
   return (
-    <div class="scrim scrim-ask" onPointerDown={(event) => event.target === event.currentTarget && close()}>
-      <div class="ask" role="alertdialog" aria-modal="true" aria-labelledby="ask-title" aria-describedby="ask-what">
-        <h2 id="ask-title">Delete this {noun}?</h2>
-        <div class="ask-name">
-          <KindIcon kind={doomed.kind} />
+    // The delete dialog is rare and asks for a decision: it comes up over a fading backdrop rather than appearing.
+    <div class={`${SCRIM} transition-opacity duration-150 ease-[ease] starting:opacity-0`} onPointerDown={(event) => event.target === event.currentTarget && close()}>
+      <div
+        class={`${DIALOG} grid gap-3 px-5 py-4.5 transition-[opacity,transform] duration-180 ease-out starting:opacity-0 starting:[transform:scale(0.96)] motion-reduce:starting:[transform:none]`}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="ask-title"
+        aria-describedby="ask-what"
+      >
+        <h2 id="ask-title" class={`m-0 ${DIALOG_HEAD}`}>
+          Delete this {noun}?
+        </h2>
+        <div class="flex max-h-[8.5em] gap-2.25 overflow-auto overscroll-contain rounded bg-sunken px-2.75 py-2.25 text-s wrap-anywhere">
+          <KindIcon kind={doomed.kind} class="mt-[0.14em]" />
           <span class="num">/{doomed.path}</span>
         </div>
-        <p id="ask-what">
-          {what} <b>There is no undo.</b>
+        <p id="ask-what" class="m-0 text-muted">
+          {what} <b class="font-strong text-fg">There is no undo.</b>
         </p>
         {failure && (
-          <p class="ask-fail" role="alert">
+          <p class="m-0 font-strong text-fg" role="alert">
             {failure}
           </p>
         )}
-        <div class="ask-do">
-          <button class="btn btn-line" ref={cancel} disabled={busy} onClick={close}>
+        <div class="mt-1 flex justify-end gap-2">
+          <button class={`btn btn-line ${ASK_BTN}`} ref={cancel} disabled={busy} onClick={close}>
             Cancel
           </button>
-          <button class="btn btn-fill" ref={confirm} disabled={busy} onClick={run}>
+          <button class={`btn btn-fill ${ASK_BTN}`} ref={confirm} disabled={busy} onClick={run}>
             {busy ? "Deleting" : `Delete ${noun}`}
           </button>
         </div>

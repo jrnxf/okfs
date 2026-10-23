@@ -590,20 +590,33 @@ export function useStarted(path: string, eager: boolean): boolean {
   return go;
 }
 
+/** A picture or a player, in the middle of the pane on a sunken ground. */
+const CENTER = "grid min-h-0 flex-1 place-items-center overflow-hidden bg-sunken p-[calc(var(--pad)*1.5)]";
+const SHOWN_BOX = "block min-h-0 rounded-[min(var(--radius),4px)] object-contain";
+const SHOWN = `${SHOWN_BOX} max-h-full max-w-full`;
+/** A line under a preview: what of the file it leaves out. */
+const NOTE = "flex-none border-t border-t-line px-(--pad) py-1.75 text-xs text-muted";
+/** The rows of a table or an archive. The heads stay at the top as the rows scroll under them. */
+const TABLE = "min-w-full border-separate border-spacing-0 text-s";
+const CELL = "h-[calc(30px*var(--density))] px-(--pad) py-0 whitespace-nowrap";
+const TH = `${CELL} sticky top-0 z-1 border-b border-b-line-strong bg-surface text-xs font-regular text-muted [text-transform:var(--label-case)]`;
+const TD = `${CELL} border-b border-b-line`;
+const TR = "hover:*:bg-hover";
+
 /** `unreached` says the line is why okfs cannot be reached, and not something about the file. */
 function Card({ entry, line, unreached }: { entry: Entry; line: string; unreached?: boolean }) {
   return (
-    <div class="pv-center">
-      <div class="pv-card">
-        <KindIcon kind={entry.kind} />
-        <b>{entry.name}</b>
+    <div class={CENTER}>
+      <div class="grid justify-items-center gap-1.5 text-center text-muted">
+        <KindIcon kind={entry.kind} class="mb-2 size-10" />
+        <b class="font-strong text-fg">{entry.name}</b>
         <span>
           {LABEL[entry.kind]} · {fmt.size(entry.size)}
         </span>
         <span>{line}</span>
         {/* Nothing downloads while okfs cannot be reached. */}
         {!unreached && (
-          <a class="btn btn-line" href={urls.raw(entry.path)} download>
+          <a class="btn btn-line mt-3 no-underline" href={urls.raw(entry.path)} download>
             <Icon name="download" />
             Download
           </a>
@@ -616,7 +629,7 @@ function Card({ entry, line, unreached }: { entry: Entry; line: string; unreache
 function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
   // Keyed by what is shown, so each file starts scrolled to its top.
   return (
-    <div class="pv-scroll" key={id}>
+    <div class="pv-scroll min-h-0 flex-1 overflow-auto overscroll-contain" key={id}>
       {children}
     </div>
   );
@@ -659,9 +672,11 @@ function Picture({ entry, stamp, report }: Shown) {
   const waiting = ready !== src && late === src;
   const thumb = urls.thumb(entry.path, THUMB_WIDTH, entry.mtime, entry.size);
   return (
-    <div class="pv-center">
+    <div class={CENTER}>
+      {/* The last file's picture, held back once it would sit under the next file's name; the thumbnail of the right
+          file takes its place. */}
       <img
-        class={waiting ? "pv-stale" : undefined}
+        class={`${SHOWN} shadow-[0_1px_3px_rgb(0_0_0/0.2)] ${waiting ? "invisible [grid-area:1/1]" : ""}`}
         src={src}
         alt={entry.name}
         onLoad={(event) => {
@@ -672,7 +687,7 @@ function Picture({ entry, stamp, report }: Shown) {
         }}
         onError={() => setBroken(src)}
       />
-      {waiting && thumbless !== thumb && <img class="pv-thumb" src={thumb} alt="" aria-hidden="true" onError={() => setThumbless(thumb)} />}
+      {waiting && thumbless !== thumb && <img class={`${SHOWN_BOX} size-full blur-[6px] [grid-area:1/1]`} src={thumb} alt="" aria-hidden="true" onError={() => setThumbless(thumb)} />}
     </div>
   );
 }
@@ -711,7 +726,8 @@ function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiti
     if (!down) setBroken("");
   }, [down]);
   if (broken === src) return <Card entry={entry} line={down ?? "This browser cannot play this file"} unreached={!!down} />;
-  const center = waiting ? "pv-center pv-wait" : "pv-center";
+  // A player getting ready behind the preview before it, at the size it will be shown at.
+  const center = waiting ? `${CENTER} invisible absolute inset-0` : CENTER;
   const state = { onPlay: () => setPlaying(true), onPause: () => setPlaying(false), onEnded: () => setPlaying(false) };
   const onError = () => {
     setPlaying(false);
@@ -726,9 +742,9 @@ function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiti
   if (entry.kind === "audio") {
     return (
       <div class={center}>
-        <div class="pv-audio">
-          <KindIcon kind="audio" />
-          <audio src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
+        <div class="grid w-[min(100%,420px)] justify-items-center gap-5.5">
+          <KindIcon kind="audio" class="size-11" />
+          <audio class="w-full" src={src} controls preload="metadata" onLoadedMetadata={onMeta} onError={onError} {...state} />
         </div>
       </div>
     );
@@ -736,6 +752,7 @@ function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiti
   return (
     <div class={center}>
       <video
+        class={SHOWN}
         src={src}
         poster={still}
         controls
@@ -1010,8 +1027,11 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
   return (
     <>
       {sheet && sheet !== torn && !viewed && (
-        <div class={sheets.has(sheet) ? "pv-sheet pv-sheet-on" : "pv-sheet"}>
+        // The first page of a PDF as a picture, over the frames until the viewer has drawn its own. As wide as the
+        // pane, as the viewer shows it. See-through until the picture has arrived, and never in the way of the pointer.
+        <div class={`pointer-events-none absolute inset-0 z-1 overflow-hidden p-2 ${sheets.has(sheet) ? "bg-sunken" : ""}`}>
           <img
+            class="block w-full shadow-[0_1px_3px_rgb(0_0_0/0.2)]"
             key={sheet}
             src={sheet}
             alt=""
@@ -1033,7 +1053,10 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
             if (frame) frames.current.set(slot.id, frame);
             else frames.current.delete(slot.id);
           }}
-          class={slot.id !== shown.current ? "pv-frame pv-ahead" : slot.loaded ? "pv-frame pv-loaded" : "pv-frame"}
+          // A frame is see-through until its page has loaded, then white behind a page that sets no background. The
+          // light scheme keeps the browser from painting a backdrop of its own behind the page in a dark theme. A page
+          // loaded ahead of the cursor, or a PDF loading behind the one on screen, is in the pane and not visible.
+          class={`pv-frame block min-h-0 w-full flex-1 border-0 scheme-light ${slot.id !== shown.current ? "pv-ahead invisible absolute inset-0 h-full" : slot.loaded ? "bg-[#fff]" : ""}`}
           // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
           // The server sends the same restriction as a header, so it holds when the page is opened directly too.
           sandbox={slot.pdf ? undefined : SANDBOX}
@@ -1070,25 +1093,25 @@ function Zip({ entry, report }: { entry: Entry; report: Report }) {
   return (
     <>
       <Scroll id={url}>
-        <table class="tbl">
+        <table class={TABLE}>
           <thead>
             <tr>
-              <th>In this archive</th>
-              <th class="r">Size</th>
+              <th class={`${TH} text-left`}>In this archive</th>
+              <th class={`${TH} text-right`}>Size</th>
             </tr>
           </thead>
           <tbody>
             {(rested ? data.entries : data.entries.slice(0, FIRST_ROWS)).map((item) => (
-              <tr key={item.name}>
-                <td>{item.name}</td>
-                <td class="r num">{item.dir ? "" : fmt.size(item.size)}</td>
+              <tr class={TR} key={item.name}>
+                <td class={`${TD} text-left`}>{item.name}</td>
+                <td class={`${TD} num text-right`}>{item.dir ? "" : fmt.size(item.size)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </Scroll>
       {data.total > data.entries.length && (
-        <div class="pv-note">
+        <div class={NOTE}>
           Showing the first {fmt.count(data.entries.length)} of {fmt.count(data.total)} entries.
         </div>
       )}
@@ -1109,10 +1132,10 @@ function JsonBranch({ value, label, depth }: { value: object; label: ComponentCh
   const keys = Object.keys(value);
   const rest = keys.length - shown;
   return (
-    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>
+    <details class="pl-[1.3em]" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary class="-ml-[1.3em] cursor-pointer [list-style:none] before:inline-block before:w-[1.3em] before:text-faint before:content-['▸'] [details[open]>&]:before:content-['▾'] [&::-webkit-details-marker]:hidden">
         {label}
-        <span class="cnt">{list ? `[ ${keys.length} ]` : `{ ${keys.length} }`}</span>
+        <span class="text-faint">{list ? `[ ${keys.length} ]` : `{ ${keys.length} }`}</span>
       </summary>
       {/* Children are built only once a branch is open, so a large file stays light. */}
       {open &&
@@ -1120,7 +1143,7 @@ function JsonBranch({ value, label, depth }: { value: object; label: ComponentCh
           <JsonNode key={key} name={list ? undefined : key} value={(value as Record<string, unknown>)[key]} depth={depth + 1} />
         ))}
       {open && rest > 0 && (
-        <button class="btn btn-line more" onClick={() => setShown(shown + JSON_PAGE * 5)}>
+        <button class="btn btn-line my-1 ml-[1.3em]" onClick={() => setShown(shown + JSON_PAGE * 5)}>
           Show {fmt.count(Math.min(rest, JSON_PAGE * 5))} more of {fmt.count(rest)}
         </button>
       )}
@@ -1131,12 +1154,12 @@ function JsonBranch({ value, label, depth }: { value: object; label: ComponentCh
 function JsonNode({ value, name, depth }: { value: unknown; name?: string; depth: number }) {
   const label = name === undefined ? null : (
     <>
-      <span class="key">{name}</span>:{" "}
+      <span class="text-(color:--syn-title)">{name}</span>:{" "}
     </>
   );
   if (value !== null && typeof value === "object") return <JsonBranch value={value} label={label} depth={depth} />;
   return (
-    <div class="leaf">
+    <div class="pl-[1.3em]">
       {label}
       <JsonLeaf value={value} />
     </div>
@@ -1200,13 +1223,13 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
               <code dangerouslySetInnerHTML={{ __html: data.html }} />
             </pre>
           </Scroll>
-          {data.cut && url === whole && <div class="pv-note">Showing the start of this {fmt.size(entry.size)} file.</div>}
+          {data.cut && url === whole && <div class={NOTE}>Showing the start of this {fmt.size(entry.size)} file.</div>}
         </>
       );
     case "json":
       return (
         <Scroll id={url}>
-          <div class="json">
+          <div class="p-(--pad) pb-12 [font:calc(var(--text)*0.92)/1.7_var(--font-mono)] tracking-[0]">
             <JsonNode value={JSON.parse(data.text)} depth={0} />
           </div>
         </Scroll>
@@ -1215,21 +1238,21 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
       return (
         <>
           <Scroll id={url}>
-            <table class="tbl">
+            <table class={TABLE}>
               <thead>
                 <tr>
-                  <th class="r">#</th>
+                  <th class={`${TH} text-right`}>#</th>
                   {data.head.map((name, column) => (
-                    <th class={data.numeric[column] ? "r" : undefined}>{name}</th>
+                    <th class={`${TH} ${data.numeric[column] ? "text-right" : "text-left"}`}>{name}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {(rested ? data.rows : data.rows.slice(0, FIRST_ROWS)).map((row, at) => (
-                  <tr>
-                    <td class="i r num">{at + 1}</td>
+                  <tr class={TR}>
+                    <td class={`${TD} num w-[1%] text-right text-faint`}>{at + 1}</td>
                     {row.map((value, column) => (
-                      <td class={data.numeric[column] ? "r num" : undefined}>{value}</td>
+                      <td class={data.numeric[column] ? `${TD} num text-right` : `${TD} text-left`}>{value}</td>
                     ))}
                   </tr>
                 ))}
@@ -1237,7 +1260,7 @@ function Text({ entry, report, source, wrap }: { entry: Entry; report: Report; s
             </table>
           </Scroll>
           {data.total > data.rows.length && (
-            <div class="pv-note">
+            <div class={NOTE}>
               Showing the first {fmt.count(data.rows.length)} of {fmt.count(data.total)} rows.
             </div>
           )}

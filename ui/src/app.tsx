@@ -10,6 +10,7 @@ import { keyFor, pressOf } from "./keys";
 import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInfo } from "./matches";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
+import { AGE, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
 import { Prose, lookAhead, pagesAhead } from "./preview";
 import { NEEDS_KEY, NOT_ANSWERING, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
@@ -52,6 +53,9 @@ function inPlace(run: () => void) {
   };
 }
 
+/** The buttons in the top bar sit a little closer than a button's own padding has them. */
+const TOOL = "px-[calc(7px*var(--density))]";
+
 function Crumbs() {
   const { s } = store;
   const parts = s.path ? s.path.split("/") : [];
@@ -62,31 +66,36 @@ function Crumbs() {
   const parent = parts.slice(0, -1).join("/");
   // Over the matches, the folder they are over is where back goes, and the query is the last crumb.
   const finding = s.finding && s.matches;
+  // A phone has room for the last crumb only, and the way back beside it.
+  const link = "whitespace-nowrap rounded px-1.5 py-0.75 no-underline hover:bg-hover hover:text-fg";
+  const crumb = `${link} last-of-type:overflow-hidden last-of-type:text-ellipsis last-of-type:font-strong last-of-type:text-fg phone:hidden phone:last-of-type:inline-flex`;
+  const back = `${link} hidden phone:-ml-1.5 phone:inline-flex phone:p-1.5 phone:text-muted`;
+  const slash = "flex-none not-italic text-faint phone:hidden";
   return (
-    <nav class="crumbs" aria-label="Path">
+    <nav class="flex min-w-0 flex-1 items-center overflow-hidden text-muted" aria-label="Path">
       {finding ? (
-        <a class="back" href={urls.view(s.path, true)} aria-label="Close the matches" onClick={inPlace(() => store.leaveFind())}>
+        <a class={back} href={urls.view(s.path, true)} aria-label="Close the matches" onClick={inPlace(() => store.leaveFind())}>
           <Icon name="left" />
         </a>
       ) : (
         s.path && (
-          <a class="back" href={urls.view(parent, true)} aria-label="Up one folder" onClick={inPlace(() => store.up())}>
+          <a class={back} href={urls.view(parent, true)} aria-label="Up one folder" onClick={inPlace(() => store.up())}>
             <Icon name="left" />
           </a>
         )
       )}
-      {trail.map((crumb, i) => (
+      {trail.map((step, i) => (
         <>
-          {i > 0 && <i>/</i>}
-          <a href={urls.view(crumb.path, true)} onClick={inPlace(() => void store.showDir(crumb.path))}>
-            {crumb.name}
+          {i > 0 && <i class={slash}>/</i>}
+          <a class={crumb} href={urls.view(step.path, true)} onClick={inPlace(() => void store.showDir(step.path))}>
+            {step.name}
           </a>
         </>
       ))}
       {finding && (
         <>
-          <i>/</i>
-          <a href={location.href} onClick={inPlace(() => undefined)}>
+          <i class={slash}>/</i>
+          <a class={crumb} href={location.href} onClick={inPlace(() => undefined)}>
             Find “{finding.q}”
           </a>
         </>
@@ -98,13 +107,13 @@ function Crumbs() {
 function Columns() {
   const { key, dir } = store.s.sort;
   const head = (column: SortKey, label: string, right: boolean) => (
-    <button class={right ? "r" : undefined} onClick={() => store.setSort(column)}>
+    <button class={`${HEAD} hover:text-fg ${right ? "justify-end" : ""}`} onClick={() => store.setSort(column)}>
       {label}
-      {key === column && <Icon name={dir > 0 ? "up" : "down"} />}
+      {key === column && <Icon name={dir > 0 ? "up" : "down"} class="size-2.75 text-accent" />}
     </button>
   );
   return (
-    <div class="cols label">
+    <div class={`${HEADS} ${ROW_GRID}`}>
       <span />
       {head("name", "Name", false)}
       {head("size", "Size", true)}
@@ -134,8 +143,11 @@ function Notice() {
   const down = useDown();
   const text = down ? UNREACHED[down] : store.s.notice;
   return (
-    <div class={down ? "notice down" : "notice"} role="status">
-      {text ? <span class="trunc">{text}</span> : null}
+    <div
+      class={`fixed bottom-[calc(28px*var(--density)+10px)] left-1/2 z-40 flex max-w-[calc(100vw-32px)] transform-[translateX(-50%)] animate-[notice-in_160ms_var(--ease-out)] items-center gap-2 rounded border border-line bg-surface px-3 py-1.5 text-s whitespace-nowrap text-fg shadow pointer-events-none empty:hidden motion-reduce:animate-none phone:bottom-[calc(44px*var(--density)+env(safe-area-inset-bottom)+10px)] ${down ? "before:size-1.5 before:flex-none before:animate-[notice-wait_1.6s_ease-in-out_infinite] before:rounded-[50%] before:bg-accent before:content-[''] motion-reduce:before:animate-none" : ""}`}
+      role="status"
+    >
+      {text ? <span class="min-w-0 truncate">{text}</span> : null}
     </div>
   );
 }
@@ -147,9 +159,9 @@ function Empty() {
   if (s.status === "missing") {
     body = (
       <>
-        <b>Nothing at this address</b>
+        <b class={EMPTY_HEAD}>Nothing at this address</b>
         <span class="num">/{s.path}</span>
-        <a class="btn btn-line" href="/" onClick={inPlace(() => void store.showDir(""))}>
+        <a class="btn btn-line mt-2.5" href="/" onClick={inPlace(() => void store.showDir(""))}>
           Go to the top folder
         </a>
       </>
@@ -157,7 +169,7 @@ function Empty() {
   } else if (s.filter) {
     body = (
       <>
-        <b>No name contains “{s.filter}”</b>
+        <b class={EMPTY_HEAD}>No name contains “{s.filter}”</b>
         <span>
           Press <kbd>esc</kbd> to clear, or <kbd>{MOD} K</kbd> to look everywhere.
         </span>
@@ -166,12 +178,12 @@ function Empty() {
   } else {
     body = (
       <>
-        <b>{EMPTY_FOLDER}</b>
+        <b class={EMPTY_HEAD}>{EMPTY_FOLDER}</b>
         <span class="num">/{s.path}</span>
       </>
     );
   }
-  return <div class="empty">{body}</div>;
+  return <div class={EMPTY}>{body}</div>;
 }
 
 export function App() {
@@ -210,6 +222,8 @@ export function App() {
   const at = store.at();
   // The matches take two slots, for their folders: the pane beside them the rest. With two in all, they take both.
   const wide = finding && cut > 2;
+  // The filter's field takes the hints' place while it is in use.
+  const filterShown = !finding && (filtering || s.filter !== "");
 
   const here = store.here();
   const flippable = store.flippable();
@@ -231,7 +245,7 @@ export function App() {
   // A name cut short by an ellipsis is shown in full under the pointer. A name that fits has no tip to repeat it.
   useEffect(() => {
     const tip = (event: PointerEvent) => {
-      const el = (event.target as Element).closest?.<HTMLElement>(".trunc");
+      const el = (event.target as Element).closest?.<HTMLElement>(".truncate");
       // A tip of its own, such as a time's date, stays.
       if (!el || (el.title && el.dataset.tip === undefined)) return;
       if (el.scrollWidth > el.clientWidth) {
@@ -371,13 +385,13 @@ export function App() {
     const on = index === s.cursor;
     const style = { top: `${cell.top}px`, left: `${cell.left}px`, width: `${cell.width}px`, height: `${cell.height}px` };
     return (
-      <div class="row" role="option" aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style} key={index}>
+      <div class={`${ROW} ${ROW_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}`} role="option" aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style} key={index}>
         <KindIcon kind={entry.kind} />
-        <span class="nm trunc">
-          <b>{entry.name}</b>
+        <span class="min-w-0 truncate">
+          <b class={nameWeight(entry.dir)}>{entry.name}</b>
         </span>
-        <span class="sz num">{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
-        <span class="tm num" title={fmt.abs(entry.mtime)}>
+        <span class={SIZE}>{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
+        <span class={AGE} title={fmt.abs(entry.mtime)}>
           {fmt.rel(entry.mtime)}
         </span>
       </div>
@@ -394,27 +408,32 @@ export function App() {
   return (
     <>
       <Sprite />
-      <header class="top">
-        <a class="wm" href="/" aria-label={`${config.title}, top folder`} onClick={inPlace(() => void store.showDir(""))}>
-          <span class="wm-mark" />
+      <header class={`flex h-[calc(46px*var(--density))] min-w-0 items-center gap-3.5 border-b border-b-line ${LIST_PAD}`}>
+        <a
+          class="inline-flex items-center gap-[0.5em] font-display text-[length:calc(var(--text)*1.08)] leading-none font-strong tracking-[-0.02em] text-fg no-underline phone:gap-0 phone:text-[0px]"
+          href="/"
+          aria-label={`${config.title}, top folder`}
+          onClick={inPlace(() => void store.showDir(""))}
+        >
+          <span class="relative size-[1.05em] flex-none rounded-[min(var(--radius),0.26em)] border-[length:max(1.5px,var(--line-w))] border-current after:absolute after:right-[0.14em] after:bottom-[0.14em] after:size-[0.36em] after:rounded-[min(var(--radius),0.08em)] after:bg-accent after:content-[''] phone:text-[15px]" />
           {config.title}
         </a>
         <TrailButton />
         <Crumbs />
-        <div class="tools" onMouseDown={(event) => event.preventDefault()}>
-          <button class="btn btn-line find" aria-label="Find anything" onClick={() => store.setPalette(true)}>
+        <div class="flex flex-none items-center gap-1" onMouseDown={(event) => event.preventDefault()}>
+          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto ${TOOL}`} aria-label="Find anything" onClick={() => store.setPalette(true)}>
             <Icon name="search" />
-            <span class="sp">Find anything</span>
-            <kbd>{MOD} K</kbd>
+            <span class="flex-1 text-left phone:hidden">Find anything</span>
+            <kbd class="phone:hidden">{MOD} K</kbd>
           </button>
           {/* A phone has no pane beside the list to hold this, and a tap on a folder goes in. */}
           {here && (
-            <button class="btn touch" aria-label="Delete this folder" onClick={() => store.askDelete(here)}>
+            <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="Delete this folder" onClick={() => store.askDelete(here)}>
               <Icon name="trash" />
             </button>
           )}
           <button
-            class="btn"
+            class={`btn ${TOOL}`}
             aria-label="Show hidden files"
             aria-pressed={s.hidden}
             title={s.hidden ? "Hide hidden files (.)" : "Show hidden files (.)"}
@@ -422,15 +441,23 @@ export function App() {
           >
             <Icon name={s.hidden ? "eye" : "eye-off"} />
           </button>
-          <button class="btn" aria-label="Theme" onClick={(event) => setMenu(menu ? null : event.currentTarget)}>
+          <button class={`btn ${TOOL}`} aria-label="Theme" onClick={(event) => setMenu(menu ? null : event.currentTarget)}>
             <Icon name="swatch" />
           </button>
         </div>
       </header>
-      {config.header && <Prose class="note" html={config.header} />}
-      <div class="main" ref={main} style={`--slots: ${cut}`}>
+      {config.header && (
+        <Prose
+          class={`note m-0 max-h-[30vh] max-w-none overflow-auto overscroll-contain border-b border-b-line bg-surface py-[calc(var(--pad)*0.6)] ${LIST_PAD} text-s leading-[1.5] text-muted viewing:hidden`}
+          html={config.header}
+        />
+      )}
+      <div class="main relative grid min-h-0 grid-cols-[repeat(var(--slots,4),minmax(0,1fr))] overflow-clip viewing:grid-cols-[minmax(0,1fr)] phone:grid-cols-[minmax(0,1fr)]" ref={main} style={`--slots: ${cut}`}>
         <section
-          class={finding ? (wide ? "left wide res" : "left res") : "left"}
+          class={`left flex min-h-0 min-w-0 flex-col ghost:pointer-events-none ghost:absolute ghost:z-1 ghost:bg-bg viewing:not-ghost:hidden ${
+            // The matches take two slots, or all of them when the window has two. A phone draws each in two lines.
+            finding ? `phone:[--row-h:calc(52px*var(--density))] ${wide ? "col-[span_2] border-r border-r-line phone:border-r-0" : "col-span-full"}` : "border-r border-r-line phone:border-r-0"
+          }`}
           data-pane={s.path}
           onPointerMove={onListMove}
           onPointerLeave={onListLeave}
@@ -441,6 +468,7 @@ export function App() {
             <MatchBar input={queryInput} />
           ) : (
             <FolderBar
+              inList
               name={s.path ? nameOf(s.path) : config.root}
               path={s.path}
               count={s.status === "ready" ? s.all.length : undefined}
@@ -461,24 +489,34 @@ export function App() {
             onShown={finding ? (last) => store.more(last) : undefined}
           >
             {!finding && s.readme && !s.filter && (
-              <section class="readme">
-                <div class="readme-hd label">
+              <section class="border-t border-t-line [.rows:empty+&]:border-t-0">
+                <div class={`label flex h-[calc(30px*var(--density))] items-center gap-2 border-b border-b-line normal-case ${LIST_PAD}`}>
                   <KindIcon kind="md" />
                   {s.readme.name}
                 </div>
-                <Prose html={s.readme.html} />
+                <Prose class="m-0 max-w-[46em] px-[calc(var(--pad)*1.25)] pt-[calc(var(--pad)*1.6)] pb-12 text-base" html={s.readme.html} />
               </section>
             )}
           </VList>
         </section>
-        {(!finding || wide) && <Side slots={finding ? cut - 1 : cut} />}
+        {(!finding || wide) && <Side slots={finding ? cut - 1 : cut} matches={finding} />}
       </div>
-      <footer class={!finding && (filtering || s.filter) ? "status filtering" : "status"}>
-        <span class={finding || s.open || s.filter ? "mode loud" : "mode"}>{finding ? "find" : s.open ? "view" : s.filter ? "filter" : "browse"}</span>
-        <span class="info num">{finding ? matchesInfo() : s.status === "ready" ? info : ""}</span>
-        <label class="fil">
+      <footer
+        class={`flex h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
+      >
+        <span
+          class={`inline-flex flex-none items-center font-mono text-[length:calc(var(--text)*0.72)] font-medium tracking-[0] uppercase before:size-1.5 before:rounded-[50%] before:bg-accent before:content-[''] phone:hidden ${
+            // Loud while it is not plain browsing: a filled chip, and no dot.
+            finding || s.open || s.filter ? "gap-0 rounded-[min(var(--radius),3px)] bg-accent px-1.75 py-px text-accent-fg before:hidden" : "gap-1.5 text-muted"
+          }`}
+        >
+          {finding ? "find" : s.open ? "view" : s.filter ? "filter" : "browse"}
+        </span>
+        <span class="num whitespace-nowrap">{finding ? matchesInfo() : s.status === "ready" ? info : ""}</span>
+        <label class={`min-w-0 flex-1 items-center gap-1 font-mono tracking-[0] text-fg ${filterShown ? "flex" : "hidden"}`}>
           /
           <input
+            class="min-w-0 flex-1 border-0 bg-transparent p-0 text-s pointer-coarse:text-[16px]"
             ref={filterInput}
             type="text"
             value={s.filter}
@@ -500,8 +538,8 @@ export function App() {
             onBlur={() => setFiltering(false)}
           />
         </label>
-        <span class="sp" />
-        <span class="hints">
+        <span class="flex-1" />
+        <span class={`items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden ${filterShown ? "hidden" : "flex"}`}>
           <span>
             <kbd>j</kbd>
             <kbd>k</kbd> move
@@ -550,7 +588,7 @@ export function App() {
             </>
           )}
         </span>
-        <button class="btn touch" onClick={focusFilter}>
+        <button class="btn hidden phone:inline-flex phone:h-8" onClick={focusFilter}>
           <Icon name="search" />
           {finding ? "Refine" : "Filter"}
         </button>

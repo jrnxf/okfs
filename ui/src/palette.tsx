@@ -8,6 +8,7 @@ import * as fmt from "./fmt";
 import { type Answer, holdBack, took, waiting } from "./find";
 import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
+import { SCRIM } from "./look";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
 import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
 
@@ -106,6 +107,11 @@ function fuzzy(query: string, text: string): { score: number; idx: number[] } | 
   return idx.length === query.length ? { score, idx } : null;
 }
 
+/** A row of the palette, and its name and folder: the folder takes the room the name leaves, cut at its start. */
+const PICK = "flex h-(--row-h) cursor-pointer items-center gap-2.5 rounded px-2 aria-selected:bg-accent-soft";
+const PICK_NAME = "min-w-0 max-w-[60%] flex-none truncate";
+const PICK_DIR = "flex-1 text-right text-s text-muted [direction:rtl]";
+
 /** Text with its matched characters marked. `idx` counts characters, and `from` is where `text` starts. */
 export function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; from?: number }) {
   if (!idx.length) return <>{text}</>;
@@ -117,7 +123,7 @@ export function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; f
       plain += char;
       return;
     }
-    out.push(plain, <mark>{char}</mark>);
+    out.push(plain, <mark class="bg-transparent font-strong text-accent">{char}</mark>);
     plain = "";
   });
   out.push(plain);
@@ -287,11 +293,11 @@ export function Palette() {
   const pending = searching && waiting(asked, answer);
 
   return (
-    <div class="scrim" onPointerDown={(event) => event.target === event.currentTarget && store.setPalette(false)}>
-      <div class="pal" role="dialog" aria-label={menu ? menu.title : "Find anything"}>
-        <div class="pal-in">
+    <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setPalette(false)}>
+      <div class="flex max-h-[min(70vh,560px)] w-[min(620px,100%)] flex-col overflow-hidden rounded-lg bg-surface shadow" role="dialog" aria-label={menu ? menu.title : "Find anything"}>
+        <div class="flex h-[calc(48px*var(--density))] flex-none items-center gap-2.5 border-b border-b-line px-3.5 text-faint">
           {menu ? (
-            <button class="btn pal-up" aria-label={`${menu.title}: back to everything`} onClick={back}>
+            <button class="btn -ml-1.5 flex-none gap-0.5 pr-2 pl-1 font-strong text-fg phone:h-[34px]" aria-label={`${menu.title}: back to everything`} onClick={back}>
               <Icon name="left" />
               {menu.title}
             </button>
@@ -300,6 +306,7 @@ export function Palette() {
           )}
           <input
             ref={input}
+            class="min-w-0 flex-1 border-0 bg-transparent text-[length:calc(var(--text)*1.1)] text-fg placeholder:text-faint pointer-coarse:text-[16px]"
             type="text"
             name="find"
             value={value}
@@ -312,18 +319,19 @@ export function Palette() {
             }}
             onKeyDown={onKey}
           />
-          <kbd class="pal-esc">esc</kbd>
+          {/* there is no Escape key on a phone, and the chip sits over the end of the placeholder */}
+          <kbd class="pointer-coarse:hidden">esc</kbd>
         </div>
-        <div class="pal-list" ref={list}>
-          {rows.length === 0 && !pending && <div class="pal-empty">Nothing matches “{query}”.</div>}
+        <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list}>
+          {rows.length === 0 && !pending && <div class="px-3 py-7 text-center text-faint">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
             if ("all" in row) return null;
-            const common = { class: "pal-row", "aria-selected": index === at, onClick: () => pick(index) };
+            const common = { class: PICK, "aria-selected": index === at, onClick: () => pick(index) };
             const group = groupOf(row);
             const previous = rows[index - 1];
             // A nested list is named beside the input, so its rows go under no label.
             const label = !menu && (!previous || groupOf(previous) !== group) && (
-              <div class="pal-group label">{group}</div>
+              <div class="label px-2 pt-2 pb-1">{group}</div>
             );
             if ("command" in row) {
               const { command } = row;
@@ -331,12 +339,12 @@ export function Palette() {
                 <Fragment key={`command:${command.title}`}>
                   {label}
                   <div {...common}>
-                    <span class="nm trunc">
+                    <span class={PICK_NAME}>
                       <Marked text={command.title} idx={row.idx} />
                     </span>
-                    <span class="dir" />
+                    <span class={PICK_DIR} />
                     {"key" in command && command.key && <kbd>{command.key}</kbd>}
-                    {"menu" in command && <Icon name="right" class="pal-more" />}
+                    {"menu" in command && <Icon name="right" class="flex-none text-faint" />}
                   </div>
                 </Fragment>
               );
@@ -349,11 +357,11 @@ export function Palette() {
                   {label}
                   <div {...common}>
                     <KindIcon kind={kindOf(name, false)} />
-                    <span class="nm trunc">{name}</span>
-                    <span class="dir trunc">
-                      <bdi>{dir || "/"}</bdi>
+                    <span class={PICK_NAME}>{name}</span>
+                    <span class={`${PICK_DIR} min-w-0 truncate`}>
+                      <bdi class="[direction:ltr]">{dir || "/"}</bdi>
                     </span>
-                    <span class="age" title={fmt.abs(m)}>
+                    <span class="min-w-[3ch] flex-none text-right text-s text-muted tabular-nums" title={fmt.abs(m)}>
                       {fmt.rel(m)}
                     </span>
                   </div>
@@ -369,11 +377,11 @@ export function Palette() {
                 {label}
                 <div {...common}>
                   <KindIcon kind={kindOf(name, hit.dir)} />
-                  <span class="nm trunc">
+                  <span class={PICK_NAME}>
                     <Marked text={name} idx={hit.idx} from={offset} />
                   </span>
-                  <span class="dir trunc">
-                    <bdi>{hit.name ? dir || "/" : <Marked text={dir || "/"} idx={hit.idx} />}</bdi>
+                  <span class={`${PICK_DIR} min-w-0 truncate`}>
+                    <bdi class="[direction:ltr]">{hit.name ? dir || "/" : <Marked text={dir || "/"} idx={hit.idx} />}</bdi>
                   </span>
                 </div>
               </Fragment>
@@ -381,40 +389,42 @@ export function Palette() {
           })}
         </div>
         {allAt >= 0 && (
-          <div class="pal-all">
-            <div class="pal-row" role="option" aria-selected={allAt === at} onClick={() => pick(allAt)}>
-              <Icon name="list" />
-              <span class="nm trunc">Show all {matches} in the list</span>
-              <span class="kk">
+          // The way to every match, held under the list: it does not scroll away with the best ones.
+          <div class="flex-none border-t border-t-line p-1.5">
+            <div class={`${PICK} text-fg phone:h-11`} role="option" aria-selected={allAt === at} onClick={() => pick(allAt)}>
+              <Icon name="list" class={allAt === at ? "text-accent" : "text-faint"} />
+              <span class="min-w-0 flex-1 truncate">Show all {matches} in the list</span>
+              <span class="inline-flex flex-none gap-0.75 phone:hidden">
                 <kbd>{MOD}</kbd>
                 <kbd>↵</kbd>
               </span>
             </div>
           </div>
         )}
-        <div class="pal-foot">
-          <span>
+        <div class="flex h-[calc(34px*var(--density))] flex-none items-center gap-3.5 border-t border-t-line px-3.5 text-xs text-faint *:inline-flex *:items-center *:gap-1.25">
+          {/* no keys to hint at on a phone, and the count needs the room */}
+          <span class="phone:hidden">
             <kbd>↑</kbd>
             <kbd>↓</kbd> move
           </span>
-          <span>
+          <span class="phone:hidden">
             <kbd>↵</kbd> {menu ? "choose" : "open"}
           </span>
           {menu ? (
-            <span>
+            <span class="phone:hidden">
               <kbd>esc</kbd> back
             </span>
           ) : allAt >= 0 ? (
-            <span>
+            <span class="phone:hidden">
               <kbd>{MOD}</kbd>
               <kbd>↵</kbd> all
             </span>
           ) : (
-            <span>
+            <span class="phone:hidden">
               <kbd>&gt;</kbd> commands
             </span>
           )}
-          <span class="sp" />
+          <span class="flex-1" />
           {found && (
             <span class="num">
               {searching && !pending && `${took(found.took)} · `}

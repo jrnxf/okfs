@@ -1,0 +1,80 @@
+/* The demo page's stylesheet: Tailwind's utilities over the page's own colors and faces. build.ts builds it into the
+   page. Bare: no frame and no window. The page is okfs; a status line under it carries the numbers and the keys to
+   try. Mona Sans, in its wide cuts, for the voice; Fragment Mono for everything typed or counted. Tailwind's
+   Preflight is left out: the base layer below is the page's own. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@font-face { font-family: "Mona Sans"; font-style: normal; font-display: swap; font-weight: 200 900; font-stretch: 75% 125%; src: url({{page-font:mona-sans}}) format("woff2"); }
+@font-face { font-family: "Fragment Mono"; font-style: normal; font-display: swap; font-weight: 400; src: url({{page-font:fragment-mono}}) format("woff2"); }
+:root {
+  --sans: "Mona Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Fragment Mono", ui-monospace, Menlo, monospace;
+  --ease: cubic-bezier(.23, 1, .32, 1);
+  --bar: 46px;
+}
+/* Page colors, and okfs's own (its default theme) for the places okfs is about to be drawn. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c0c0d; --bg-2: #151517; --ink: #f2f1ec; --ink-2: #b1b0aa; --ink-3: #85847e; --rule: #26262a;
+  --spot: #ff6a36; --spot-ink: #160a04;
+  --ok-bg: #0d0d0e; --ok-line: #232325; --ok-bone: #1b1b1d; --ok-faint: #76766f;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e8e7e2; --bg-2: #dfded8; --ink: #121211; --ink-2: #45443f; --ink-3: #66645e; --rule: #c9c7bf;
+  --spot: #c9411a; --spot-ink: #ffffff;
+  --ok-bg: #fbfbfa; --ok-line: #e7e7e3; --ok-bone: #efefec; --ok-faint: #8a8a86;
+}
+
+/* The page's colors by name: a scheme switch changes the variables, and every utility follows. */
+@theme inline reference {
+  --*: initial;
+  --spacing: 0.25rem;
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-spot: var(--spot);
+  --color-spot-ink: var(--spot-ink);
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-line: var(--ok-line);
+  --color-ok-bone: var(--ok-bone);
+  --color-ok-faint: var(--ok-faint);
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+  --ease-page: var(--ease);
+  --animate-breathe: breathe 1.6s ease-in-out infinite alternate;
+}
+
+@custom-variant hover (&:hover);
+@custom-variant dark (:root[data-theme="dark"] &);
+@custom-variant light (:root[data-theme="light"] &);
+@custom-variant under-1520 (@media (width <= 1520px));
+@custom-variant under-1320 (@media (width <= 1320px));
+@custom-variant under-1180 (@media (width <= 1180px));
+@custom-variant under-1100 (@media (width <= 1100px));
+@custom-variant under-1000 (@media (width <= 1000px));
+@custom-variant under-860 (@media (width <= 860px));
+@custom-variant under-760 (@media (width <= 760px));
+
+@layer base {
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.5 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: inherit; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--spot); outline-offset: 2px; }
+  code, kbd, input { font-family: var(--mono); }
+  p code, li code { font-size: .88em; color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  }
+}
+
+@keyframes breathe { from { opacity: .55; } to { opacity: 1; } }
+@keyframes tut-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes hud { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
