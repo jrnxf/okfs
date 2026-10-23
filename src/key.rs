@@ -102,6 +102,11 @@ impl fmt::Debug for Once {
     }
 }
 
+/// A fresh nonce for one page's policy: 128 random bits, as for a key.
+pub fn nonce() -> Result<String, String> {
+    random()
+}
+
 /// 128 random bits from the operating system, as text an address carries as it is.
 fn random() -> Result<String, String> {
     let mut bytes = [0; BYTES];

@@ -25,6 +25,14 @@ export interface Config {
   target: { path: string; kind: "dir" | "file" | "missing" };
   /** True when the server was started with deleting on. */
   delete: boolean;
+  /** True when the server was started with `--allow-upload`: files and folders can be added. */
+  upload?: boolean;
+  /** True when the server was started with `--allow-edit`: the files that are there can be changed. */
+  edit?: boolean;
+  /** The largest file a write takes, in bytes, when `--max-upload` sets one. */
+  max_upload?: number;
+  /** The nonce this page's policy lets a style element in with. Only with `--allow-edit`. */
+  nonce?: string;
   /** True when the server draws the first page of a PDF as a picture. */
   pdf?: boolean;
   /** True with `--hidden`: dotfiles are served, and a browser with no choice of its own shows hidden entries. */

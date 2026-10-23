@@ -148,12 +148,15 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `--title <TEXT>` | Name shown in the corner and the browser tab. Default `okfs`. |
 | `--accent <COLOR>` | Accent color in every theme, as hex: `"#2d6a4f"`. |
 | `-H`, `--hidden` | Serve dotfiles, and show hidden files to a browser that has made no choice with `.`. Without it, dotfiles are never sent, and `.` shows only the folders left out of the search. |
-| `--key` | Ask for the key on a loopback address too, as behind a tunnel that anyone can reach. |
+| `--key` | Ask for the key on a loopback address too, as behind a tunnel that anyone can reach. Any write flag does the same. |
 | `--no-key` | Let in anyone who reaches an address beyond loopback, with no key. For a proxy that signs people in itself. See [Letting other machines in](#letting-other-machines-in). |
 | `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
 | `--tls-cert <FILE>` | Serve https with this certificate, in PEM. Needs `--tls-key`. See [HTTPS](#https). |
 | `--tls-key <FILE>` | The private key of the `--tls-cert` certificate, in PEM. Needs `--tls-cert`. |
+| `--allow-upload` | Let anyone who can reach the address add files and folders. A file never replaces one that is there. Off by default. See [Uploading and editing](#uploading-and-editing). |
+| `--allow-edit` | Let anyone who can reach the address change the files that are there. Off by default. See [Uploading and editing](#uploading-and-editing). |
 | `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
+| `--max-upload <SIZE>` | The largest file an upload or a save may be: `500M`, `4G`. No limit by default. |
 | `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
 </details>
@@ -176,6 +179,8 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
 | `Esc` | Close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `u` | Upload files into this folder. Only with `--allow-upload`. |
+| `n` | Make a new file in this folder. Only with `--allow-upload`. |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 ### Addresses you can rely on
@@ -247,10 +252,10 @@ What the key does and does not do:
 - It stops anyone who can reach the address but does not have the link. It does not stop anyone who can watch the traffic. Without a certificate okfs speaks plain HTTP, so on open Wi-Fi, or on a network whose password others know, a program that captures packets reads the key and then every file. Treat such a link as you would a password sent over plain HTTP. For anything beyond a network you trust, serve [HTTPS](#https) or put a TLS proxy in front (see [Behind a proxy or a tunnel](#behind-a-proxy-or-a-tunnel)).
 - The cookie is `HttpOnly` and `SameSite=Strict`, which keeps scripts and other sites' pages from using it. A browser still sends a cookie to every port of the same host. Any other web service on the same machine, on any port, therefore receives the key from a browser that has opened okfs. Do not run okfs on a machine that also runs listeners you do not trust.
 - On a machine with other users, another account can read the command that opens the browser. So the browser okfs opens itself gets a one-time `?once=` code in place of the key. The first request that brings the code trades it for the cookie, and a code no browser has used dies after 60 seconds.
-- The key is not a login. Anyone who has the link has all of it: with `--allow-delete`, that includes deleting.
+- The key is not a login. Anyone who has the link has all of it: with a write flag, that includes changing and deleting.
 - An HTML page from the served folder cannot load its own stylesheet, scripts or images while the key is on. It is sandboxed in an origin of its own, a browser sends it no cookie, and the key is not put in its address on purpose, so its requests for the folder's other files are refused. The page shows with no styling, and its links to other files fail. Without a key, the same page loads them.
 
-`--no-key` turns the key off. Use it only when something in front of okfs already decides who gets in, such as a proxy that signs people in, or on a network where everyone may read the folder. `--key` asks for the key on a loopback address too, for a tunnel that exposes it to anyone.
+`--no-key` turns the key off. Use it only when something in front of okfs already decides who gets in, such as a proxy that signs people in, or on a network where everyone may read the folder. `--key` asks for the key on a loopback address too, for a tunnel that exposes it to anyone. `--allow-upload`, `--allow-edit` and `--allow-delete` each do the same, so that another account on the machine cannot change the folder. The browser okfs opens gets a one-time code, so on your own machine nothing looks different.
 
 ### HTTPS
 
@@ -279,7 +284,7 @@ okfs --allow-host files.example.com
 
 A name of your own on the network, such as `my-laptop.local`, needs `--allow-host` too. A plain address always works, as `--bind 0.0.0.0` prints it.
 
-The host check is not a password. A program other than a browser can send any name it likes, so okfs behind a proxy that asks people to sign in is still open to anything that can reach its own address directly. Keep that address where only the proxy can reach it: listen on loopback with the proxy on the same machine, or let a firewall through to okfs's port from the proxy alone. On loopback okfs asks for no key. If okfs has to listen beyond loopback behind a proxy that signs people in, pass `--no-key`, or the proxy's users are asked for a key they do not have.
+The host check is not a password. A program other than a browser can send any name it likes, so okfs behind a proxy that asks people to sign in is still open to anything that can reach its own address directly. Keep that address where only the proxy can reach it: listen on loopback with the proxy on the same machine, or let a firewall through to okfs's port from the proxy alone. On loopback okfs asks for no key, unless a write flag is on. If okfs has to listen beyond loopback behind a proxy that signs people in, pass `--no-key`, or the proxy's users are asked for a key they do not have.
 
 A proxy that ends TLS gives you https without `--tls-cert`, and okfs then marks its key cookie `Secure` when the proxy sends `X-Forwarded-Proto: https`. A tunnel such as Cloudflare Tunnel or Tailscale Funnel does the same job without a proxy of your own: run okfs on loopback, name the tunnel's host with `--allow-host`, and add `--key` unless the tunnel signs people in.
 
@@ -312,7 +317,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-`DynamicUser=yes` runs okfs as a user with no account, so the files in `/srv/files` must be readable by everyone. `CacheDirectory=okfs` gives it `/var/cache/okfs` for thumbnails and PDF pictures, and `XDG_CACHE_HOME` points okfs there. Then:
+`DynamicUser=yes` runs okfs as a user with no account, so the files in `/srv/files` must be readable by everyone. With a write flag, okfs has to be able to write there: use `ReadWritePaths=` in place of `ReadOnlyPaths=`, and a `User=` that owns the folder. `CacheDirectory=okfs` gives it `/var/cache/okfs` for thumbnails and PDF pictures, and `XDG_CACHE_HOME` points okfs there. Then:
 
 ```sh
 sudo systemctl daemon-reload
@@ -387,9 +392,30 @@ server {
 
 In both, start okfs with `--allow-host files.example.com`. To ask people to sign in, add that to the proxy (basic auth in Caddy or nginx, or an auth proxy), and keep okfs on loopback.
 
+### Uploading and editing
+
+okfs is read only until you start it with a write flag. Two flags let it change what is there, each a different kind of change:
+
+```sh
+okfs --allow-upload        # add files and folders
+okfs --allow-edit          # change the files that are there
+```
+
+`--allow-upload` only adds. A file whose name is taken is refused, or kept beside the one that is there under the next free name, such as `tides (1).csv`. It never replaces anything, so it is the one to use for a folder that people drop files into.
+
+With it, drop files or folders anywhere on the list to upload them into the folder on screen, or on a folder in the list or a column to upload them into that folder. The upload button above the list, `u` and the palette open the file picker, and the palette can also upload a whole folder. A dropped folder is made, folders and all, before its files. Files land in the list as they arrive, and a small tray in the corner shows how far each has got. A dotfile, or a folder whose name starts with a dot, is left out unless okfs runs with `--hidden`.
+
+When a name is taken, okfs asks: keep both, which is where the focus starts, skip, or replace the file that is there, which only `--allow-edit` offers. The choice can be made once for every other name that is taken in the same upload. `n` and the `+` button make a new, empty file, and the palette makes a new folder. On a phone the upload and `+` buttons sit at the top of the screen; there is no drag and drop.
+
+`--allow-edit` changes files in place. Every change names the version of the file it started from, and is refused when the file has changed on disk since: nothing is lost to a write that came in between. With it, a new file may also replace one of the same name.
+
+Every write lands whole or not at all. The file is written beside where it goes, under a hidden name okfs never shows (`.okfs-....part`), synced to disk, and moved into place in one step. A reader sees the old file or the new one, never part of one, and a write that is cut off leaves nothing. A replaced file keeps its permissions. A symbolic link stays a link, and the file it points at is the one written. A hard link to the old file keeps the old content.
+
+There is no limit on size unless you give one: `--max-upload 4G`.
+
 ### Deleting
 
-okfs is read only until you start it with `--allow-delete`:
+okfs deletes nothing until you start it with `--allow-delete`:
 
 ```sh
 okfs --allow-delete
@@ -401,7 +427,7 @@ okfs deletes only what it shows. A folder that holds something it does not show,
 
 A folder is not removed in one step. If the disk refuses part way, for example at a subfolder okfs has no permission to change, okfs says that it stopped part way and shows what is left. What it removed before that point does not come back.
 
-okfs has no accounts, so with this flag anyone who can reach the address and has its key can delete (anyone who can reach it, with `--no-key`). Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
+okfs has no accounts, so with a write flag anyone who can reach the address and has its key can change the folder. With this one they can delete (anyone who can reach it, with `--no-key`). Read [What is safe to serve](#what-is-safe-to-serve) before you use it beyond your own machine.
 
 Deleting works only from the address okfs answers to. If you reach okfs through a proxy, a tunnel or a host name of your own, name it with `--allow-host`, also when okfs listens on `0.0.0.0`.
 ## Themes
@@ -484,12 +510,21 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 ## What is safe to serve
 
 - No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
-- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-delete`. Thumbnails and the first pages of PDFs are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
+- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-upload`, `--allow-edit` or `--allow-delete`. Thumbnails and the first pages of PDFs are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
 - HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder, and while a key is on, it cannot load its stylesheet, scripts or images from the folder at all.
 - A PDF is drawn in a process of its own, which is handed the open file and no path, and is ended after 5 seconds. A PDF that is broken, or made to break a reader, costs that one picture: its preview is then the browser's viewer alone. PDFs over 64 MB are not drawn.
 - Only dotfiles are withheld. A file that a `.gitignore` names is still listed, searched and served, as is every other file that is not a dotfile (see [A big folder](#a-big-folder): the ignore rules only decide what is searched and watched). A folder named in a `.gitignore` can be opened at its address. Put nothing in the served folder that you do not want a visitor to read, a `secrets.yml` listed in a `.gitignore` included, or move it out.
 - The page itself loads nothing from another site, but Markdown it renders can: an image in a README that points at a remote address is fetched by each visitor's browser from that address. A file in the folder can therefore make every visitor's browser contact a site of its choosing.
 - okfs has no accounts. On loopback, only programs on your machine can reach it. Beyond loopback, anyone with the key can read every file in the folder, and without [HTTPS](#https) the key crosses plain HTTP (see [Letting other machines in](#letting-other-machines-in)). With `--no-key`, anyone who can reach the address can read every file.
+
+With `--allow-upload` or `--allow-edit`:
+
+- Anyone who can reach the address with the key (or anyone at all, with `--no-key`) can add files to the folder, and with `--allow-edit` change every file in it. Use them where you would hand everyone on that network the folder itself.
+- A write goes only where okfs shows: never out of the served folder, through a link or a `..`, and never to a dotfile unless you also pass `--hidden`. A new name is one name, with no control characters in it.
+- `--allow-upload` alone never replaces or changes a file.
+- A change is refused when the file changed since it was read. The check and the step that replaces the file are not split by another write from okfs, but a program outside okfs could still write in the moment between them.
+- Another website cannot make your browser write, and an HTML or SVG file in the folder cannot write to its neighbours, by the same rules as for deleting, below.
+- With `--allow-edit` the page's policy lets in style elements that carry a nonce made fresh for each page, which the editor needs. Nothing else in the policy changes.
 
 With `--allow-delete`:
 
@@ -498,7 +533,7 @@ With `--allow-delete`:
 - Deleting never follows a symbolic link that sits in the folder. A link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted. A link that leads out of the served folder is not shown, so it is never removed. A delete therefore stays inside the served folder, as long as nothing else changes the folder while the delete runs.
 - Deleting is not hardened against another process on the same machine that rewrites the served folder while a delete runs, for example one that swaps a folder for a link at that moment. Do not use `--allow-delete` on a folder that local users you do not trust can write to.
 - Another website cannot make your browser delete. okfs takes a delete only from its own page, at the address it answers to: `localhost`, a plain address, or a name from `--allow-host`.
-- Another website cannot put the page in a frame and steer your clicks onto the delete button. With this flag the page tells the browser that only okfs itself may frame it (`frame-ancestors 'self'`). Without the flag the page can still be framed, and nothing can be deleted through it.
+- Another website cannot put the page in a frame and steer your clicks onto the delete button. With this flag, or any write flag, the page tells the browser that only okfs itself may frame it (`frame-ancestors 'self'`). Without them the page can still be framed, and nothing can be changed through it.
 - An HTML or SVG file in the folder cannot delete its neighbours. It runs sandboxed, in an origin of its own.
 
 ## Develop

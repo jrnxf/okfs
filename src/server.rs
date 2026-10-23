@@ -1,5 +1,6 @@
-//! The HTTP side: every route okfs answers. All of them read, except the one that
-//! deletes, and that one refuses unless okfs was started with `--allow-delete`.
+//! The HTTP side: every route okfs answers. All of them read, except the three that write: one
+//! deletes, and refuses unless okfs was started with `--allow-delete`, one puts a file in place,
+//! with `--allow-upload` or `--allow-edit`, and one makes a folder, with `--allow-upload`.
 
 use std::convert::Infallible;
 use std::fs;
@@ -17,22 +18,24 @@ use axum::http::{Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::{StreamExt, future, stream};
 use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::{Index, Order, Page};
 use crate::key::{self, Key, Once};
 use crate::live::Change;
-use crate::paths::{self, Kept, NoEntry, Resolved, Root, Unshown};
+use crate::paths::{self, Kept, NoEntry, Resolved, Root, Target as Place, Unshown};
 use crate::pdf::{self, Drawer};
 use crate::render::{self, encode_path, view_url};
 use crate::theme::{self, Swatch, Theme};
 use crate::thumb::{self, Thumbs};
+use crate::write::{self, Locks, Part};
 use crate::{archive, assets, preview, raw};
 
 /// A folder's notes larger than this are not shown under its listing.
@@ -41,9 +44,9 @@ const MAX_README: u64 = 512 * 1024;
 /// Markdown are the one thing allowed from elsewhere.
 const PAGE_POLICY: &str = "default-src 'self'; img-src 'self' data: blob: https: http:; media-src 'self' blob:; \
      style-src 'self'; script-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
-/// Added to the page's policy while deleting is on: only okfs itself may show the page
+/// Added to the page's policy while any write is on: only okfs itself may show the page
 /// in a frame. Another site that could would hide it and steer a visitor's clicks
-/// onto the delete button and through the dialog.
+/// onto the delete button and through the dialog, or into the editor.
 const NO_FRAMING: &str = "frame-ancestors 'self'";
 /// The header that tells a page its PDF cannot be read.
 const PDF_HEADER: &str = "x-okfs-pdf";
@@ -52,10 +55,9 @@ const PDF_HEADER: &str = "x-okfs-pdf";
 const STREAM_BEAT: Duration = Duration::from_secs(15);
 /// The id of a theme read from a file, as the switcher knows it.
 const CUSTOM: &str = "custom";
-/// The header, and its value, that the page sends with a delete. See `own_page`.
-const DELETE_HEADER: (&str, &str) = ("x-okfs", "delete");
-/// What a delete is refused with when nothing about it says okfs's own page sent it.
-const NOT_THE_PAGE: &str = "only the okfs page itself can delete";
+/// The header the page sends with every change it asks for, with the kind of change as its
+/// value: `delete`, or `write` for a file or a folder put in place. See `own_page`.
+const OWN_HEADER: &str = "x-okfs";
 
 /// Which theme a fresh browser gets.
 #[derive(Debug, Clone)]
@@ -87,6 +89,13 @@ pub struct Options {
     /// Let visitors delete entries. Off unless asked for: okfs has no accounts, so
     /// with this on anyone who can reach the address can delete.
     pub allow_delete: bool,
+    /// Let visitors add files and folders. A file never lands on a name that is taken.
+    pub allow_upload: bool,
+    /// Let visitors change the files that are there: save from the editor, or replace a file
+    /// with one of the same name. Each write names the version it replaces.
+    pub allow_edit: bool,
+    /// The largest file a write takes, in bytes. No limit without it.
+    pub max_upload: Option<u64>,
     /// The key every request has to bring, in its address or its cookie: see `key`. okfs makes
     /// one at an address beyond loopback, unless told not to.
     pub key: Option<Key>,
@@ -95,6 +104,13 @@ pub struct Options {
     pub once: Option<Arc<Once>>,
     /// okfs serves https itself, from `--tls-cert` and `--tls-key`.
     pub tls: bool,
+}
+
+impl Options {
+    /// True when anything may change the served folder.
+    pub fn writes(&self) -> bool {
+        self.allow_delete || self.allow_upload || self.allow_edit
+    }
 }
 
 impl Default for Options {
@@ -111,6 +127,9 @@ impl Default for Options {
             drawer: None,
             pdf_limit: pdf::LIMIT,
             allow_delete: false,
+            allow_upload: false,
+            allow_edit: false,
+            max_upload: None,
             key: None,
             once: None,
             tls: false,
@@ -129,6 +148,8 @@ pub struct App {
     custom: Mutex<Option<(SystemTime, Theme)>>,
     /// Decoding images and coloring code are the costly requests: this many run at once.
     heavy: Semaphore,
+    /// The files being replaced, one write at a time on each.
+    locks: Locks,
 }
 
 impl App {
@@ -152,6 +173,7 @@ impl App {
             options,
             custom: Mutex::new(custom),
             heavy: Semaphore::new(workers),
+            locks: Locks::default(),
         }))
     }
 
@@ -211,7 +233,8 @@ pub fn read_theme(path: &std::path::Path) -> Result<(SystemTime, Theme), String>
     }
 }
 
-/// Every route. Only `/api/entry` changes anything on disk, and only when deleting is on.
+/// Every route. Only `/api/entry`, `/api/file` and `/api/folder` change anything on disk, and
+/// only when their flag is on.
 pub fn router(app: Arc<App>) -> Router {
     let packed = Router::new()
         .route("/api/list", get(list))
@@ -230,6 +253,9 @@ pub fn router(app: Arc<App>) -> Router {
     // and a change has to leave the moment it is written.
     let plain = Router::new()
         .route("/api/events", get(events))
+        // A body comes in as it is sent, straight to disk.
+        .route("/api/file", put(put_file))
+        .route("/api/folder", post(make_folder))
         .route("/api/picture", get(picture))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
@@ -947,17 +973,17 @@ async fn archive_list(State(app): State<Arc<App>>, Query(query): Query<PathQuery
     }
 }
 
-/// True when a delete was asked for by okfs's own page, and not by a page on another
+/// True when a change was asked for by okfs's own page, and not by a page on another
 /// site that a visitor happens to have open. okfs has no accounts, so there is no
 /// session to steal: what such a page could borrow is the visitor's place on the
 /// network, the browser that can reach an address the page's own server cannot.
 /// Three things together stop that.
 ///
-/// - The method is DELETE and the request carries a header of okfs's own. A form
-///   can send neither, and a script on another site can send them only after the
-///   browser has asked okfs for leave (a preflight). okfs never gives it: it answers
-///   no OPTIONS request and sends no CORS header.
-/// - The `Origin` header, which a browser sets on every DELETE and a page cannot
+/// - The request carries a header of okfs's own, `x-okfs`, whose value names the change:
+///   `change`. A form cannot send it, and a delete's method is one no form has. A script
+///   on another site can send them only after the browser has asked okfs for leave (a
+///   preflight). okfs never gives it: it answers no OPTIONS request and sends no CORS header.
+/// - The `Origin` header, which a browser sets on every DELETE, PUT and POST and a page cannot
 ///   change, has to name okfs itself. It passes the same rule as the Host of any
 ///   request (a plain address, `localhost`, or a name from `--allow-host`), so a
 ///   hostile name pointed at this machine fails even when okfs listens beyond
@@ -967,31 +993,31 @@ async fn archive_list(State(app): State<Arc<App>>, Query(query): Query<PathQuery
 ///   where okfs sees plain HTTP; the scheme only tells which port a bare name means.
 /// - A missing `Origin` is refused, and so is `Origin: null`. The second is what a
 ///   served HTML or SVG file has, because okfs sends those sandboxed, so a file in
-///   the folder can never delete its neighbours.
+///   the folder can never delete or write its neighbours.
 ///
 /// The error is what to answer. When a page did send the request, from a host okfs
 /// does not know as its own, it names the `--allow-host` that would let it in.
-fn own_page(headers: &HeaderMap, host: &str, allowed: &[String]) -> Result<(), String> {
-    let (name, value) = DELETE_HEADER;
-    if headers.get(name).is_none_or(|sent| sent != value) {
-        return Err(NOT_THE_PAGE.to_owned());
+fn own_page(headers: &HeaderMap, host: &str, allowed: &[String], change: &str) -> Result<(), String> {
+    let not_the_page = || format!("only the okfs page itself can {change}");
+    if headers.get(OWN_HEADER).is_none_or(|sent| sent != change) {
+        return Err(not_the_page());
     }
     let mut origins = headers.get_all(header::ORIGIN).iter();
     let (Some(origin), None) = (origins.next(), origins.next()) else {
-        return Err(NOT_THE_PAGE.to_owned());
+        return Err(not_the_page());
     };
     let origin = origin.to_str().unwrap_or("").to_ascii_lowercase();
     let Some((scheme, from)) = origin.split_once("://") else {
-        return Err(NOT_THE_PAGE.to_owned());
+        return Err(not_the_page());
     };
     let default_port = match scheme {
         "http" => "80",
         "https" => "443",
-        _ => return Err(NOT_THE_PAGE.to_owned()),
+        _ => return Err(not_the_page()),
     };
     let (from_name, from_port) = split_host(from);
     if from_name.is_empty() || from.contains(['/', '@', '?', '#']) {
-        return Err(NOT_THE_PAGE.to_owned());
+        return Err(not_the_page());
     }
     let host = host.trim().to_ascii_lowercase();
     let (name, port) = split_host(&host);
@@ -1002,7 +1028,7 @@ fn own_page(headers: &HeaderMap, host: &str, allowed: &[String]) -> Result<(), S
         return Ok(());
     }
     Err(format!(
-        "the page at {from} is not one okfs knows as its own: to delete from it, start okfs with --allow-host {from_name}"
+        "the page at {from} is not one okfs knows as its own: to {change} from it, start okfs with --allow-host {from_name}"
     ))
 }
 
@@ -1032,8 +1058,7 @@ fn remove_entry(app: &App, path: &str) -> Response {
             "somewhere inside, this folder holds something okfs cannot show, such as a link that leads out of \
              the served folder, and so does not delete: remove it yourself",
         ),
-        // The kind reads as plain words, such as "permission denied", and names no path.
-        Err(Kept::Failed(error)) => fail(disk_status(&error), &error.kind().to_string()),
+        Err(Kept::Failed(error)) => disk_failed(&error),
         Err(Kept::Partly(error)) => {
             let message = format!("{}, and part of the folder may already be gone", error.kind());
             let answer = serde_json::json!({ "error": message, "partial": true });
@@ -1042,13 +1067,23 @@ fn remove_entry(app: &App, path: &str) -> Response {
     }
 }
 
-/// The status to answer with when the disk refused a delete.
+/// The status to answer with when the disk refused a delete or a write.
 fn disk_status(error: &std::io::Error) -> StatusCode {
+    use std::io::ErrorKind;
     match error.kind() {
-        std::io::ErrorKind::PermissionDenied => StatusCode::FORBIDDEN,
-        std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => StatusCode::FORBIDDEN,
+        ErrorKind::NotFound => StatusCode::NOT_FOUND,
+        ErrorKind::StorageFull | ErrorKind::QuotaExceeded => StatusCode::INSUFFICIENT_STORAGE,
+        ErrorKind::FileTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        ErrorKind::InvalidFilename => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+/// The answer to a write the disk refused. The kind reads as plain words, such as "no storage
+/// space", and names no path.
+fn disk_failed(error: &std::io::Error) -> Response {
+    fail(disk_status(error), &error.kind().to_string())
 }
 
 /// Deletes one entry of the served folder: a file, a link, or a folder with everything in it.
@@ -1061,7 +1096,12 @@ async fn delete_entry(
     if !app.options.allow_delete {
         return fail(StatusCode::FORBIDDEN, "deleting is off: start okfs with --allow-delete");
     }
-    if let Err(why) = own_page(&headers, request_host(&headers, &uri), &app.options.allow_hosts) {
+    if let Err(why) = own_page(
+        &headers,
+        request_host(&headers, &uri),
+        &app.options.allow_hosts,
+        "delete",
+    ) {
         return fail(StatusCode::FORBIDDEN, &why);
     }
     let Ok(Query(query)) = query else {
@@ -1071,6 +1111,375 @@ async fn delete_entry(
     tokio::task::spawn_blocking(move || remove_entry(&worker, &query.path))
         .await
         .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "the delete failed"))
+}
+
+#[derive(Deserialize)]
+struct WriteQuery {
+    #[serde(default)]
+    path: String,
+    /// When the name is taken, take the first free one of `name (1)`, `name (2)` and so on in
+    /// its place: "keep both".
+    #[serde(default, deserialize_with = "query_flag")]
+    keep: bool,
+}
+
+/// What a write of a file is for, as its headers say it.
+enum Wanted {
+    /// A new file, never over an entry that is there: `If-None-Match: *`.
+    New,
+    /// The file that is there, still the version with this tag: `If-Match`.
+    Over(String),
+}
+
+/// An answer that refuses a write, boxed: it is carried back through several steps.
+type Refused = Box<Response>;
+
+/// What a write of a file is for. A write that says neither is refused, so that no write can
+/// replace a file by chance.
+fn wanted(headers: &HeaderMap) -> Result<Wanted, Refused> {
+    let tag = |name| headers.get(name).map(|value| value.to_str().unwrap_or("").trim());
+    match (tag(header::IF_NONE_MATCH), tag(header::IF_MATCH)) {
+        (Some("*"), None) => Ok(Wanted::New),
+        (None, Some(tag)) if !tag.is_empty() && tag != "*" => Ok(Wanted::Over(tag.to_owned())),
+        (None, None) => Err(Box::new(fail(
+            StatusCode::PRECONDITION_REQUIRED,
+            "say what the write is for: If-None-Match: * adds a file, and If-Match with the file's tag replaces it",
+        ))),
+        _ => Err(Box::new(fail(
+            StatusCode::BAD_REQUEST,
+            "a write takes either If-None-Match: * or If-Match with one tag",
+        ))),
+    }
+}
+
+/// A file as a write answers with it: where it is, its tag, its size and its time.
+#[derive(Serialize)]
+struct Written {
+    path: String,
+    etag: String,
+    s: u64,
+    m: i64,
+}
+
+fn seconds(meta: &fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_secs() as i64)
+}
+
+/// The answer to a write whose name is taken, or whose file is no longer the version it read.
+/// It tells what is there now, when okfs shows it, so that the page can set the two side by
+/// side: `d` for a folder, or a file's tag, size and time. `gone` when nothing is there now.
+fn clash(app: &App, rel: &str, message: &str) -> Response {
+    let mut answer = serde_json::json!({ "error": message });
+    match app.root.resolve(rel) {
+        Some(found) if found.meta.is_dir() => answer["d"] = true.into(),
+        Some(found) => {
+            answer["etag"] = raw::etag(&found.meta).into();
+            answer["s"] = found.meta.len().into();
+            answer["m"] = seconds(&found.meta).into();
+        }
+        None => {
+            let gone = app
+                .root
+                .target(rel)
+                .is_ok_and(|place| fs::symlink_metadata(place.abs()).is_err());
+            if gone {
+                answer["gone"] = true.into();
+            }
+        }
+    }
+    (StatusCode::PRECONDITION_FAILED, Json(answer)).into_response()
+}
+
+/// The answer to a write that is larger than `--max-upload`.
+fn too_large(max: u64) -> Response {
+    fail(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        &format!("the file is larger than the {max} bytes --max-upload allows"),
+    )
+}
+
+/// The answer to a path a write cannot go to.
+fn no_place(why: NoEntry) -> Response {
+    match why {
+        NoEntry::Root => fail(StatusCode::BAD_REQUEST, "a write needs a name"),
+        NoEntry::NotServed => fail(
+            StatusCode::FORBIDDEN,
+            "okfs does not write this name: it steps up, is hidden, or holds a control character",
+        ),
+        NoEntry::Missing => fail(StatusCode::NOT_FOUND, "there is no such folder"),
+    }
+}
+
+/// Where a write goes, found before its body is read.
+enum Aim {
+    /// A new file, at `Place`, or with `keep` beside it under the first free name like it.
+    New { place: Place, keep: bool },
+    /// Over a file that is there: `abs` is where it really is, its link followed, and `rel` the
+    /// path it was asked for by.
+    Over { rel: String, abs: PathBuf, tag: String },
+}
+
+impl Aim {
+    /// The folder the file is put together in: the one it goes in, so that it moves into place in
+    /// one step.
+    fn folder(&self) -> &std::path::Path {
+        match self {
+            Aim::New { place, .. } => &place.dir,
+            Aim::Over { abs, .. } => abs.parent().unwrap_or(abs),
+        }
+    }
+}
+
+/// Finds where a write goes, and refuses it while it can be refused for nothing: a name that is
+/// taken, a file that is no longer the version the page read, a path that is not served.
+fn aim(app: &App, path: &str, wanted: Wanted, keep: bool) -> Result<Aim, Refused> {
+    let refuse = |answer| Err(Box::new(answer));
+    match wanted {
+        Wanted::New => {
+            let place = match app.root.target(path) {
+                Ok(place) => place,
+                Err(why) => return refuse(no_place(why)),
+            };
+            if !keep && fs::symlink_metadata(place.abs()).is_ok() {
+                let message = format!("there is already an entry named {}", place.name);
+                return refuse(clash(app, &place.rel, &message));
+            }
+            Ok(Aim::New { place, keep })
+        }
+        Wanted::Over(tag) => {
+            // By the name its folder lists, as a delete finds it: a file system may answer to other
+            // spellings of a name.
+            match app.root.entry(path) {
+                Ok(_) => {}
+                Err(NoEntry::Missing) => return refuse(clash(app, path, "the file is no longer there")),
+                Err(why) => return refuse(no_place(why)),
+            }
+            let rel = path
+                .split('/')
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+                .join("/");
+            let Some(found) = app.root.resolve(&rel) else {
+                return refuse(clash(app, &rel, "the file is no longer there"));
+            };
+            if !found.meta.is_file() {
+                return refuse(fail(StatusCode::CONFLICT, "this is a folder, not a file"));
+            }
+            if !raw::same_etag(&tag, &raw::etag(&found.meta)) {
+                return refuse(clash(app, &rel, "the file changed since it was read"));
+            }
+            Ok(Aim::Over {
+                rel,
+                abs: found.abs,
+                tag,
+            })
+        }
+    }
+}
+
+/// Puts a file put together in `part` in place, as `aim` says, and tells the index and the pages.
+fn commit(app: &App, aim: Aim, mut part: Part) -> Response {
+    let (rel, abs, status) = match aim {
+        Aim::New { place, keep } => {
+            let made = if keep {
+                part.create_free(&place.dir, &place.name)
+            } else {
+                part.create(&place.abs()).map(|()| place.name.clone())
+            };
+            match made {
+                Ok(name) => (
+                    paths::join(paths::parent(&place.rel), &name),
+                    place.dir.join(name),
+                    StatusCode::CREATED,
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return clash(
+                        app,
+                        &place.rel,
+                        &format!("there is already an entry named {}", place.name),
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+                    return fail(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "this disk cannot add a file without a risk of replacing one",
+                    );
+                }
+                Err(error) => return disk_failed(&error),
+            }
+        }
+        Aim::Over { rel, abs, tag } => {
+            // No other write from okfs comes between the check and the step that replaces.
+            let held = app.locks.hold(&abs);
+            match fs::metadata(&abs) {
+                Ok(meta) if meta.is_file() && raw::same_etag(&tag, &raw::etag(&meta)) => {}
+                _ => return clash(app, &rel, "the file changed since it was read"),
+            }
+            // A file whose permissions cannot be read or set is still written.
+            let _ = part.permissions_of(&abs);
+            if let Err(error) = part.replace(&abs) {
+                return disk_failed(&error);
+            }
+            drop(held);
+            (rel, abs, StatusCode::OK)
+        }
+    };
+    if let Some(folder) = abs.parent() {
+        write::sync_folder(folder);
+    }
+    app.index.wrote(&abs);
+    let Ok(meta) = fs::metadata(&abs) else {
+        return fail(StatusCode::INTERNAL_SERVER_ERROR, "the file was written and is gone");
+    };
+    let written = Written {
+        path: rel,
+        etag: raw::etag(&meta),
+        s: meta.len(),
+        m: seconds(&meta),
+    };
+    (status, Json(written)).into_response()
+}
+
+/// The size a request says its body is, when it says.
+fn declared_length(headers: &HeaderMap) -> Option<u64> {
+    headers.get(header::CONTENT_LENGTH)?.to_str().ok()?.parse().ok()
+}
+
+/// Writes one file: a new one with `If-None-Match: *` and `--allow-upload`, or over the one that is
+/// there, still the version with the tag `If-Match` names, with `--allow-edit`. The body is the
+/// file as it is, streamed to disk beside where it goes and moved into place whole: see `write`.
+async fn put_file(
+    State(app): State<Arc<App>>,
+    query: Result<Query<WriteQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+    body: Body,
+) -> Response {
+    let wanted = match wanted(&headers) {
+        Ok(wanted) => wanted,
+        Err(refused) => return *refused,
+    };
+    match wanted {
+        Wanted::New if !app.options.allow_upload => {
+            return fail(
+                StatusCode::FORBIDDEN,
+                "adding files is off: start okfs with --allow-upload",
+            );
+        }
+        Wanted::Over(_) if !app.options.allow_edit => {
+            return fail(
+                StatusCode::FORBIDDEN,
+                "changing files is off: start okfs with --allow-edit",
+            );
+        }
+        _ => {}
+    }
+    if let Err(why) = own_page(
+        &headers,
+        request_host(&headers, &uri),
+        &app.options.allow_hosts,
+        "write",
+    ) {
+        return fail(StatusCode::FORBIDDEN, &why);
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the path cannot be read");
+    };
+    let max = app.options.max_upload;
+    if let Some(max) = max
+        && declared_length(&headers).is_some_and(|length| length > max)
+    {
+        return too_large(max);
+    }
+    let worker = Arc::clone(&app);
+    let aimed = tokio::task::spawn_blocking(move || {
+        let aim = aim(&worker, &query.path, wanted, query.keep)?;
+        let part = Part::new(aim.folder()).map_err(|error| Box::new(disk_failed(&error)))?;
+        Ok::<_, Refused>((aim, part))
+    })
+    .await;
+    let (aim, mut part) = match aimed {
+        Ok(Ok(aimed)) => aimed,
+        Ok(Err(refused)) => return *refused,
+        Err(_) => return fail(StatusCode::INTERNAL_SERVER_ERROR, "the write failed"),
+    };
+
+    // A request dropped part way drops the part with it, which removes it.
+    let mut file = tokio::fs::File::from_std(part.take_file().expect("a fresh part"));
+    let mut body = body.into_data_stream();
+    let mut length: u64 = 0;
+    while let Some(piece) = body.next().await {
+        let Ok(piece) = piece else {
+            return fail(StatusCode::BAD_REQUEST, "the file stopped coming before its end");
+        };
+        length += piece.len() as u64;
+        if let Some(max) = max.filter(|max| length > *max) {
+            return too_large(max);
+        }
+        if let Err(error) = file.write_all(&piece).await {
+            return disk_failed(&error);
+        }
+    }
+    if let Err(error) = file.sync_all().await {
+        return disk_failed(&error);
+    }
+    drop(file);
+
+    let worker = Arc::clone(&app);
+    tokio::task::spawn_blocking(move || commit(&worker, aim, part))
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "the write failed"))
+}
+
+/// Makes one folder, with `--allow-upload`, never over an entry that is there. A folder that is
+/// uploaded is made this way, one level at a time, before the files in it.
+async fn make_folder(
+    State(app): State<Arc<App>>,
+    query: Result<Query<WriteQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    if !app.options.allow_upload {
+        return fail(
+            StatusCode::FORBIDDEN,
+            "adding folders is off: start okfs with --allow-upload",
+        );
+    }
+    if let Err(why) = own_page(
+        &headers,
+        request_host(&headers, &uri),
+        &app.options.allow_hosts,
+        "write",
+    ) {
+        return fail(StatusCode::FORBIDDEN, &why);
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the path cannot be read");
+    };
+    let worker = Arc::clone(&app);
+    let work = move || {
+        let place = match worker.root.target(&query.path) {
+            Ok(place) => place,
+            Err(why) => return no_place(why),
+        };
+        match fs::create_dir(place.abs()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let message = format!("there is already an entry named {}", place.name);
+                return clash(&worker, &place.rel, &message);
+            }
+            Err(error) => return disk_failed(&error),
+        }
+        write::sync_folder(&place.dir);
+        worker.index.reread(&place.folder);
+        (StatusCode::CREATED, Json(serde_json::json!({ "path": place.rel }))).into_response()
+    };
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "the folder could not be made"))
 }
 
 /// A folder's `--index` file. A name `resolve` refuses is not one: a dotfile without
@@ -1253,6 +1662,17 @@ struct Config {
     target: Target,
     /// True when deleting is on. The page shows its delete control only then.
     delete: bool,
+    /// True when adding files and folders is on: `--allow-upload`.
+    upload: bool,
+    /// True when changing the files that are there is on: `--allow-edit`.
+    edit: bool,
+    /// The largest file a write takes, in bytes, when `--max-upload` sets one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_upload: Option<u64>,
+    /// The nonce this page's policy lets a style element in with, for the editor, which adds its
+    /// own. Only while changing files is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nonce: Option<String>,
     /// True when the first page of a PDF can be had as a picture from `/api/picture`.
     pdf: bool,
     /// True with `--hidden`: dotfiles are served, and a new visitor starts with hidden entries shown.
@@ -1354,6 +1774,8 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
             .flatten()
             .map(|text| render::markdown(&text, ""))
     });
+    // A page that can open the editor lets in style elements that carry this page's own nonce.
+    let nonce = app.options.allow_edit.then(|| key::nonce().ok()).flatten();
     let config = Config {
         root: app.root.name(),
         title: app.options.title.clone(),
@@ -1364,6 +1786,10 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
         index: app.options.index.clone(),
         target,
         delete: app.options.allow_delete,
+        upload: app.options.allow_upload,
+        edit: app.options.allow_edit,
+        max_upload: app.options.max_upload,
+        nonce: nonce.clone(),
         pdf: app.drawer.is_some(),
         hidden: app.root.hidden(),
         key: app.options.key.as_ref().map(|key| key.as_str().to_owned()),
@@ -1388,11 +1814,13 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
         )
         .replace("<!--okfs:css-->", extra)
         .replace("<!--okfs:config-->", &config);
-    let policy = if app.options.allow_delete {
-        format!("{PAGE_POLICY}; {NO_FRAMING}")
-    } else {
-        PAGE_POLICY.to_owned()
-    };
+    let mut policy = PAGE_POLICY.to_owned();
+    if let Some(nonce) = &nonce {
+        policy = policy.replace("style-src 'self'", &format!("style-src 'self' 'nonce-{nonce}'"));
+    }
+    if app.options.writes() {
+        policy = format!("{policy}; {NO_FRAMING}");
+    }
     (
         if missing { StatusCode::NOT_FOUND } else { StatusCode::OK },
         [
