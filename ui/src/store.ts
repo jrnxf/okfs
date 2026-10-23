@@ -1198,9 +1198,19 @@ export class Store {
 
   /** Puts the preview back in place of the editor. Whatever it held that was not saved is let go. */
   stopEdit(): void {
-    this.s.editing = null;
+    this.endEdit();
     this.s.leaving = null;
     this.emit();
+  }
+
+  /** Closes the editor. A file that is gone from its folder meanwhile is closed with it, and the folder is read again. */
+  private endEdit(): void {
+    const { s } = this;
+    s.editing = null;
+    if (!s.open || s.all.some((entry) => entry.path === s.open?.path)) return;
+    s.open = null;
+    this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
+    this.catchUp();
   }
 
   /** The editor tells how to learn whether it holds unsaved changes. */
@@ -1218,7 +1228,7 @@ export class Store {
   leave(then: () => void): void {
     const { s } = this;
     if (!s.editing || !this.unsaved()) {
-      s.editing = null;
+      if (s.editing) this.endEdit();
       then();
       this.emit();
       return;
@@ -1233,7 +1243,7 @@ export class Store {
     const then = s.leaving;
     s.leaving = null;
     if (go && then) {
-      s.editing = null;
+      this.endEdit();
       then();
     }
     this.emit();

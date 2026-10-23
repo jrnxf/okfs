@@ -84,7 +84,9 @@ export function Editor({ file }: { file: Entry }) {
       count();
       store.say(`Saved “${file.name}”`);
     } catch (error) {
-      if (error instanceof WriteError && error.clash) {
+      if (error instanceof WriteError && error.clash?.d) {
+        store.say(`Not saved: a folder now holds the name “${file.name}”`);
+      } else if (error instanceof WriteError && error.clash) {
         setTheirs({ etag: error.clash.etag ?? "", gone: error.clash.gone === true, at: Date.now() });
       } else {
         store.say(`Not saved: ${reasonOf(error)}`);

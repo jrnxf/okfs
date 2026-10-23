@@ -328,7 +328,7 @@ test("nothing moves off a file with unsaved changes without asking, and a file d
     store.askDelete(notes ?? null);
     expect([store.s.doomed, store.s.editing?.path]).toEqual([null, "notes.md"]);
     store.leaveAnyway(true);
-    expect([store.s.doomed?.path, store.s.editing]).toEqual(["notes.md", null]);
+    expect([store.s.doomed?.path, store.s.editing, store.s.open?.path]).toEqual(["notes.md", null, "notes.md"]);
     store.cancelDelete();
 
     // The folder is read again without the edited file: the editor keeps it, and is told it changed.
@@ -341,6 +341,11 @@ test("nothing moves off a file with unsaved changes without asking, and a file d
     expect(store.s.caught).toBe(1);
     expect([store.s.open?.path, store.s.editing?.path]).toEqual(["notes.md", "notes.md"]);
     expect(notes && store.stamp(notes)).not.toBe(stamp);
+
+    // Leaving the editor then closes the file that is gone, and its folder is shown again.
+    store.leave(() => undefined);
+    store.leaveAnyway(true);
+    expect([store.s.open, store.s.editing]).toEqual([null, null]);
   } finally {
     stop();
     globalThis.fetch = fetching;
