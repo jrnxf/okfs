@@ -9,6 +9,10 @@ let sent: string[] = [];
 /** The highest number of uploads on their way at once. */
 let most = 0;
 let open = 0;
+/** Names the server hides from a look before an upload, as if they were taken only after it. */
+let unseen = new Set<string>();
+/** How long the server takes to make a folder, in milliseconds. */
+let folderTakes = 0;
 
 /** A server in the page: it answers each upload a moment after it is sent, as the real one does. */
 class FakeRequest {
@@ -62,13 +66,25 @@ class FakeRequest {
 Object.assign(globalThis, {
   location: { pathname: "/", search: "", href: "http://localhost/" },
   XMLHttpRequest: FakeRequest,
-  fetch: (url: string, init: RequestInit = {}) => {
-    const path = new URL(url, "http://localhost/").searchParams.get("path") ?? "";
+  fetch: async (url: string, init: RequestInit = {}) => {
+    const at = new URL(url, "http://localhost/");
+    if (init.method === "HEAD") {
+      const path = at.pathname.replace(/^\/raw\//, "").split("/").map(decodeURIComponent).join("/");
+      sent.push(`HEAD ${path}`);
+      const text = unseen.has(path) ? undefined : disk.get(path);
+      if (text === undefined) return new Response(null, { status: 404 });
+      // A folder sends its address on with a slash, which the page sees only as that.
+      if (!text) return { type: "opaqueredirect", ok: false, status: 0, headers: new Headers() };
+      const headers = { etag: `"${path}"`, "content-length": String(text.length), "last-modified": new Date(1000).toUTCString() };
+      return new Response(null, { headers });
+    }
+    const path = at.searchParams.get("path") ?? "";
     sent.push(`${init.method ?? "GET"} ${path}`);
-    if (init.method !== "POST") return Promise.resolve(new Response("{}"));
-    if (disk.has(path)) return Promise.resolve(new Response(JSON.stringify({ error: "taken", d: !disk.get(path) }), { status: 412 }));
+    if (init.method !== "POST") return new Response("{}");
+    await new Promise((done) => setTimeout(done, folderTakes));
+    if (disk.has(path)) return new Response(JSON.stringify({ error: "taken", d: !disk.get(path) }), { status: 412 });
     disk.set(path, "");
-    return Promise.resolve(new Response(JSON.stringify({ path }), { status: 201 }));
+    return new Response(JSON.stringify({ path }), { status: 201 });
   },
 });
 
@@ -84,6 +100,8 @@ beforeEach(() => {
   sent = [];
   most = 0;
   open = 0;
+  unseen = new Set();
+  folderTakes = 0;
   Object.assign(config, { upload: true, edit: false, max_upload: undefined });
 });
 
@@ -167,6 +185,67 @@ test("a file larger than --max-upload is refused before it is sent, and a folder
   await settled(queue);
   expect(states(queue)).toEqual(["in.txt failed"]);
   expect(sent.filter((line) => line.startsWith("PUT"))).toEqual([]);
+  queue.clear();
+});
+
+test("a name that is taken is found before any of the file is sent, and the server's refusal still stops one taken since", async () => {
+  const queue = new upload.Uploads();
+  await queue.add(into("notes", "taken.csv"));
+  await settled(queue);
+  expect(sent).toEqual(["HEAD notes/taken.csv"]);
+  expect(queue.asking?.clash).toMatchObject({ etag: '"notes/taken.csv"', s: 3, m: 1 });
+  queue.choose("skip", false);
+  await settled(queue);
+  queue.clear();
+
+  unseen.add("notes/also.csv");
+  sent = [];
+  await queue.add(into("notes", "also.csv"));
+  await settled(queue);
+  expect(sent).toEqual(["HEAD notes/also.csv", "PUT notes/also.csv *"]);
+  expect(queue.asking?.clash).toMatchObject({ etag: '"notes/also.csv"' });
+  expect(disk.get("notes/also.csv")).toBe("old");
+  queue.choose("skip", false);
+  await settled(queue);
+  queue.clear();
+});
+
+test("a folder of the same name is found before the file is sent, and cannot be replaced", async () => {
+  config.edit = true;
+  disk.set("notes/dir", "");
+  const queue = new upload.Uploads();
+  await queue.add(into("notes", "dir"));
+  await settled(queue);
+  expect(queue.asking?.clash.d).toBe(true);
+  expect(upload.replaceable(queue.asking?.clash ?? { error: "" })).toBe(false);
+  expect(sent.filter((line) => line.startsWith("PUT"))).toEqual([]);
+  queue.choose("skip", false);
+  queue.clear();
+});
+
+test("the files a choice for every taken name sends go a few at a time", async () => {
+  const names = ["1.csv", "2.csv", "3.csv", "4.csv", "5.csv", "6.csv", "7.csv"];
+  for (const name of names) disk.set(`notes/${name}`, "old");
+  const queue = new upload.Uploads();
+  await queue.add(into("notes", ...names));
+  await settled(queue);
+  expect(queue.others()).toBe(names.length - 1);
+  most = 0;
+  queue.choose("keep", true);
+  await settled(queue);
+  expect(most).toBe(3);
+  expect(states(queue)).toEqual(names.map((name) => `${name} done notes/${name.replace(".csv", " (1).csv")}`));
+  queue.clear();
+});
+
+test("no file of a drop starts before its folders are made, even when an earlier upload ends meanwhile", async () => {
+  folderTakes = 5;
+  const queue = new upload.Uploads();
+  await queue.add(into("notes", "first.txt"));
+  await queue.add(into("notes/a/b", "late.txt"), ["notes/a", "notes/a/b"]);
+  await settled(queue);
+  expect(sent.indexOf("PUT notes/a/b/late.txt *")).toBeGreaterThan(sent.indexOf("POST notes/a/b"));
+  expect(states(queue)).toEqual(["first.txt done notes/first.txt", "late.txt done notes/a/b/late.txt"]);
   queue.clear();
 });
 

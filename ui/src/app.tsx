@@ -58,11 +58,6 @@ function dropTarget(target: EventTarget | null): string | null {
   return column?.dataset.pane ?? here;
 }
 
-/** What the foot of the page says can change the folder, when anything can. */
-function writesOn(): string {
-  const on = [config.upload && "uploads", config.edit && "edits", config.delete && "deletes"].filter(Boolean);
-  return on.map((what) => `${what} on`).join(" · ");
-}
 /** The slots are cut from the window's width: see `slotsFor`. */
 const subscribeResize = (listener: () => void) => {
   addEventListener("resize", listener);
@@ -477,9 +472,14 @@ export function App() {
           </button>
           {/* A phone has no folder bar above the list to hold these, and a tap on a folder goes in. */}
           {adds !== null && (
-            <button class="btn touch" aria-label="Upload files here" onClick={() => pick(adds)}>
-              <Icon name="upload" />
-            </button>
+            <>
+              <button class="btn touch" aria-label="Upload files here" onClick={() => pick(adds)}>
+                <Icon name="upload" />
+              </button>
+              <button class="btn touch" aria-label="New file" onClick={() => store.setNaming("file")}>
+                <Icon name="plus" />
+              </button>
+            </>
           )}
           {here && (
             <button class="btn touch" aria-label="Delete this folder" onClick={() => store.askDelete(here)}>
@@ -575,7 +575,6 @@ export function App() {
           />
         </label>
         <span class="sp" />
-        {writesOn() && <span class="writes">{writesOn()}</span>}
         <span class="hints">
           <span>
             <kbd>j</kbd>

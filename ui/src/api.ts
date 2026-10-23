@@ -1,7 +1,7 @@
 // The server's endpoints, as the page sees them.
 
 import { showsHidden } from "./hidden";
-import { NOT_ANSWERING, NoAnswer, call, heard, setDown } from "./reach";
+import { call, heard } from "./reach";
 
 export interface Item {
   n: string;
@@ -270,7 +270,8 @@ function writeError(status: number, text: string): WriteError {
 /**
  * Writes a file: the whole body, moved into place on the server only once it has all come. `sent` hears how many
  * bytes have gone. It goes by XMLHttpRequest, as `fetch` tells nothing of an upload's progress. Fails with a
- * `WriteError`, or a `NoAnswer` when okfs cannot be reached, as `call` does.
+ * `WriteError`, or a `NoAnswer` when a proxy answers for okfs or it refuses the key. A connection cut before an
+ * answer fails this file only: okfs may close one on a refusal it sends before the body has come.
  */
 export function putFile(path: string, body: Blob, want: Want, sent?: (bytes: number) => void): Promise<Written> {
   return new Promise((resolve, reject) => {
@@ -281,10 +282,7 @@ export function putFile(path: string, body: Blob, want: Want, sent?: (bytes: num
     if ("new" in want) request.setRequestHeader("if-none-match", "*");
     else request.setRequestHeader("if-match", want.over);
     if (sent) request.upload.onprogress = (event) => sent(event.loaded);
-    request.onerror = () => {
-      setDown(NOT_ANSWERING);
-      reject(new NoAnswer());
-    };
+    request.onerror = () => reject(new WriteError("the connection closed before okfs answered", 0));
     request.onload = () => {
       const refused = heard(request.status, () => request.getResponseHeader("www-authenticate"));
       if (refused) return reject(refused);
@@ -302,6 +300,26 @@ export async function makeFolder(path: string): Promise<Clash | undefined> {
   const error = writeError(response.status, await response.text().catch(() => ""));
   if (error.clash) return error.clash;
   throw error;
+}
+
+/**
+ * What is at a name, asked before a file is sent to it, so a name that is taken is known before any of the file goes:
+ * a folder, or a file with its tag, size and time. Nothing when the name is free.
+ */
+export async function lookUp(path: string): Promise<Clash | undefined> {
+  // A folder answers by sending its address on with a slash.
+  const response = await call(urls.raw(path), { method: "HEAD", cache: "no-store", redirect: "manual" });
+  const error = "there is already an entry of that name";
+  if (response.type === "opaqueredirect") return { error, d: true };
+  if (!response.ok) return undefined;
+  const size = response.headers.get("content-length");
+  const modified = Date.parse(response.headers.get("last-modified") ?? "");
+  return {
+    error,
+    etag: response.headers.get("etag") ?? undefined,
+    s: size === null ? undefined : Number(size),
+    m: Number.isNaN(modified) ? undefined : Math.floor(modified / 1000),
+  };
 }
 
 /** The served path an address of the server asks about, or `null` when it names none. */

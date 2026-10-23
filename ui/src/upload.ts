@@ -1,7 +1,8 @@
 // Uploads: files dropped on the list or picked, sent a few at a time into their folder, each with how far it got.
-// A file never lands on a name that is taken: the server refuses it, and the visitor chooses what happens instead.
+// A file never lands on a name that is taken: it is looked up before it is sent, the server refuses it if it was taken
+// since, and the visitor chooses what happens instead.
 
-import { type Clash, WriteError, joinPath, makeFolder, putFile } from "./api";
+import { type Clash, type Want, WriteError, joinPath, lookUp, makeFolder, putFile } from "./api";
 import { config } from "./config";
 import { type Plan, heldIn, heldPicked, plan } from "./drop";
 import * as fmt from "./fmt";
@@ -24,6 +25,8 @@ export interface Job {
   name: string;
   file: File;
   state: JobState;
+  /** What it is sent as: a new file, or as the visitor chose once its name was taken. */
+  want: Want;
   /** Bytes sent so far, and when sending started, for the rate. */
   sent: number;
   started: number;
@@ -97,11 +100,7 @@ export class Uploads {
    * what is in it. A folder that is there already is gone into. Files in a folder that could not be made fail with it.
    */
   async add(picked: Picked[], folders: string[] = []): Promise<void> {
-    clearTimeout(this.linger);
-    const jobs = picked.map((pick): Job => ({ id: ++next, ...pick, state: "waiting", sent: 0, started: 0 }));
-    if (!this.busy()) this.always = null;
-    this.jobs.push(...jobs);
-    this.emit();
+    const jobs = picked.map((pick): Job => ({ id: ++next, ...pick, state: "waiting", want: { new: true }, sent: 0, started: 0 }));
     const failed = new Map<string, string>();
     for (const folder of folders) {
       const above = [...failed.keys()].find((dir) => folder.startsWith(`${dir}/`));
@@ -119,12 +118,21 @@ export class Uploads {
     for (const job of jobs) {
       // Refused here, before it is sent: the server would refuse it by its length and close the connection on it.
       if (config.max_upload !== undefined && job.file.size > config.max_upload) {
-        this.finish(job, "failed", `larger than the ${fmt.size(config.max_upload)} --max-upload allows`);
+        job.state = "failed";
+        job.why = `larger than the ${fmt.size(config.max_upload)} --max-upload allows`;
         continue;
       }
       const dir = [...failed.keys()].find((folder) => job.dir === folder || job.dir.startsWith(`${folder}/`));
-      if (dir !== undefined) this.finish(job, "failed", `its folder was not made: ${failed.get(dir)}`);
+      if (dir !== undefined) {
+        job.state = "failed";
+        job.why = `its folder was not made: ${failed.get(dir)}`;
+      }
     }
+    // Only now in the queue: none of them may start before their folders are made.
+    clearTimeout(this.linger);
+    if (!this.busy()) this.always = null;
+    this.jobs.push(...jobs);
+    this.emit();
     this.pump();
   }
 
@@ -132,23 +140,30 @@ export class Uploads {
   private pump(): void {
     const sending = this.jobs.filter((job) => job.state === "sending").length;
     for (const job of this.jobs.filter((job) => job.state === "waiting").slice(0, Math.max(0, AT_ONCE - sending))) {
-      void this.send(job, { new: true });
+      void this.send(job);
     }
     this.settle();
   }
 
-  private async send(job: Job, want: { new: true; keep?: boolean } | { over: string }): Promise<void> {
+  private async send(job: Job): Promise<void> {
     job.state = "sending";
     job.sent = 0;
     job.started = performance.now();
     this.emit();
+    const path = joinPath(job.dir, job.name);
     try {
-      const written = await putFile(joinPath(job.dir, job.name), job.file, want, (sent) => {
-        job.sent = sent;
-        this.emit();
-      });
-      job.path = written.path;
-      this.finish(job, "done");
+      // Kept beside it, it takes the next free name, so only a plain new file can find its name taken.
+      const there = "new" in job.want && !job.want.keep ? await lookUp(path) : undefined;
+      if (there) {
+        this.clashed(job, there);
+      } else {
+        const written = await putFile(path, job.file, job.want, (sent) => {
+          job.sent = sent;
+          this.emit();
+        });
+        job.path = written.path;
+        this.finish(job, "done");
+      }
     } catch (error) {
       if (error instanceof WriteError && error.clash && !error.clash.gone) this.clashed(job, error.clash);
       else this.finish(job, "failed", reasonOf(error));
@@ -158,7 +173,6 @@ export class Uploads {
 
   /** A name that is taken: the choice made for all of them, or the dialog. */
   private clashed(job: Job, clash: Clash): void {
-    job.state = "waiting";
     // A folder of that name, or a file without --allow-edit, cannot be replaced.
     const choice = this.always === "replace" && !replaceable(clash) ? null : this.always;
     if (choice) {
@@ -193,17 +207,18 @@ export class Uploads {
       else this.asking = ask;
     }
     this.emit();
+    this.pump();
   }
 
+  /** Puts a file whose name was taken back in the queue as the choice says, or skips it. */
   private answer(job: Job, clash: Clash, choice: Choice): void {
     if (choice === "skip") {
       this.finish(job, "skipped");
-      this.pump();
-    } else if (choice === "replace" && clash.etag) {
-      void this.send(job, { over: clash.etag });
-    } else {
-      void this.send(job, { new: true, keep: true });
+      return;
     }
+    job.want = choice === "replace" && clash.etag ? { over: clash.etag } : { new: true, keep: true };
+    job.state = "waiting";
+    job.sent = 0;
   }
 
   private finish(job: Job, state: JobState, why?: string): void {

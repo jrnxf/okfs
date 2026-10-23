@@ -145,7 +145,6 @@ body.open .ph .only-open { display: inline-flex; }
 .up.skipped .pg { color: var(--faint); }
 .up.asking .pg { color: var(--fg); }
 .tray-more { color: var(--muted); font-size: var(--text-xs); }
-.status .writes { color: var(--accent); font-family: var(--font-mono); letter-spacing: 0; white-space: nowrap; flex: none; }
 .ask code { font-family: var(--font-mono); font-size: var(--text-s); color: var(--fg); background: var(--sunken); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
 .cmp { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 5px 14px; padding: 9px 11px; border: var(--border); border-radius: var(--radius); font-size: var(--text-s); }
 .cmp > span:nth-child(3n + 1) { color: var(--faint); font-family: var(--font-ui); }
@@ -217,7 +216,6 @@ body.open .ph .only-open { display: inline-flex; }
   .top .trail.at-root { display: none; }
   .ask-do .btn { height: 38px; flex: 1; justify-content: center; }
   .tray { left: 10px; right: 10px; width: auto; bottom: calc(44px * var(--density) + env(safe-area-inset-bottom) + 10px); }
-  .status .writes { display: none; }
   .ask-field { height: 44px; }
 }
 

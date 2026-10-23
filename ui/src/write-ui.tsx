@@ -12,8 +12,12 @@ import { type Job, numbered, reasonOf, replaceable, uploads } from "./upload";
 
 /** The two buttons of a dialog that a Tab goes back and forth between, and Escape that closes it. */
 function useDialogKeys(close: () => void, ring: () => (HTMLElement | null)[], busy = false): void {
+  // The latest of each, as they change with every draw: a choice the dialog holds, such as its checkbox.
+  const latest = useRef({ close, ring, busy });
+  latest.current = { close, ring, busy };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      const { close, ring, busy } = latest.current;
       if (event.key === "Escape") {
         if (!busy) close();
       } else if (event.key === "Tab") {
@@ -28,7 +32,7 @@ function useDialogKeys(close: () => void, ring: () => (HTMLElement | null)[], bu
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [busy]);
+  }, []);
 }
 
 /** How one file in the tray is doing, in a few words. */
