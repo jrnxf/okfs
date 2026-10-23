@@ -1,6 +1,6 @@
 // Both icon sets live in one sprite. The theme's --icon-set token picks which one shows.
 
-import { GROUP, ICON, type Kind } from "./kinds";
+import { GROUP, type Group, ICON, type Kind } from "./kinds";
 
 const R = '<rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2"/>';
 const FILE =
@@ -64,7 +64,7 @@ const symbols = (set: Record<string, string>, prefix: string): string =>
 const SPRITE = { __html: symbols(LINE, "l") + symbols(SOLID, "s") };
 
 export function Sprite() {
-  return <svg class="sprite" width="0" height="0" aria-hidden="true" dangerouslySetInnerHTML={SPRITE} />;
+  return <svg class="absolute" width="0" height="0" aria-hidden="true" dangerouslySetInnerHTML={SPRITE} />;
 }
 
 export function Icon({ name, class: extra }: { name: string; class?: string }) {
@@ -76,6 +76,18 @@ export function Icon({ name, class: extra }: { name: string; class?: string }) {
   );
 }
 
-export function KindIcon({ kind }: { kind: Kind }) {
-  return <Icon name={ICON[kind]} class={`ic-kind k-${GROUP[kind]}`} />;
+/** Each group of kinds in its own color. */
+const TINT: Record<Group, string> = {
+  folder: "text-kind-folder",
+  image: "text-kind-image",
+  media: "text-kind-media",
+  doc: "text-kind-doc",
+  code: "text-kind-code",
+  data: "text-kind-data",
+  archive: "text-kind-archive",
+  file: "text-faint",
+};
+
+export function KindIcon({ kind, class: extra }: { kind: Kind; class?: string }) {
+  return <Icon name={ICON[kind]} class={`ic-kind ${TINT[GROUP[kind]]}${extra ? ` ${extra}` : ""}`} />;
 }

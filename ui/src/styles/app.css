@@ -1,218 +1,480 @@
-/* Twin Pane: a dense list on the left, what is under the cursor beside it, a status line below.
-   This file is layout only. Every color, size and shape comes from the tokens. */
-body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
-.top { display: flex; align-items: center; gap: 14px; height: calc(46px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); min-width: 0; }
-.crumbs { display: flex; align-items: center; min-width: 0; flex: 1; color: var(--muted); overflow: hidden; }
-.crumbs a { text-decoration: none; padding: 3px 6px; border-radius: var(--radius); white-space: nowrap; }
-@media (hover: hover) and (pointer: fine) { .crumbs a:hover { background: var(--hover); color: var(--fg); } }
-.crumbs a:last-of-type { color: var(--fg); font-weight: var(--weight-strong); overflow: hidden; text-overflow: ellipsis; }
-.crumbs i { color: var(--faint); font-style: normal; flex: none; }
-.crumbs .back { display: none; }
-.find { width: 210px; justify-content: flex-start; color: var(--faint); }
-.find .sp { flex: 1; text-align: left; }
-.tools { display: flex; align-items: center; gap: 4px; flex: none; }
-.tools .btn { padding: 0 calc(7px * var(--density)); }
-.tools .touch { display: none; }
+/* okfs's stylesheet: Tailwind's utilities over the token contract. ui/css.ts builds it.
+   The tokens (tokens.css) stay plain variables that a theme file overrides, so the theme below only names them for
+   the utilities and adds no variables of its own. Tailwind's Preflight is left out: the base layer is okfs's own. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "./fonts.css";
+@import "./tokens.css";
 
-/* The window is cut into equal slots, as many as the page counts for its width. The list is one. Beside it a
-   folder takes one for each of its columns, and a file under the cursor, or the preview, takes all of them. */
-.main { display: grid; grid-template-columns: repeat(var(--slots, 4), minmax(0, 1fr)); min-height: 0; position: relative; overflow: clip; }
-/* A pane that has gone, sliding out over the strip: see slide.ts. */
-.ghost { position: absolute; z-index: 1; pointer-events: none; }
-.ghost.left, .ghost.col { background: var(--bg); }
-/* The cursor's highlight while it travels with the slide, over the panes and their copies: see glide.ts. It tints what
-   is under it rather than covering it, so the rows sliding under it show through: on a light ground the darker of the
-   two is drawn, on a dark one the lighter. The rows' own highlight waits until it lands. */
-.glide { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); mix-blend-mode: darken; }
-:root[data-scheme="dark"] .glide { mix-blend-mode: lighten; }
-.main.gliding .left .row[aria-selected="true"] { background: none; box-shadow: none; }
-.left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
-.cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 68px 66px; align-items: center; gap: 10px; padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
-[data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 68px 66px; }
-[data-icons="none"] .cols > :first-child { display: none; }
-.cols.label { color: var(--muted); }
-.cols { height: calc(30px * var(--density)); border-bottom: var(--border); flex: none; }
-.cols button, .cols .hd { text-align: left; display: inline-flex; align-items: center; gap: 3px; }
-@media (hover: hover) and (pointer: fine) { .cols button:hover { color: var(--fg); } }
-.cols .r { justify-content: flex-end; }
-.cols .ic { width: 11px; height: 11px; color: var(--accent); }
-.list { flex: 1; min-height: 0; overflow: auto; position: relative; }
-.row { cursor: default; border-radius: 0; box-shadow: inset 0 calc(var(--line-w) * -1) 0 transparent; }
-@media (hover: hover) and (pointer: fine) { .row:hover { background: var(--hover); } }
-.row[aria-selected="true"] { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
-.row .nm b { font-weight: var(--weight); }
-.row[data-dir] .nm b { font-weight: 500; }
-.row .tag { margin-left: 8px; }
-.row .sz, .row .tm { text-align: right; color: var(--muted); font-size: var(--text-s); }
-.row .tm { color: var(--muted); white-space: nowrap; }
-.empty { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--muted); text-align: center; padding: 24px; }
-.empty b { color: var(--muted); font-weight: var(--weight-strong); }
-.empty[hidden] { display: none; }
+@theme inline reference {
+  --*: initial;
+  --spacing: 0.25rem;
+  --default-border-width: var(--line-w);
 
-.right { grid-column: 2 / -1; display: flex; min-width: 0; min-height: 0; }
-.pane { order: 1; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
-/* A pane that has gone from the slots, kept in the page while the panes slide: the slide shows it, as it slides out. */
-.pane.going { display: none; }
-/* A column is a slot wide, on the list's own ground, and its rows are the list's rows. */
-.col { flex: none; width: calc(100% / (var(--slots, 4) - 1)); display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: var(--border); }
-.col.edge { border-right: 0; }
-.col-rows { flex: 1; min-height: 0; overflow: auto; }
-.col .row { position: static; height: var(--row-h); }
-/* The entry the next slot shows. */
-.col .row.at { background: var(--hover); box-shadow: inset 3px 0 0 var(--line-strong); }
-.col-note { display: flex; align-items: center; height: var(--row-h); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); }
-.ph { display: flex; align-items: center; gap: 10px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; }
-.ph .nm { font-weight: var(--weight-strong); flex: 0 1 auto; }
-.ph .facts { color: var(--muted); font-size: var(--text-xs); flex: 1; }
-.ph .btn { height: calc(24px * var(--density)); padding: 0 6px; }
-.ph .pos { color: var(--faint); font-size: var(--text-xs); padding: 0 4px; white-space: nowrap; }
-.ph .sp { flex: 1; }
-.ph .only-open, .ph .more, .stepbar { display: none; }
-.ph .more { position: static; }
-.more-menu { top: 100%; right: 8px; width: 220px; }
-.more-menu a.tm-row { text-decoration: none; color: var(--fg); }
-#pv { flex: 1; min-height: 0; }
-body.open .main { grid-template-columns: minmax(0, 1fr); }
-body.open .right { grid-column: 1; }
-/* The list's copy sliding out as a file takes the full width stays drawn. */
-body.open .left:not(.ghost) { display: none; }
-body.open .ph .only-open { display: inline-flex; }
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-hover: var(--hover);
+  --color-scrim: var(--scrim);
+  --color-kind-folder: var(--kind-folder);
+  --color-kind-image: var(--kind-image);
+  --color-kind-media: var(--kind-media);
+  --color-kind-doc: var(--kind-doc);
+  --color-kind-code: var(--kind-code);
+  --color-kind-data: var(--kind-data);
+  --color-kind-archive: var(--kind-archive);
 
-.status { display: flex; align-items: center; gap: 14px; height: calc(28px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-top: var(--border); color: var(--muted); font-size: var(--text-xs); min-width: 0; }
-.status .mode { font-family: var(--font-mono); letter-spacing: 0; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; text-transform: uppercase; font-size: calc(var(--text) * 0.72); font-weight: 500; flex: none; }
-.status .mode::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.status .mode.loud { color: var(--accent-fg); background: var(--accent); padding: 1px 7px; border-radius: min(var(--radius), 3px); gap: 0; }
-.status .mode.loud::before { display: none; }
-.status .info { white-space: nowrap; }
-.status .fil { display: none; align-items: center; gap: 4px; flex: 1; min-width: 0; color: var(--fg); font-family: var(--font-mono); letter-spacing: 0; }
-.status .fil input { flex: 1; min-width: 0; background: none; border: 0; padding: 0; font-size: var(--text-s); }
-.status.filtering .fil { display: flex; }
-.status.filtering .hints { display: none; }
-.status .sp { flex: 1; }
-.status .hints { display: flex; gap: 12px; align-items: center; white-space: nowrap; overflow: hidden; }
-.status .hints span { display: inline-flex; gap: 4px; align-items: center; }
-.status kbd { height: 1.55em; min-width: 1.55em; border-bottom-width: var(--line-w); }
-.status .touch { display: none; }
+  --font-ui: var(--font-ui);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+  --font-weight-regular: var(--weight);
+  --font-weight-medium: 500;
+  --font-weight-strong: var(--weight-strong);
+  --text-base: var(--text);
+  --text-s: var(--text-s);
+  --text-xs: var(--text-xs);
 
-/* A quiet word over the foot of the page, out of the layout: that okfs is not answering, or what was just done. */
-.notice { position: fixed; z-index: 40; left: 50%; bottom: calc(28px * var(--density) + 10px); transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--surface); color: var(--fg); border: var(--border); border-radius: var(--radius); box-shadow: var(--shadow); font-size: var(--text-s); white-space: nowrap; pointer-events: none; animation: notice-in 160ms var(--ease-out); }
-.notice:empty { display: none; }
-.notice.down::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; animation: notice-wait 1.6s ease-in-out infinite; }
-@keyframes notice-in { from { opacity: 0; transform: translate(-50%, 4px); } }
-@keyframes notice-wait { 50% { opacity: 0.3; } }
-@media (prefers-reduced-motion: reduce) { .notice, .notice.down::before { animation: none; } }
-.empty .hint { color: var(--faint); font-size: var(--text-s); }
-
-/* The matches of a search in the list's place: two slots wide, for the folder each is in, or all of them when the
-   window has two. Their bar holds the query. */
-.main .left.wide { grid-column: span 2; }
-.main .left.wide + .right { grid-column: 3 / -1; }
-.main .left.res:not(.wide) { grid-column: 1 / -1; border-right: 0; }
-.qbar { display: flex; align-items: center; gap: 8px; height: calc(30px * var(--density)); padding: 0 calc(var(--pad) * 0.5) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); flex: none; min-width: 0; box-sizing: content-box; color: var(--faint); }
-.qbar input { flex: 1; min-width: 0; height: 100%; background: none; border: 0; padding: 0; font-weight: var(--weight-strong); color: var(--fg); }
-.qbar input::placeholder { color: var(--faint); font-weight: var(--weight); }
-.qbar .facts { color: var(--muted); font-size: var(--text-xs); flex: none; }
-.qbar .btn { height: calc(24px * var(--density)); padding: 0 6px; }
-.res .cols, .res .row { grid-template-columns: 16px minmax(0, 1.15fr) minmax(0, 1fr) 68px 66px; }
-[data-icons="none"] .res .cols, [data-icons="none"] .res .row { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) 68px 66px; }
-.res .cols .on { color: var(--fg); }
-.res .row .nmw { display: flex; min-width: 0; }
-.res .row .dir { color: var(--muted); font-size: var(--text-s); direction: rtl; text-align: left; }
-.res .row .dir bdi, .res .row .sub bdi { direction: ltr; }
-.res .row .sub { display: none; }
-.res .row mark { background: none; color: var(--accent); font-weight: var(--weight-strong); }
-/* The way back to the matches, while browsing below a folder entered from them. */
-.top .trail { flex: none; height: calc(26px * var(--density)); padding: 0 9px 0 6px; gap: 4px; color: var(--fg); max-width: 260px; }
-.top .trail .ic { color: var(--accent); }
-.top .trail .phone-only { display: none; }
-
-@media (max-width: 760px) {
-  .main { grid-template-columns: minmax(0, 1fr); }
-  .right { display: none; position: fixed; inset: 0; z-index: 20; grid-column: 1; }
-  /* A file that is opened, or the preview a keyboard opened, is a sheet over the list. */
-  body.open .right { display: flex; }
-  .left { border-right: 0; }
-  /* the top bar already names the folder, and the delete button there does what this one's would */
-  .left > .ph { display: none; }
-  .find { width: auto; } .find .sp, .find kbd { display: none; }
-  .wm { font-size: 0; gap: 0; } .wm-mark { font-size: 15px; }
-  .crumbs a, .crumbs i { display: none; }
-  .crumbs a:last-of-type, .crumbs .back { display: inline-flex; }
-  .crumbs .back { padding: 6px; margin-left: -6px; color: var(--muted); }
-  .cols, .row { grid-template-columns: 16px minmax(0, 1fr) 62px; }
-  .cols > :last-child, .row .tm { display: none; }
-  [data-icons="none"] .cols, [data-icons="none"] .row { grid-template-columns: minmax(0, 1fr) 62px; }
-  :root { --row-h: calc(42px * var(--density)); }
-  .ph { height: calc(46px * var(--density)); }
-  /* the name needs the room more than the count of files does */
-  .ph .facts, body.open .ph .pos { display: none; } .ph .nm { flex: 1; }
-  .ph .btn { height: 34px; padding: 0 9px; }
-  /* previous and next move to the foot of the sheet, and the rest of the file's actions behind one button */
-  .ph { position: relative; }
-  body.open .ph .step, .ph .wide { display: none; }
-  .ph .more { display: inline-flex; }
-  .more-menu { position: absolute; z-index: 30; }
-  .more-menu .tm-row { height: 44px; }
-  .stepbar { display: none; }
-  body.open .stepbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; border-top: var(--border); background: var(--surface); padding: 6px var(--pad) calc(6px + env(safe-area-inset-bottom)); color: var(--muted); font-size: var(--text-s); }
-  .stepbar .btn { height: 44px; min-width: 112px; padding: 0 14px; gap: 6px; justify-content: center; color: var(--fg); }
-  /* the back arrow already does this here, and the name needs the room */
-  .ph .widen { display: none; }
-  .status { height: calc(44px * var(--density)); padding-bottom: env(safe-area-inset-bottom); }
-  .status .hints, .status .mode { display: none; }
-  .status .touch { display: inline-flex; height: 32px; }
-  .notice { bottom: calc(44px * var(--density) + env(safe-area-inset-bottom) + 10px); }
-  .tools .touch { display: inline-flex; }
-  /* no keys to hint at here, and the count needs the room */
-  .pal-foot span:not(.num, .sp) { display: none; }
-  .pal-up { height: 34px; }
-  .pal-all .pal-row { height: 44px; }
-  .pal-all .kk { display: none; }
-  /* A match takes two lines: its name, and the folder it is in under it. */
-  .res { --row-h: calc(52px * var(--density)); }
-  .res .cols, .res .row { grid-template-columns: 16px minmax(0, 1fr) 62px; }
-  [data-icons="none"] .res .cols, [data-icons="none"] .res .row { grid-template-columns: minmax(0, 1fr) 62px; }
-  .res .cols > :nth-child(3), .res .row .dir, .res .cols > :last-child, .res .row .tm { display: none; }
-  .res .row .nmw { flex-direction: column; line-height: 1.3; }
-  .res .row .sub { display: block; color: var(--muted); font-size: var(--text-xs); direction: rtl; text-align: left; }
-  .qbar { height: calc(44px * var(--density)); }
-  .qbar .btn { height: 34px; padding: 0 9px; }
-  .top .trail { height: 32px; padding: 0 8px; gap: 5px; font-size: var(--text-xs); }
-  .top .trail .wide-only { display: none; }
-  .top .trail .phone-only { display: inline; }
-  .top .trail .ic.phone-only { display: block; color: var(--muted); }
-  /* At the folder entered from the matches, the back arrow beside it already goes back to them. */
-  .top .trail.at-root { display: none; }
-  .ask-do .btn { height: 38px; flex: 1; justify-content: center; }
+  --radius: var(--radius);
+  --radius-lg: var(--radius-lg);
+  --shadow: var(--shadow);
+  --ease-out: var(--ease-out);
 }
 
-/* A phone zooms the page into a text field set smaller than 16 px, and leaves it zoomed. */
-@media (pointer: coarse) {
-  .pal-in input, .status .fil input, .qbar input { font-size: 16px; }
-  /* there is no Escape key here, and the chip sits over the end of the placeholder */
-  .pal-esc { display: none; }
+/* A hover is a pointer's: a phone's tap leaves none behind. */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+@custom-variant dark (:root[data-scheme="dark"] &);
+/* A file has the full width, or a phone's whole screen. */
+@custom-variant viewing (body.open &);
+/* A copy of a pane, sliding out: see slide.ts. */
+@custom-variant ghost (&.ghost);
+/* The cursor's highlight is travelling with a slide: see glide.ts. */
+@custom-variant gliding (.main.gliding .left &);
+@custom-variant phone (@media (max-width: 760px));
+@custom-variant icons-none (:root[data-icons="none"] &);
+
+@layer base {
+  :root {
+    --row-h: calc(34px * var(--density));
+    --pad: calc(12px * var(--density));
+    --text-s: calc(var(--text) * 0.89);
+    --text-xs: calc(var(--text) * 0.8);
+    --border: var(--line-w) solid var(--line);
+    /* motion: fast out of the gate, settling at the end. Every transition and the panes' slide use it. */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    color-scheme: light;
+  }
+  :root[data-scheme="dark"] {
+    color-scheme: dark;
+  }
+  @media (max-width: 760px) {
+    :root {
+      --row-h: calc(42px * var(--density));
+    }
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  /* The page does not bounce or pull to refresh: it follows the folder by itself. Sideways stays the browser's, to go back. */
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    overscroll-behavior-y: none;
+  }
+  /* A tap is answered by the control's own pressed look, not by a grey flash painted over it. */
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: var(--weight) var(--text) / 1.45 var(--font-ui);
+    letter-spacing: var(--tracking);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  body.has-note {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+  button,
+  input {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+  }
+  button {
+    text-transform: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  /* A control answers a tap at once, and a long press on one selects nothing. Text that is read stays selectable. */
+  button,
+  a {
+    touch-action: manipulation;
+  }
+  button {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  a {
+    color: inherit;
+  }
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  input:focus-visible {
+    outline: none;
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  kbd {
+    font: 500 calc(var(--text) * 0.78) / 1 var(--font-mono);
+    letter-spacing: 0;
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.7em;
+    height: 1.7em;
+    padding: 0 0.4em;
+    color: var(--muted);
+    background: var(--bg);
+    border: var(--border);
+    border-color: var(--line-strong);
+    border-bottom-width: calc(var(--line-w) + 1px);
+    border-radius: min(var(--radius), 4px);
+  }
 }
 
-.pv-card kbd { margin-left: 2px; }
+/* The few pieces used all over the page, which the utilities on an element can override. */
+@layer components {
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+  .label {
+    text-transform: var(--label-case);
+    font-size: var(--text-xs);
+    color: var(--faint);
+    letter-spacing: 0.02em;
+  }
 
-.sprite { position: absolute; }
-body.has-note { grid-template-rows: auto auto minmax(0, 1fr) auto; }
-body.has-note.open .note { display: none; }
-.note { font-size: var(--text-s); line-height: 1.5; padding: calc(var(--pad) * 0.6) var(--pad) calc(var(--pad) * 0.6) calc(var(--pad) * 1.25); max-width: none; margin: 0; max-height: 30vh; overflow: auto; border-bottom: var(--border); background: var(--surface); color: var(--muted); }
-.note > :last-child { margin-bottom: 0; }
-.note h1, .note h2, .note h3 { font-size: 1em; margin: 0 0 0.3em; padding: 0; border: 0; color: var(--fg); }
-.probe { position: absolute; visibility: hidden; pointer-events: none; width: 0; height: var(--row-h); }
-.rows { position: relative; }
-.row { position: absolute; }
-.readme { border-top: var(--border); }
-.rows:empty + .readme { border-top: 0; }
-.readme-hd { text-transform: none; display: flex; align-items: center; gap: 8px; height: calc(30px * var(--density)); padding: 0 var(--pad) 0 calc(var(--pad) * 1.25); border-bottom: var(--border); }
-.readme .md { margin: 0; max-width: 46em; padding: calc(var(--pad) * 1.6) calc(var(--pad) * 1.25) 48px; font-size: var(--text); }
-.empty .btn { margin-top: 10px; }
-.json .more { margin: 4px 0 4px 1.3em; }
-.md input[type="checkbox"] { margin: 0 0.4em 0 0; }
-.md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.4em; }
-.md del { color: var(--muted); }
-/* the Markdown renderer wraps quoted and listed text in paragraphs */
-.md blockquote > :last-child, .md li > :last-child { margin-bottom: 0; }
-.md li > p { margin-bottom: 0.4em; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: calc(28px * var(--density));
+    padding: 0 calc(9px * var(--density));
+    border-radius: var(--radius);
+    color: var(--muted);
+    white-space: nowrap;
+    font-size: var(--text-s);
+    -webkit-user-select: none;
+    user-select: none;
+    /* A pressed button gives a little under the pointer or the finger, and springs back as soon as it is let go. */
+    transition: transform 160ms var(--ease-out);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .btn:hover {
+      background: var(--hover);
+      color: var(--fg);
+    }
+  }
+  .btn[aria-pressed="true"] {
+    background: var(--accent-soft);
+    color: var(--fg);
+  }
+  .btn-line {
+    border: var(--border);
+    border-color: var(--line-strong);
+    background: var(--surface);
+  }
+  .btn-fill {
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-weight: var(--weight-strong);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .btn-fill:hover {
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
+  }
+  .btn-fill:focus-visible {
+    outline-offset: 2px;
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  /* icons: both sets are in the sprite, the theme's --icon-set picks one */
+  .ic {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: var(--icon-stroke);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    overflow: visible;
+  }
+  .ic-s {
+    display: none;
+    fill: currentColor;
+    stroke: none;
+    fill-rule: evenodd;
+  }
+  [data-icons="solid"] .ic-kind .ic-l {
+    display: none;
+  }
+  [data-icons="solid"] .ic-kind .ic-s {
+    display: inline;
+  }
+  [data-icons="none"] .ic-kind {
+    display: none;
+  }
+
+  /* Markdown, as okfs renders it: its elements carry no classes of their own. */
+  .md {
+    font-family: var(--font-prose);
+    font-size: calc(var(--text) * 1.12);
+    line-height: 1.65;
+    padding: calc(var(--pad) * 2) calc(var(--pad) * 2.2) 64px;
+    max-width: 46em;
+    margin: 0 auto;
+    overflow-wrap: break-word;
+  }
+  .md > :first-child {
+    margin-top: 0;
+  }
+  .md h1,
+  .md h2,
+  .md h3 {
+    font-family: var(--font-display);
+    font-weight: var(--weight-strong);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin: 1.8em 0 0.5em;
+  }
+  .md h1 {
+    font-size: 1.9em;
+  }
+  .md h2 {
+    font-size: 1.3em;
+    padding-bottom: 0.3em;
+    border-bottom: var(--border);
+  }
+  .md h3 {
+    font-size: 1.08em;
+  }
+  .md p,
+  .md ul,
+  .md ol,
+  .md blockquote,
+  .md pre,
+  .md table {
+    margin: 0 0 1em;
+  }
+  .md ul,
+  .md ol {
+    padding-left: 1.4em;
+  }
+  .md li {
+    margin: 0.2em 0;
+  }
+  .md a {
+    color: var(--accent);
+    text-underline-offset: 2px;
+  }
+  .md code {
+    font: 0.86em var(--font-mono);
+    letter-spacing: 0;
+    background: var(--sunken);
+    padding: 0.14em 0.36em;
+    border-radius: min(var(--radius), 4px);
+  }
+  .md pre {
+    background: var(--sunken);
+    border: var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    overflow: auto;
+    line-height: 1.55;
+  }
+  .md pre code {
+    background: none;
+    padding: 0;
+    font-size: 0.84em;
+  }
+  .md blockquote {
+    margin-left: 0;
+    padding: 2px 0 2px 14px;
+    border-left: 3px solid var(--accent);
+    color: var(--muted);
+  }
+  .md img {
+    max-width: 100%;
+    border-radius: var(--radius);
+    display: block;
+  }
+  .md hr {
+    border: 0;
+    border-top: var(--border);
+    margin: 2em 0;
+  }
+  .md table {
+    border-collapse: collapse;
+    font-size: 0.9em;
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .md th,
+  .md td {
+    text-align: left;
+    padding: 6px 14px 6px 0;
+    border-bottom: var(--border);
+    white-space: nowrap;
+  }
+  .md th {
+    color: var(--muted);
+    font-weight: var(--weight);
+    text-transform: var(--label-case);
+  }
+  .md input[type="checkbox"] {
+    margin: 0 0.4em 0 0;
+  }
+  .md li:has(> input[type="checkbox"]) {
+    list-style: none;
+    margin-left: -1.4em;
+  }
+  .md del {
+    color: var(--muted);
+  }
+  /* the Markdown renderer wraps quoted and listed text in paragraphs */
+  .md blockquote > :last-child,
+  .md li > :last-child {
+    margin-bottom: 0;
+  }
+  .md li > p {
+    margin-bottom: 0.4em;
+  }
+  /* The note over every folder is a line or two: its headings are no bigger than its text. */
+  .md.note > :last-child {
+    margin-bottom: 0;
+  }
+  .md.note h1,
+  .md.note h2,
+  .md.note h3 {
+    font-size: 1em;
+    margin: 0 0 0.3em;
+    padding: 0;
+    border: 0;
+    color: var(--fg);
+  }
+
+  /* Source, as okfs renders it: a .ln for each line, a .tk-* for each token. */
+  .code {
+    margin: 0;
+    padding: var(--pad) 0 48px;
+    font: calc(var(--text) * 0.92) / 1.6 var(--font-mono);
+    letter-spacing: 0;
+    counter-reset: ln;
+    tab-size: 4;
+    --ln: 3ch;
+    min-width: max-content;
+  }
+  .code .ln {
+    display: block;
+    padding: 0 var(--pad) 0 0;
+    white-space: pre;
+  }
+  .code .ln::before {
+    counter-increment: ln;
+    content: counter(ln);
+    display: inline-block;
+    width: calc(var(--ln) + 1.6em);
+    padding-right: 1.2em;
+    text-align: right;
+    color: var(--faint);
+    user-select: none;
+  }
+  /* Prose wraps at the edge of the pane, and a wrapped line hangs from the line number: the gutter is padding and the first line pulls back into it. */
+  .code.wrap {
+    min-width: 0;
+  }
+  .code.wrap .ln {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding-left: calc(var(--ln) + 1.6em);
+    text-indent: calc(-1 * (var(--ln) + 1.6em));
+  }
+  .code.wrap .ln::before {
+    text-indent: 0;
+  }
+  .tk-c {
+    color: var(--syn-comment);
+    font-style: italic;
+  }
+  .tk-k {
+    color: var(--syn-keyword);
+  }
+  .tk-s {
+    color: var(--syn-string);
+  }
+  .tk-n {
+    color: var(--syn-number);
+  }
+  .tk-t {
+    color: var(--syn-title);
+  }
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+}
+@keyframes notice-wait {
+  50% {
+    opacity: 0.3;
+  }
+}

@@ -1,0 +1,61 @@
+/* The front page's stylesheet: Tailwind's utilities over the page's own colors and faces. build.ts builds it into
+   the page. Tailwind's Preflight is left out: the base layer below is the page's own. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Fraunces and IBM Plex Mono, latin, served beside this page. Both SIL Open Font License 1.1. */
+@font-face { font-family: "Fraunces"; src: url(/fonts/fraunces.woff2) format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-400.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-500.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url(/fonts/ibm-plex-mono-600.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+:root {
+  --serif: "Fraunces", Georgia, serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --paper: #f3ecdc; --paper-2: #eae0ca; --ink: #191918; --ink-2: #5d5547; --rule: #191918; --spot: #e8501c; --spot-ink: #a8360d; --on-spot: #191918;
+  --beige: #ddd3bb; --beige-2: #c9bc9f; --beige-3: #b3a585; --glass: #10130f;
+}
+[data-theme="dark"] {
+  --paper: #1a1815; --paper-2: #23201b; --ink: #ede6d6; --ink-2: #aaa192; --rule: #ede6d6; --spot: #ff6a36; --spot-ink: #ff6a36;
+  --beige: #cfc4aa; --beige-2: #b6a98b; --beige-3: #9b8e71; --glass: #050605;
+}
+
+/* The page's colors and faces, by name: a scheme switch changes the variables, and every utility follows. */
+@theme inline reference {
+  --*: initial;
+  --spacing: 0.25rem;
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-rule: var(--rule);
+  --color-rule-faint: color-mix(in srgb, var(--rule) 25%, transparent);
+  --color-rule-soft: color-mix(in srgb, var(--rule) 35%, transparent);
+  --color-spot: var(--spot);
+  --color-spot-ink: var(--spot-ink);
+  --color-on-spot: var(--on-spot);
+  --color-beige: var(--beige);
+  --color-glass: var(--glass);
+  --font-serif: var(--serif);
+  --font-mono: var(--mono);
+}
+
+@custom-variant hover (&:hover);
+@custom-variant tablet (@media (max-width: 1000px));
+@custom-variant phone (@media (max-width: 640px));
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { margin: 0; overflow-x: hidden; background: var(--paper); color: var(--ink); font: 400 18px/1.55 var(--serif); font-variation-settings: "opsz" 14; }
+  @media (max-width: 640px) { body { font-size: 17px; } }
+  a { color: inherit; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--spot); outline-offset: 3px; }
+  svg { display: block; }
+  code { font: 400 .86em var(--mono); color: var(--ink); background: var(--paper-2); padding: 1px 4px; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+}
+
+@layer components {
+  /* The logo, drawn from the symbol in the page in two inks that an element can set. */
+  .logo { --logo-ink: var(--ink); --logo-spot: var(--spot); display: block; height: auto; aspect-ratio: 2647 / 850; }
+}

@@ -95,10 +95,11 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
   }
 
   return (
-    <div class="list" ref={scroller} tabIndex={-1} role="listbox" aria-label="Files">
-      <div class="probe" ref={probe} />
+    <div class="list relative min-h-0 flex-1 overflow-auto overscroll-contain" ref={scroller} tabIndex={-1} role="listbox" aria-label="Files">
+      {/* A row's height, as the page draws it: see `pageOf` in app.tsx. */}
+      <div class="probe pointer-events-none invisible absolute h-(--row-h) w-0" ref={probe} />
       {empty}
-      <div class="rows" ref={inner} style={{ height: `${height}px` }}>
+      <div class="rows relative" ref={inner} style={{ height: `${height}px` }}>
         {cells}
       </div>
       {children}

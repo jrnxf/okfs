@@ -72,12 +72,15 @@ demo.catch((error) => {
   $("#boot").textContent = "okfs could not start in this browser. The demo link beside it may work.";
 });
 
+/** okfs's frames fade in once okfs is ready in them: see `mountIn`. */
+const FADE = "border-0 opacity-0 transition-opacity duration-350 ease-[ease] [&.on]:opacity-100";
+
 /** okfs in `container` at `start`, in the page's scheme. A second mount replaces the first once it is ready. */
-async function mountIn(container, at, title) {
+async function mountIn(container, at, title, look) {
   const { mount } = await demo;
   const old = $("iframe.okfs-frame", container);
   const sep = at.includes("?") ? "&" : "?";
-  const handle = mount(container, { start: `${at}${sep}scheme=${scheme()}`, title });
+  const handle = mount(container, { start: `${at}${sep}scheme=${scheme()}`, title, class: `${look} ${FADE}` });
   const drive = driver(handle);
   const follow = (next) => void drive.scheme(next);
   schemeListeners.add(follow);
@@ -102,7 +105,9 @@ function fit() {
 }
 new ResizeObserver(fit).observe(screen);
 fit();
-void mountIn($("#view"), "/photos/", "okfs serving the demo folder, on the screen").then(({ handle }) =>
+// Drawn at --fw by --fh, and scaled by --k to the width of the glass.
+const ON_SCREEN = "absolute top-0 left-0 h-[var(--fh,750px)] w-[var(--fw,1000px)] origin-top-left [transform:scale(var(--k,.6))]";
+void mountIn($("#view"), "/photos/", "okfs serving the demo folder, on the screen", ON_SCREEN).then(({ handle }) =>
   handle.whenReady().then(() => $("#boot")?.remove()),
 );
 
@@ -130,7 +135,9 @@ $("#run").addEventListener("click", async () => {
   for (const q of ["img_0042", "north pier 2024", "survey pdf", "button.tsx", "kelp flac"]) {
     const r = await backend.search({ q, limit: 1 });
     const li = document.createElement("li");
-    li.innerHTML = `<span>"${esc(q)}", ${fmt(r.total)} matches</span><b>${r.took.toFixed(1)} ms</b>`;
+    li.className =
+      "grid grid-cols-[2.4em_1fr_auto] gap-2 border-b border-b-rule-faint py-1.5 before:text-ink-2 before:content-[counter(r)_'.'] before:[counter-increment:r]";
+    li.innerHTML = `<span>"${esc(q)}", ${fmt(r.total)} matches</span><b class="font-[600] text-spot-ink">${r.took.toFixed(1)} ms</b>`;
     list.append(li);
     await sleep(reduced ? 0 : 160);
   }
@@ -146,7 +153,7 @@ function showTheme() {
   $("#theme-cap").textContent = `Plate: the ${themeId} finish, ${scheme()}.`;
   if (plate) schemeListeners.delete(plate.follow);
   // okfs reads ?theme= when its page starts, so each finish starts it again, with field-notes.md rendered.
-  void mountIn($("#theme-view"), `/?theme=${themeId}`, `okfs in its ${themeId} theme`).then((shown) => {
+  void mountIn($("#theme-view"), `/?theme=${themeId}`, `okfs in its ${themeId} theme`, "absolute inset-0 size-full").then((shown) => {
     plate = shown;
     // The plate starts in the page's scheme; it is started again when the scheme changes, so its caption holds.
     schemeListeners.delete(shown.follow);
@@ -169,10 +176,12 @@ new IntersectionObserver(
       const li = document.createElement("li");
       const b = document.createElement("button");
       b.type = "button";
+      b.className =
+        "grid w-full grid-cols-[70px_1fr] items-center gap-3 rounded-[3px] border border-rule-soft bg-transparent p-2 text-left [font:400_15px/1.25_var(--serif)] aria-pressed:border-spot aria-pressed:shadow-[inset_0_0_0_1px_var(--spot)]";
       b.dataset.id = t.id;
       const [bg, , accent] = t.dark;
       const [lbg, , laccent] = t.light;
-      b.innerHTML = `<span class="sw" aria-hidden="true"><i style="background:${lbg}"></i><i style="background:${laccent}"></i><i style="background:${bg}"></i><i style="background:${accent}"></i></span><span><b>${esc(t.name)}</b><small>${blurbs[t.id] ?? ""}</small></span>`;
+      b.innerHTML = `<span class="flex h-[34px] overflow-hidden rounded-[2px] border border-[rgba(0,0,0,.2)] *:flex-1" aria-hidden="true"><i style="background:${lbg}"></i><i style="background:${laccent}"></i><i style="background:${bg}"></i><i style="background:${accent}"></i></span><span><b class="block font-[600]">${esc(t.name)}</b><small class="text-[13px] text-ink-2">${blurbs[t.id] ?? ""}</small></span>`;
       b.addEventListener("click", () => {
         themeId = t.id;
         showTheme();

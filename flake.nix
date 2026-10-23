@@ -48,7 +48,7 @@
               '';
               outputHashMode = "recursive";
               outputHashAlgo = "sha256";
-              outputHash = "sha256-7DptCvBS5QCs4KVoAgCgf+dOG4dr5xvq01/vR9xPwxc=";
+              outputHash = "sha256-3dpDo/bmSPkMB+lXWtG3yUPHxY2ReVjs3vMhRQL7MGU=";
             };
           in
           pkgs.rustPlatform.buildRustPackage {

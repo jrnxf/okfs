@@ -7,6 +7,7 @@ import { config } from "./config";
 import { holdBack, took } from "./find";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
+import { AGE, BAR_BTN, EMPTY, EMPTY_HEAD, EMPTY_HINT, HEAD, HEADS, LIST_ROW, MATCH_GRID, ROW, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
 import { Marked } from "./palette";
 import { MATCH_LABEL, type Match, store } from "./store";
 import type { MatchOrder } from "./api";
@@ -43,9 +44,13 @@ export function MatchBar({ input }: { input: RefObject<HTMLInputElement | null> 
     return () => clearTimeout(timer);
   }, [value]);
   return (
-    <div class="qbar" onMouseDown={(event) => event.target !== input.current && event.preventDefault()}>
+    <div
+      class="box-content flex h-[calc(30px*var(--density))] min-w-0 flex-none items-center gap-2 border-b border-b-line pr-[calc(var(--pad)*0.5)] pl-[calc(var(--pad)*1.25)] text-faint phone:h-[calc(44px*var(--density))]"
+      onMouseDown={(event) => event.target !== input.current && event.preventDefault()}
+    >
       <Icon name="search" />
       <input
+        class="h-full min-w-0 flex-1 border-0 bg-transparent p-0 font-strong text-fg placeholder:font-regular placeholder:text-faint pointer-coarse:text-[16px]"
         ref={input}
         type="text"
         name="find"
@@ -63,11 +68,11 @@ export function MatchBar({ input }: { input: RefObject<HTMLInputElement | null> 
         }}
       />
       {matches?.ready && matches.total > 0 && (
-        <span class="facts num">
+        <span class="num flex-none text-xs text-muted">
           {counted(matches.total)} · {took(matches.took)}
         </span>
       )}
-      <button class="btn" aria-label="Close the matches" title={`Back to ${overName()} (esc)`} onClick={() => store.leaveFind()}>
+      <button class={`btn ${BAR_BTN}`} aria-label="Close the matches" title={`Back to ${overName()} (esc)`} onClick={() => store.leaveFind()}>
         <Icon name="close" />
       </button>
     </div>
@@ -77,27 +82,31 @@ export function MatchBar({ input }: { input: RefObject<HTMLInputElement | null> 
 /** The heads of the columns of the matches. Each sorts by its column; the one sorted by again turns it around. */
 export function MatchColumns() {
   const sort = store.s.matches?.sort ?? { key: "rank", rev: false };
-  const head = (key: MatchOrder, label: string, right = false) => {
+  const head = (key: MatchOrder, label: string, right = false, hide = "") => {
     const on = sort.key === key;
     // Names and folders run from A, sizes and times from the largest and the newest.
     const rising = (key === "name" || key === "folder") !== sort.rev;
     return (
-      <button class={[right && "r", on && "on"].filter(Boolean).join(" ") || undefined} onClick={() => store.setMatchSort(key)}>
+      <button class={`${HEAD} hover:text-fg ${right ? "justify-end" : ""} ${on ? "text-fg" : ""} ${hide}`} onClick={() => store.setMatchSort(key)}>
         {label}
-        {on && <Icon name={rising ? "up" : "down"} />}
+        {on && <Icon name={rising ? "up" : "down"} class="size-2.75 text-accent" />}
       </button>
     );
   };
   return (
-    <div class="cols label">
+    <div class={`${HEADS} ${MATCH_GRID}`}>
       <span />
       {head("name", "Name")}
-      {head("folder", "Folder")}
+      {/* A phone puts the folder under the name. */}
+      {head("folder", "Folder", false, "phone:hidden")}
       {head("size", "Size", true)}
       {head("time", "Mod.", true)}
     </div>
   );
 }
+
+/** The folder a match is in, cut at its start: the end of a path says more than its start. */
+const FOLDER = "min-w-0 truncate text-left text-muted [direction:rtl]";
 
 /** One match as a row of the list, with what the query matched marked in its name, or in its folder. */
 export function MatchRow({ match, index, cell, on }: { match: Match; index: number; cell: Cell; on: boolean }) {
@@ -108,23 +117,24 @@ export function MatchRow({ match, index, cell, on }: { match: Match; index: numb
   const folder = hit.name ? dir || "/" : <Marked text={dir || "/"} idx={hit.idx} />;
   const style = { top: `${cell.top}px`, left: `${cell.left}px`, width: `${cell.width}px`, height: `${cell.height}px` };
   return (
-    <div class="row" role="option" aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style}>
+    // A phone shows a match in two lines: its name, and the folder it is in under it.
+    <div class={`${ROW} ${MATCH_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}`} role="option" aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style}>
       <KindIcon kind={entry.kind} />
-      <span class="nmw">
-        <span class="nm trunc">
-          <b>
+      <span class="flex min-w-0 phone:flex-col phone:leading-[1.3]">
+        <span class="min-w-0 truncate">
+          <b class={nameWeight(entry.dir)}>
             <Marked text={entry.name} idx={hit.idx} from={offset} />
           </b>
         </span>
-        <span class="sub trunc">
-          <bdi>{folder}</bdi>
+        <span class={`hidden phone:block ${FOLDER} text-xs`}>
+          <bdi class="[direction:ltr]">{folder}</bdi>
         </span>
       </span>
-      <span class="dir trunc">
-        <bdi>{folder}</bdi>
+      <span class={`phone:hidden ${FOLDER} text-s`}>
+        <bdi class="[direction:ltr]">{folder}</bdi>
       </span>
-      <span class="sz num">{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
-      <span class="tm num" title={entry.mtime ? fmt.abs(entry.mtime) : undefined}>
+      <span class={SIZE}>{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
+      <span class={AGE} title={entry.mtime ? fmt.abs(entry.mtime) : undefined}>
         {entry.mtime ? fmt.rel(entry.mtime) : ""}
       </span>
     </div>
@@ -136,10 +146,10 @@ export function MatchesEmpty() {
   const matches = store.s.matches;
   if (!matches?.ready || matches.total > 0) return null;
   return (
-    <div class="empty">
-      <b>No matches for “{matches.q}”</b>
-      <span class="hint">Check the spelling, or try fewer letters.</span>
-      <span class="hint">
+    <div class={EMPTY}>
+      <b class={EMPTY_HEAD}>No matches for “{matches.q}”</b>
+      <span class={EMPTY_HINT}>Check the spelling, or try fewer letters.</span>
+      <span class={EMPTY_HINT}>
         Press <kbd>esc</kbd> to go back to {overName()}.
       </span>
     </div>
@@ -153,13 +163,17 @@ export function TrailButton() {
   // At the folder entered from the matches, a phone's back arrow already goes back to them: see `Store.up`.
   const atRoot = trail.root === store.s.path && !store.s.open;
   return (
-    <button class={atRoot ? "btn btn-line trail at-root" : "btn btn-line trail"} title="Back to the matches (esc)" onClick={() => store.toMatches()}>
-      <Icon name="left" class="wide-only" />
-      <Icon name="list" class="phone-only" />
-      <span class="wide-only trunc">
+    <button
+      class={`btn btn-line h-[calc(26px*var(--density))] max-w-[260px] flex-none gap-1 pr-2.25 pl-1.5 text-fg phone:h-8 phone:gap-1.25 phone:px-2 phone:text-xs ${atRoot ? "phone:hidden" : ""}`}
+      title="Back to the matches (esc)"
+      onClick={() => store.toMatches()}
+    >
+      <Icon name="left" class="text-accent phone:hidden" />
+      <Icon name="list" class="hidden text-accent phone:block phone:text-muted" />
+      <span class="min-w-0 truncate phone:hidden">
         {counted(trail.total)} for “{trail.q}”
       </span>
-      <span class="phone-only num">{fmt.count(trail.total)}</span>
+      <span class="num hidden phone:inline">{fmt.count(trail.total)}</span>
     </button>
   );
 }
