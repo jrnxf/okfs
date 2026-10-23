@@ -740,3 +740,64 @@ fn a_certificate_needs_its_key_and_a_key_its_certificate() {
     assert!(!ended.success());
     assert!(error.contains("holds no certificate"), "{error}");
 }
+
+/// Puts an entry in the Trash of `served` as okfs leaves one, deleted `days_ago` days ago.
+fn trashed(served: &Path, days_ago: i64) -> PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let deleted = now - days_ago * 24 * 60 * 60;
+    let slot = served.join(".okfs-trash").join(format!("{deleted:011}-00c0ffee"));
+    fs::create_dir_all(&slot).unwrap();
+    fs::write(slot.join("item"), "old").unwrap();
+    let info = format!(r#"{{"path":"old.txt","deleted":{deleted},"dir":false,"size":3}}"#);
+    fs::write(slot.join("info.json"), info).unwrap();
+    slot
+}
+
+#[test]
+fn the_trash_is_said_at_start_and_its_days_are_set_or_it_is_turned_off() {
+    let (_tmp, okfs) = site(&["--allow-delete"]);
+    assert!(
+        okfs.said.contains("trash    a delete is kept 30 days in .okfs-trash"),
+        "{}",
+        okfs.said
+    );
+    let (_tmp, okfs) = site(&["--allow-delete", "--trash-days", "7"]);
+    assert!(okfs.said.contains("kept 7 days"), "{}", okfs.said);
+    for args in [&["--allow-delete", "--no-trash"][..], &[][..]] {
+        let (_tmp, okfs) = site(args);
+        assert!(!okfs.said.contains("trash"), "{args:?}: {}", okfs.said);
+    }
+    for wrong in [
+        &["--trash-days", "0", "."][..],
+        &["--no-trash", "--trash-days", "3", "."][..],
+    ] {
+        let (status, error) = run(&[&["--no-open"][..], wrong].concat());
+        assert!(!status.success(), "{wrong:?}: {error}");
+    }
+}
+
+#[test]
+fn at_start_the_trash_deletes_what_is_past_its_days_and_nothing_without_deleting_on() {
+    let tmp = TempDir::new().unwrap();
+    let served = tmp.path().join("served");
+    fs::create_dir_all(&served).unwrap();
+    let old = trashed(&served, 31);
+    let young = trashed(&served, 2);
+
+    // Read only: okfs changes nothing, and the sweep deletes, so it waits.
+    let okfs = start(&served, &tmp.path().join("cache"), &[]);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(old.exists() && young.exists());
+    drop(okfs);
+
+    let _okfs = start(&served, &tmp.path().join("cache"), &["--allow-delete"]);
+    let since = Instant::now();
+    while old.exists() && since.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!old.exists(), "past its 30 days");
+    assert!(young.exists(), "2 days old");
+}

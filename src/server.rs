@@ -1,6 +1,7 @@
-//! The HTTP side: every route okfs answers. All of them read, except the three that write: one
-//! deletes, and refuses unless okfs was started with `--allow-delete`, one puts a file in place,
-//! with `--allow-upload` or `--allow-edit`, and one makes a folder, with `--allow-upload`.
+//! The HTTP side: every route okfs answers. All of them read, except those that change the folder,
+//! each behind its flag: a delete, which moves to the Trash unless it is off, and the Trash's own
+//! routes, with `--allow-delete`; a move or a rename, with `--allow-edit`; a copy and a new folder,
+//! with `--allow-upload`; and a file put in place, with `--allow-upload` or `--allow-edit`.
 
 use std::convert::Infallible;
 use std::fs;
@@ -35,7 +36,8 @@ use crate::pdf::{self, Drawer};
 use crate::render::{self, encode_path, view_url};
 use crate::theme::{self, Swatch, Theme};
 use crate::thumb::{self, Thumbs};
-use crate::write::{self, Locks, Part};
+use crate::trash::{self, Trash, Unrestored};
+use crate::write::{self, Locks, Part, PartDir};
 use crate::{archive, assets, preview, raw};
 
 /// A folder's notes larger than this are not shown under its listing.
@@ -56,7 +58,8 @@ const STREAM_BEAT: Duration = Duration::from_secs(15);
 /// The id of a theme read from a file, as the switcher knows it.
 const CUSTOM: &str = "custom";
 /// The header the page sends with every change it asks for, with the kind of change as its
-/// value: `delete`, or `write` for a file or a folder put in place. See `own_page`.
+/// value: `delete` for a delete and the Trash's changes, `move` for a move or a rename, or `write`
+/// for a file, a folder or a copy put in place. See `own_page`.
 const OWN_HEADER: &str = "x-okfs";
 
 /// Which theme a fresh browser gets.
@@ -89,6 +92,9 @@ pub struct Options {
     /// Let visitors delete entries. Off unless asked for: okfs has no accounts, so
     /// with this on anyone who can reach the address can delete.
     pub allow_delete: bool,
+    /// With `allow_delete`, how many days a delete keeps the entry in the Trash before it goes
+    /// for good: `--trash-days`. `None` deletes for good at once, as `--no-trash` does.
+    pub trash: Option<u32>,
     /// Let visitors add files and folders. A file never lands on a name that is taken.
     pub allow_upload: bool,
     /// Let visitors change the files that are there: save from the editor, or replace a file
@@ -127,6 +133,7 @@ impl Default for Options {
             drawer: None,
             pdf_limit: pdf::LIMIT,
             allow_delete: false,
+            trash: None,
             allow_upload: false,
             allow_edit: false,
             max_upload: None,
@@ -150,6 +157,8 @@ pub struct App {
     heavy: Semaphore,
     /// The files being replaced, one write at a time on each.
     locks: Locks,
+    /// Where a delete puts what it deletes, with `--allow-delete` and the Trash on.
+    trash: Option<Trash>,
 }
 
 impl App {
@@ -165,7 +174,12 @@ impl App {
         let workers = std::thread::available_parallelism().map_or(2, usize::from);
         let thumbs = Thumbs::new(options.cache.clone(), root.dir());
         index.after_rescan(thumbs.pruner());
+        let trash = options
+            .trash
+            .filter(|_| options.allow_delete)
+            .map(|days| Trash::new(&root, days));
         Ok(Arc::new(Self {
+            trash,
             thumbs,
             drawer: Drawer::new(options.drawer.clone(), options.pdf_limit),
             root,
@@ -201,6 +215,29 @@ impl App {
         held.as_ref().map(|(_, theme)| theme.clone())
     }
 
+    /// Deletes for good what the Trash has kept longer than its days, and tells the pages when
+    /// anything went. Answers with how many entries went. Nothing happens with the Trash off: okfs
+    /// deletes nothing without `--allow-delete`.
+    pub fn sweep_trash(&self) -> usize {
+        let Some(trash) = &self.trash else { return 0 };
+        match trash.sweep(trash::now()) {
+            Ok(0) => 0,
+            Ok(gone) => {
+                self.index.feed().tell(Change::Trash);
+                gone
+            }
+            Err(error) => {
+                eprintln!("okfs: cannot sweep the Trash: {error}");
+                0
+            }
+        }
+    }
+
+    /// The Trash, when deletes go there.
+    pub fn trash(&self) -> Option<&Trash> {
+        self.trash.as_ref()
+    }
+
     fn default_theme_id(&self) -> &str {
         match &self.options.theme {
             ThemeChoice::BuiltIn(name) => name,
@@ -233,12 +270,16 @@ pub fn read_theme(path: &std::path::Path) -> Result<(SystemTime, Theme), String>
     }
 }
 
-/// Every route. Only `/api/entry`, `/api/file` and `/api/folder` change anything on disk, and
-/// only when their flag is on.
+/// Every route. Only `/api/entry`, `/api/trash`, `/api/move`, `/api/copy`, `/api/file` and
+/// `/api/folder` change anything on disk, and only when their flag is on.
 pub fn router(app: Arc<App>) -> Router {
     let packed = Router::new()
         .route("/api/list", get(list))
         .route("/api/entry", delete(delete_entry))
+        .route("/api/trash", get(trash_list).delete(trash_forget))
+        .route("/api/trash/restore", post(trash_restore))
+        .route("/api/move", post(move_entry))
+        .route("/api/copy", post(copy_entry))
         .route("/api/previews", get(preview_many))
         .route("/api/search", get(search))
         .route("/api/recent", get(recent))
@@ -740,6 +781,7 @@ async fn events(State(app): State<Arc<App>>) -> Response {
                 .event("change")
                 .data(serde_json::json!({ "dir": dir, "files": files }).to_string()),
             Change::Sync => Event::default().event("sync").data("{}"),
+            Change::Trash => Event::default().event("trash").data("{}"),
         };
         Ok::<_, Infallible>(event)
     });
@@ -1032,14 +1074,61 @@ fn own_page(headers: &HeaderMap, host: &str, allowed: &[String], change: &str) -
     ))
 }
 
-/// Removes one entry and takes it out of the index. Answers with how it ended.
-fn remove_entry(app: &App, path: &str) -> Response {
-    let entry = match app.root.entry(path) {
+/// The answer to a folder that is not deleted because it holds something okfs does not show.
+fn holds(why: Unshown) -> Response {
+    match why {
+        Unshown::Hidden => fail(
+            StatusCode::CONFLICT,
+            "somewhere inside, this folder holds a dotfile, which okfs is not showing and so does not delete: \
+             start okfs with --hidden, or remove the dotfile yourself",
+        ),
+        Unshown::Unserved => fail(
+            StatusCode::CONFLICT,
+            "somewhere inside, this folder holds something okfs cannot show, such as a link that leads out of \
+             the served folder, and so does not delete: remove it yourself",
+        ),
+    }
+}
+
+/// Finds the entry a delete or a move names, or the answer that refuses it.
+fn entry_for(app: &App, path: &str, change: &str) -> Result<paths::Entry, Refused> {
+    app.root.entry(path).map_err(|why| {
+        Box::new(match why {
+            NoEntry::Root => fail(
+                StatusCode::FORBIDDEN,
+                &format!("the served folder itself cannot be {change}"),
+            ),
+            NoEntry::NotServed => fail(StatusCode::FORBIDDEN, "this path is not served"),
+            NoEntry::Missing => not_found(),
+        })
+    })
+}
+
+/// Removes one entry and takes it out of the index, or with the Trash on, moves it there unless
+/// `forever` asks otherwise. Answers with how it ended.
+fn remove_entry(app: &App, path: &str, forever: bool) -> Response {
+    let entry = match entry_for(app, path, "deleted") {
         Ok(entry) => entry,
-        Err(NoEntry::Root) => return fail(StatusCode::FORBIDDEN, "the served folder itself cannot be deleted"),
-        Err(NoEntry::NotServed) => return fail(StatusCode::FORBIDDEN, "this path is not served"),
-        Err(NoEntry::Missing) => return not_found(),
+        Err(answer) => return *answer,
     };
+    if let (Some(trash), false) = (&app.trash, forever) {
+        return match trash.put(&app.root, &entry) {
+            Ok(item) => {
+                app.index.reread(&entry.folder);
+                app.index.feed().tell(Change::Trash);
+                (StatusCode::OK, Json(serde_json::json!({ "trash": item }))).into_response()
+            }
+            Err(trash::Refused::Holds(why)) => holds(why),
+            Err(trash::Refused::OtherDisk) => {
+                let answer = serde_json::json!({
+                    "error": "this is on another disk than the Trash, so it cannot be moved there: delete it for good instead",
+                    "disk": true,
+                });
+                (StatusCode::CONFLICT, Json(answer)).into_response()
+            }
+            Err(trash::Refused::Failed(error)) => disk_failed(&error),
+        };
+    }
     let removed = app.root.remove(&entry);
     app.index.reread(&entry.folder);
     // A folder that is partly gone is still listed where it was, changed inside at any depth.
@@ -1048,16 +1137,7 @@ fn remove_entry(app: &App, path: &str) -> Response {
     }
     match removed {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(Kept::Holds(Unshown::Hidden)) => fail(
-            StatusCode::CONFLICT,
-            "somewhere inside, this folder holds a dotfile, which okfs is not showing and so does not delete: \
-             start okfs with --hidden, or remove the dotfile yourself",
-        ),
-        Err(Kept::Holds(Unshown::Unserved)) => fail(
-            StatusCode::CONFLICT,
-            "somewhere inside, this folder holds something okfs cannot show, such as a link that leads out of \
-             the served folder, and so does not delete: remove it yourself",
-        ),
+        Err(Kept::Holds(why)) => holds(why),
         Err(Kept::Failed(error)) => disk_failed(&error),
         Err(Kept::Partly(error)) => {
             let message = format!("{}, and part of the folder may already be gone", error.kind());
@@ -1089,7 +1169,7 @@ fn disk_failed(error: &std::io::Error) -> Response {
 /// Deletes one entry of the served folder: a file, a link, or a folder with everything in it.
 async fn delete_entry(
     State(app): State<Arc<App>>,
-    query: Result<Query<PathQuery>, QueryRejection>,
+    query: Result<Query<DeleteQuery>, QueryRejection>,
     headers: HeaderMap,
     uri: Uri,
 ) -> Response {
@@ -1108,9 +1188,374 @@ async fn delete_entry(
         return fail(StatusCode::BAD_REQUEST, "the path cannot be read");
     };
     let worker = Arc::clone(&app);
-    tokio::task::spawn_blocking(move || remove_entry(&worker, &query.path))
+    tokio::task::spawn_blocking(move || remove_entry(&worker, &query.path, query.forever))
         .await
         .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "the delete failed"))
+}
+
+#[derive(Deserialize)]
+struct DeleteQuery {
+    #[serde(default)]
+    path: String,
+    /// Delete for good at once, even with the Trash on: for an entry on another disk than the Trash.
+    #[serde(default, deserialize_with = "query_flag")]
+    forever: bool,
+}
+
+/// Checks that a request may change the Trash: deleting and the Trash are on, and the page itself
+/// asks. Answers with the Trash, or with the refusal.
+fn trash_for<'a>(app: &'a App, headers: &HeaderMap, uri: &Uri) -> Result<&'a Trash, Refused> {
+    if !app.options.allow_delete {
+        return Err(Box::new(fail(
+            StatusCode::FORBIDDEN,
+            "deleting is off: start okfs with --allow-delete",
+        )));
+    }
+    let Some(trash) = &app.trash else {
+        return Err(Box::new(fail(
+            StatusCode::NOT_FOUND,
+            "the Trash is off: okfs runs with --no-trash",
+        )));
+    };
+    own_page(headers, request_host(headers, uri), &app.options.allow_hosts, "delete")
+        .map_err(|why| Box::new(fail(StatusCode::FORBIDDEN, &why)))?;
+    Ok(trash)
+}
+
+/// What the Trash holds, the last deleted first, after the sweep has taken what is past its days.
+async fn trash_list(State(app): State<Arc<App>>) -> Response {
+    if app.trash.is_none() || !app.options.allow_delete {
+        return fail(StatusCode::NOT_FOUND, "the Trash is off");
+    }
+    let worker = Arc::clone(&app);
+    let listed = tokio::task::spawn_blocking(move || {
+        worker.sweep_trash();
+        let trash = worker.trash.as_ref().expect("checked above");
+        trash.list().map(|items| (trash.days(), items))
+    })
+    .await;
+    match listed {
+        Ok(Ok((days, items))) => Json(serde_json::json!({ "days": days, "items": items })).into_response(),
+        Ok(Err(error)) => disk_failed(&error),
+        Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the Trash could not be read"),
+    }
+}
+
+#[derive(Deserialize)]
+struct TrashQuery {
+    #[serde(default)]
+    id: String,
+    /// Every entry: empty the Trash.
+    #[serde(default, deserialize_with = "query_flag")]
+    all: bool,
+}
+
+/// Puts an entry in the Trash back where it was, and tells the pages.
+async fn trash_restore(
+    State(app): State<Arc<App>>,
+    query: Result<Query<TrashQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    if let Err(refused) = trash_for(&app, &headers, &uri) {
+        return *refused;
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the entry cannot be read");
+    };
+    let worker = Arc::clone(&app);
+    let work = move || {
+        let trash = worker.trash.as_ref().expect("checked above");
+        match trash.restore(&worker.root, &query.id) {
+            Ok(back) => {
+                // A folder made again is read with what is under it.
+                let top = back.made.as_deref().unwrap_or(&back.path);
+                worker.index.reread(paths::parent(top));
+                worker.index.feed().tell(Change::Trash);
+                Json(serde_json::json!({ "path": back.path, "made": back.made })).into_response()
+            }
+            Err(Unrestored::Missing) => fail(StatusCode::NOT_FOUND, "there is no such entry in the Trash"),
+            Err(Unrestored::Blocked(at)) => fail(
+                StatusCode::CONFLICT,
+                &format!("it cannot go back: /{at} is not a folder okfs can put it in"),
+            ),
+            Err(Unrestored::Failed(error)) => disk_failed(&error),
+        }
+    };
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "it could not be put back"))
+}
+
+/// Deletes one entry in the Trash for good, or with `all` everything in it, and tells the pages.
+async fn trash_forget(
+    State(app): State<Arc<App>>,
+    query: Result<Query<TrashQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    if let Err(refused) = trash_for(&app, &headers, &uri) {
+        return *refused;
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the entry cannot be read");
+    };
+    if !query.all && query.id.is_empty() {
+        return fail(
+            StatusCode::BAD_REQUEST,
+            "name an entry with id, or every one with all=1",
+        );
+    }
+    let worker = Arc::clone(&app);
+    let work = move || {
+        let trash = worker.trash.as_ref().expect("checked above");
+        let gone = if query.all {
+            trash.empty()
+        } else {
+            trash.forget(&query.id).map(usize::from)
+        };
+        match gone {
+            Ok(0) if !query.all => fail(StatusCode::NOT_FOUND, "there is no such entry in the Trash"),
+            Ok(gone) => {
+                worker.index.feed().tell(Change::Trash);
+                Json(serde_json::json!({ "gone": gone })).into_response()
+            }
+            Err(error) => disk_failed(&error),
+        }
+    };
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "the Trash could not be changed"))
+}
+
+#[derive(Deserialize)]
+struct MoveQuery {
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    to: String,
+    /// When the name is taken, take the first free one like it: "keep both".
+    #[serde(default, deserialize_with = "query_flag")]
+    keep: bool,
+}
+
+/// True when two paths name the same entry, as a file system that ignores case answers to two
+/// spellings of one name. Neither is followed when it is a link.
+fn same_entry(a: &std::path::Path, b: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        a.canonicalize().ok().is_some_and(|a| b.canonicalize().ok() == Some(a))
+    }
+}
+
+/// The answer to a move or a copy whose disk refused it.
+fn transfer_failed(app: &App, place: &Place, error: &std::io::Error, what: &str) -> Response {
+    use std::io::ErrorKind;
+    match error.kind() {
+        ErrorKind::AlreadyExists => clash(
+            app,
+            &place.rel,
+            &format!("there is already an entry named {}", place.name),
+        ),
+        ErrorKind::Unsupported => fail(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("this disk cannot {what} without a risk of replacing an entry"),
+        ),
+        ErrorKind::CrossesDevices => fail(
+            StatusCode::CONFLICT,
+            &format!("the two folders are on different disks: okfs does not {what} across disks"),
+        ),
+        _ => disk_failed(error),
+    }
+}
+
+/// Moves or renames one entry, with `--allow-edit`: in one step, never over an entry that is there.
+/// A folder goes with everything in it, and a link goes as a link. Answers with its path now.
+async fn move_entry(
+    State(app): State<Arc<App>>,
+    query: Result<Query<MoveQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    if !app.options.allow_edit {
+        return fail(
+            StatusCode::FORBIDDEN,
+            "moving and renaming are off: start okfs with --allow-edit",
+        );
+    }
+    if let Err(why) = own_page(&headers, request_host(&headers, &uri), &app.options.allow_hosts, "move") {
+        return fail(StatusCode::FORBIDDEN, &why);
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the paths cannot be read");
+    };
+    let worker = Arc::clone(&app);
+    let work = move || {
+        let app = &*worker;
+        let entry = match entry_for(app, &query.from, "moved") {
+            Ok(entry) => entry,
+            Err(answer) => return *answer,
+        };
+        let place = match app.root.target(&query.to) {
+            Ok(place) => place,
+            Err(why) => return no_place(why),
+        };
+        if entry.is_dir() && place.dir.starts_with(entry.abs()) {
+            return fail(StatusCode::CONFLICT, "a folder cannot go inside itself");
+        }
+        let to = place.abs();
+        if to == entry.abs() {
+            return Json(serde_json::json!({ "path": entry.place() })).into_response();
+        }
+        // No write from okfs replaces the file while it moves.
+        let held = app.locks.hold(entry.abs());
+        let moved = if same_entry(entry.abs(), &to) {
+            // The same entry under another spelling: a change of case on a disk that ignores case.
+            fs::rename(entry.abs(), &to).map(|()| place.name.clone())
+        } else if query.keep {
+            write::rename_free(entry.abs(), &place.dir, &place.name)
+        } else {
+            write::rename_new(entry.abs(), &to).map(|()| place.name.clone())
+        };
+        drop(held);
+        let name = match moved {
+            Ok(name) => name,
+            Err(error) => return transfer_failed(app, &place, &error, "move"),
+        };
+        if let Some(from) = entry.abs().parent() {
+            write::sync_folder(from);
+        }
+        write::sync_folder(&place.dir);
+        app.index.reread(&entry.folder);
+        if place.folder != entry.folder {
+            app.index.reread(&place.folder);
+        }
+        Json(serde_json::json!({ "path": paths::join(&place.folder, &name) })).into_response()
+    };
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "it could not be moved"))
+}
+
+/// The size of what a copy of `abs` writes: what okfs shows of it, links not followed.
+fn copy_size(root: &Root, abs: &std::path::Path) -> u64 {
+    let Ok(meta) = fs::metadata(abs) else { return 0 };
+    if !meta.is_dir() {
+        return meta.len();
+    }
+    root.scan(abs)
+        .unwrap_or_default()
+        .iter()
+        .filter(|seen| !seen.link)
+        .map(|seen| copy_size(root, &abs.join(&seen.name)))
+        .sum()
+}
+
+/// Copies what okfs shows of the folder `from` into the folder `to`, which is new and empty. A link
+/// is copied as a link where links can be made, and left out elsewhere: none is followed.
+fn copy_tree(root: &Root, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    for seen in root.scan(from)? {
+        let (source, target) = (from.join(&seen.name), to.join(&seen.name));
+        if seen.link {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(fs::read_link(&source)?, &target)?;
+        } else if seen.dir {
+            fs::create_dir(&target)?;
+            copy_tree(root, &source, &target)?;
+        } else {
+            fs::copy(&source, &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies one file or folder, with `--allow-upload`: put together beside where it goes and moved into
+/// place whole, never over an entry that is there. A link is followed to what it points at; links
+/// inside a folder are copied as links. Answers with the copy's path.
+async fn copy_entry(
+    State(app): State<Arc<App>>,
+    query: Result<Query<MoveQuery>, QueryRejection>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    if !app.options.allow_upload {
+        return fail(StatusCode::FORBIDDEN, "copying is off: start okfs with --allow-upload");
+    }
+    if let Err(why) = own_page(
+        &headers,
+        request_host(&headers, &uri),
+        &app.options.allow_hosts,
+        "write",
+    ) {
+        return fail(StatusCode::FORBIDDEN, &why);
+    }
+    let Ok(Query(query)) = query else {
+        return fail(StatusCode::BAD_REQUEST, "the paths cannot be read");
+    };
+    let worker = Arc::clone(&app);
+    let work = move || {
+        let app = &*worker;
+        let Some(found) = app.root.resolve(&query.from) else {
+            return not_found();
+        };
+        if found.rel.is_empty() {
+            return fail(StatusCode::FORBIDDEN, "the served folder itself cannot be copied");
+        }
+        let place = match app.root.target(&query.to) {
+            Ok(place) => place,
+            Err(why) => return no_place(why),
+        };
+        let dir = found.meta.is_dir();
+        if dir && place.dir.starts_with(&found.abs) {
+            return fail(StatusCode::CONFLICT, "a folder cannot be copied into itself");
+        }
+        if let Some(max) = app.options.max_upload
+            && copy_size(&app.root, &found.abs) > max
+        {
+            return too_large(max);
+        }
+        let copied = if dir {
+            PartDir::new(&place.dir).and_then(|mut part| {
+                copy_tree(&app.root, &found.abs, part.path())?;
+                part.place(&place.dir, &place.name, query.keep)
+            })
+        } else {
+            Part::new(&place.dir).and_then(|mut part| {
+                let mut file = part.take_file().expect("a fresh part");
+                std::io::copy(&mut fs::File::open(&found.abs)?, &mut file)?;
+                file.sync_all()?;
+                drop(file);
+                let _ = part.permissions_of(&found.abs);
+                if query.keep {
+                    part.create_free(&place.dir, &place.name)
+                } else {
+                    part.create(&place.abs()).map(|()| place.name.clone())
+                }
+            })
+        };
+        let name = match copied {
+            Ok(name) => name,
+            Err(error) => return transfer_failed(app, &place, &error, "copy"),
+        };
+        write::sync_folder(&place.dir);
+        app.index.reread(&place.folder);
+        (
+            StatusCode::CREATED,
+            Json(serde_json::json!({ "path": paths::join(&place.folder, &name) })),
+        )
+            .into_response()
+    };
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "it could not be copied"))
 }
 
 #[derive(Deserialize)]
@@ -1662,6 +2107,10 @@ struct Config {
     target: Target,
     /// True when deleting is on. The page shows its delete control only then.
     delete: bool,
+    /// With deleting on, how many days the Trash keeps what is deleted. Left out when a delete is
+    /// for good: deleting is off, or the Trash is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trash: Option<u32>,
     /// True when adding files and folders is on: `--allow-upload`.
     upload: bool,
     /// True when changing the files that are there is on: `--allow-edit`.
@@ -1786,6 +2235,7 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
         index: app.options.index.clone(),
         target,
         delete: app.options.allow_delete,
+        trash: app.trash.as_ref().map(Trash::days),
         upload: app.options.allow_upload,
         edit: app.options.allow_edit,
         max_upload: app.options.max_upload,
