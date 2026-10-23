@@ -234,20 +234,20 @@ fn address(text: &str) -> Result<IpAddr, String> {
 }
 
 /// A size in bytes, with an optional unit: `500K`, `20M`, `4G` or `1T`, each 1024 times the last.
-/// `KB`, `KiB` and the like mean the same, in any case.
+/// The unit is one letter, in either case.
 fn byte_size(text: &str) -> Result<u64, String> {
     let refused = || format!("{text} is not a size such as 500M or 4G");
-    let digits = text.trim().trim_end_matches(|c: char| !c.is_ascii_digit());
-    let unit = text.trim()[digits.len()..].to_ascii_lowercase();
-    let number: u64 = digits.parse().map_err(|_| refused())?;
-    let power = match unit.trim_end_matches("ib").trim_end_matches('b') {
-        "" => 0,
-        "k" => 1,
-        "m" => 2,
-        "g" => 3,
-        "t" => 4,
-        _ => return Err(refused()),
+    let (digits, power) = match text.as_bytes().last().map(u8::to_ascii_lowercase) {
+        Some(b'k') => (&text[..text.len() - 1], 1),
+        Some(b'm') => (&text[..text.len() - 1], 2),
+        Some(b'g') => (&text[..text.len() - 1], 3),
+        Some(b't') => (&text[..text.len() - 1], 4),
+        _ => (text, 0),
     };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(refused());
+    }
+    let number: u64 = digits.parse().map_err(|_| refused())?;
     number.checked_mul(1024u64.pow(power)).ok_or_else(refused)
 }
 
@@ -474,11 +474,25 @@ mod tests {
     fn a_size_reads_with_or_without_its_unit() {
         assert_eq!(byte_size("512"), Ok(512));
         assert_eq!(byte_size("500K"), Ok(500 * 1024));
-        assert_eq!(byte_size("20mb"), Ok(20 << 20));
+        assert_eq!(byte_size("20m"), Ok(20 << 20));
         assert_eq!(byte_size("4G"), Ok(4 << 30));
-        assert_eq!(byte_size("4GiB"), Ok(4 << 30));
         assert_eq!(byte_size("1t"), Ok(1 << 40));
-        for wrong in ["", "G", "4X", "-1", "1.5G", "4 GB", "99999999999T"] {
+        for wrong in [
+            "",
+            "G",
+            "4X",
+            "-1",
+            "+1",
+            "1.5G",
+            "4 G",
+            " 4G",
+            "4GB",
+            "4GiB",
+            "20mb",
+            "4iB",
+            "4Mbbb",
+            "99999999999T",
+        ] {
             assert!(byte_size(wrong).is_err(), "{wrong}");
         }
     }

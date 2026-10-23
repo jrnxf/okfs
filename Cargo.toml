@@ -21,7 +21,7 @@ opt-level = 2
 [features]
 default = ["pdf"]
 # The first page of a PDF as a picture. Turn it off for a binary about 6 MB smaller: --no-default-features.
-pdf = ["dep:hayro", "dep:rustix"]
+pdf = ["dep:hayro"]
 
 [dependencies]
 ammonia = "4.2.3"
@@ -57,7 +57,7 @@ webbrowser = "1.2.4"
 zip = { version = "9.0.2", default-features = false, features = ["deflate", "jiff-02"] }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["process"], optional = true }
+rustix = { version = "1", features = ["fs", "process"] }
 
 # musl's allocator serializes every thread on one lock, which the parallel walk and the previews hit hard:
 # the static Linux builds allocate with mimalloc instead.
