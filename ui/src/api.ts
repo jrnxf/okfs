@@ -1,7 +1,7 @@
 // The server's endpoints, as the page sees them.
 
 import { showsHidden } from "./hidden";
-import { call } from "./reach";
+import { NOT_ANSWERING, NoAnswer, call, heard, setDown } from "./reach";
 
 export interface Item {
   n: string;
@@ -137,6 +137,10 @@ export const urls = {
   probe: "/assets/favicon.svg",
   /** One entry, for deleting it. */
   entry: (path: string) => `/api/entry?path=${encodeURIComponent(path)}`,
+  /** One file, for writing it. With `keep`, a name that is taken gives way to the next free one. */
+  file: (path: string, keep = false) => `/api/file?path=${encodeURIComponent(path)}${keep ? "&keep=1" : ""}`,
+  /** One folder, for making it. */
+  folder: (path: string) => `/api/folder?path=${encodeURIComponent(path)}`,
   raw: (path: string) => `/raw/${encode(path)}`,
   zip: (path: string) => `/zip/${encode(path)}`,
   /** The shareable address of a folder or of an open file. */
@@ -216,6 +220,88 @@ export async function deleteEntry(path: string): Promise<void> {
   const body: { error?: unknown; partial?: unknown } = await response.json().catch(() => ({}));
   const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
   throw new DeleteError(reason, body.partial === true);
+}
+
+/** A file as a write answers with it: where it landed, its tag, its size and its time in seconds. */
+export interface Written {
+  path: string;
+  etag: string;
+  s: number;
+  m: number;
+}
+
+/**
+ * What is at a name a write could not take: a folder, or a file with its tag, size and time. `gone` when nothing is
+ * there any more, as for a file changed since it was read and then removed.
+ */
+export interface Clash {
+  error: string;
+  d?: boolean;
+  etag?: string;
+  s?: number;
+  m?: number;
+  gone?: boolean;
+}
+
+/** A write that did not go through, with the server's reason, and what is at the name when it was taken. */
+export class WriteError extends Error {
+  constructor(
+    reason: string,
+    readonly status: number,
+    readonly clash?: Clash,
+  ) {
+    super(reason);
+  }
+}
+
+/** What a write of a file is for: a new file, beside one of the same name with `keep`, or over the version `over`. */
+export type Want = { new: true; keep?: boolean } | { over: string };
+
+/** The reason a refused write gives, and what is at its name when it says. */
+function writeError(status: number, text: string): WriteError {
+  let body: Partial<Clash> = {};
+  try {
+    body = JSON.parse(text) as Partial<Clash>;
+  } catch {}
+  const reason = typeof body.error === "string" ? body.error : `the server answered ${status}`;
+  return new WriteError(reason, status, status === 412 ? (body as Clash) : undefined);
+}
+
+/**
+ * Writes a file: the whole body, moved into place on the server only once it has all come. `sent` hears how many
+ * bytes have gone. It goes by XMLHttpRequest, as `fetch` tells nothing of an upload's progress. Fails with a
+ * `WriteError`, or a `NoAnswer` when okfs cannot be reached, as `call` does.
+ */
+export function putFile(path: string, body: Blob, want: Want, sent?: (bytes: number) => void): Promise<Written> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", urls.file(path, "new" in want && want.keep === true));
+    // The header marks the request as the page's own: the server refuses a write without it.
+    request.setRequestHeader("x-okfs", "write");
+    if ("new" in want) request.setRequestHeader("if-none-match", "*");
+    else request.setRequestHeader("if-match", want.over);
+    if (sent) request.upload.onprogress = (event) => sent(event.loaded);
+    request.onerror = () => {
+      setDown(NOT_ANSWERING);
+      reject(new NoAnswer());
+    };
+    request.onload = () => {
+      const refused = heard(request.status, () => request.getResponseHeader("www-authenticate"));
+      if (refused) return reject(refused);
+      if (request.status >= 200 && request.status < 300) resolve(JSON.parse(request.responseText) as Written);
+      else reject(writeError(request.status, request.responseText));
+    };
+    request.send(body);
+  });
+}
+
+/** Makes one folder. The answer is what is at the name when it is taken, and nothing when the folder was made. */
+export async function makeFolder(path: string): Promise<Clash | undefined> {
+  const response = await call(urls.folder(path), { method: "POST", headers: { "x-okfs": "write" } });
+  if (response.ok) return undefined;
+  const error = writeError(response.status, await response.text().catch(() => ""));
+  if (error.clash) return error.clash;
+  throw error;
 }
 
 /** The served path an address of the server asks about, or `null` when it names none. */

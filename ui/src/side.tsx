@@ -17,6 +17,7 @@ import { Preview, columnsUrl, useLoaded } from "./preview";
 import { SLIDE_MS } from "./slide";
 import { type Chain, type Left, columnsOf, focusOf, standIn } from "./slots";
 import { type Doomed, type Entry, store, toEntry } from "./store";
+import { pick, uploads } from "./upload";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
 function visit(listing: Listing, item: Item, open: boolean): void {
@@ -44,6 +45,7 @@ export function FolderBar({
   count,
   mtime,
   doomed,
+  adds = false,
   missing = false,
 }: {
   name: string;
@@ -51,6 +53,8 @@ export function FolderBar({
   count: number | undefined;
   mtime: number | undefined;
   doomed: Doomed | null;
+  /** Files and folders can be added to it: it offers to upload into it and to make a new file. */
+  adds?: boolean;
   /** Nothing is at the path: the bar names it and says nothing more, and offers nothing to do with it. */
   missing?: boolean;
 }) {
@@ -60,6 +64,16 @@ export function FolderBar({
       {!missing && <KindIcon kind="folder" />}
       <span class="nm trunc">{name}</span>
       <span class="facts trunc num" title={mtime === undefined ? undefined : fmt.abs(mtime)}>{facts.join(" · ")}</span>
+      {adds && !missing && (
+        <>
+          <button class="btn" aria-label="Upload files here" title="Upload files here (u)" onClick={() => pick(path)}>
+            <Icon name="upload" />
+          </button>
+          <button class="btn" aria-label="New file" title="New file (n)" onClick={() => store.setNaming("file")}>
+            <Icon name="plus" />
+          </button>
+        </>
+      )}
       {!missing && (
         <a class="btn" href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
           <Icon name="download" />
@@ -88,7 +102,12 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
     if (listing && item) visit(listing, item, open);
   };
   return (
-    <section class={edge ? "col edge" : "col"} aria-label={folder.name} data-pane={folder.path} data-level={level}>
+    <section
+      class={`col${edge ? " edge" : ""}${uploads.target === folder.path ? " dropping" : ""}`}
+      aria-label={folder.name}
+      data-pane={folder.path}
+      data-level={level}
+    >
       <FolderBar name={folder.name} path={folder.path} count={own?.total ?? folder.count} mtime={folder.mtime} doomed={config.delete ? folder : null} />
       <div class="cols label">
         <span />
@@ -103,7 +122,13 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
         {listing?.entries.map((item, at) => {
           const entry = toEntry(item, listing.path, at);
           return (
-            <div class={item.n === led ? "row at" : "row"} data-i={at} data-dir={entry.dir ? "" : undefined} key={at}>
+            <div
+              class={`row${item.n === led ? " at" : ""}${entry.dir && uploads.target === entry.path ? " drop" : ""}`}
+              data-i={at}
+              data-dir={entry.dir ? "" : undefined}
+              data-drop={entry.dir ? entry.path : undefined}
+              key={at}
+            >
               <KindIcon kind={entry.kind} />
               <span class="nm trunc">
                 <b>{entry.name}</b>

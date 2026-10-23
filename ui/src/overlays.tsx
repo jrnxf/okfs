@@ -88,6 +88,9 @@ const keys = (): Key[] => [
   [["t"], "Light or dark"],
   [["."], store.s.hidden ? "Hide hidden files" : "Show hidden files"],
   [["esc"], store.trail() ? "Back to the matches" : "Close the file or the filter"],
+  ...(store.addsTo() !== null
+    ? [[["u"], "Upload files into this folder"] satisfies Key, [["n"], "New file in this folder"] satisfies Key]
+    : []),
   ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies Key] : []),
   [["?"], "This list"],
 ];

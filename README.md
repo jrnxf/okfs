@@ -171,6 +171,8 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
 | `Esc` | Close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `u` | Upload files into this folder. Only with `--allow-upload`. |
+| `n` | Make a new file in this folder. Only with `--allow-upload`. |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
 | `?` | Show the keys |
 ### Addresses you can rely on
@@ -375,6 +377,10 @@ okfs --allow-edit          # change the files that are there
 ```
 
 `--allow-upload` only adds. A file whose name is taken is refused, or kept beside the one that is there under the next free name, such as `tides (1).csv`. It never replaces anything, so it is the one to use for a folder that people drop files into.
+
+With it, drop files or folders anywhere on the list to upload them into the folder on screen, or on a folder in the list or a column to upload them into that folder. The upload button above the list, `u` and the palette open the file picker, and the palette can also upload a whole folder. A dropped folder is made, folders and all, before its files. Files land in the list as they arrive, and a small tray in the corner shows how far each has got. A dotfile, or a folder whose name starts with a dot, is left out unless okfs runs with `--hidden`.
+
+When a name is taken, okfs asks: keep both, which is where the focus starts, skip, or replace the file that is there, which only `--allow-edit` offers. The choice can be made once for every other name that is taken in the same upload. `n` and the `+` button make a new, empty file, and the palette makes a new folder. On a phone the upload button sits at the top of the screen; there is no drag and drop.
 
 `--allow-edit` changes files in place. Every change names the version of the file it started from, and is refused when the file has changed on disk since: nothing is lost to a write that came in between. With it, a new file may also replace one of the same name.
 

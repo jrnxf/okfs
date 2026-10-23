@@ -9,6 +9,7 @@ import { type Answer, holdBack, took, waiting } from "./find";
 import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
+import { pick } from "./upload";
 import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
 
 /** The server is asked no oftener than this while typing goes on. The first key after a pause is asked at once. */
@@ -70,6 +71,17 @@ function commands(): Entry[] {
     if (under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
     if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
   }
+  // Missing when the server has adding off, and over the matches: they are in many folders.
+  const dir = store.addsTo();
+  const adds: Command[] =
+    dir === null
+      ? []
+      : [
+          { title: "Upload files here", key: s.open ? undefined : "u", run: () => pick(dir) },
+          { title: "Upload a folder here", run: () => pick(dir, true) },
+          { title: "New file", key: s.open ? undefined : "n", run: () => store.setNaming("file") },
+          { title: "New folder", run: () => store.setNaming("folder") },
+        ];
   return [
     ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
     ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
@@ -84,6 +96,7 @@ function commands(): Entry[] {
     ...(under ? [{ title: `Copy link to this ${under.dir ? "folder" : "file"}`, key: "y", run: () => void store.copyLink(under) }] : []),
     { title: "Go to the top folder", run: () => void store.showDir("") },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
+    ...adds,
     ...deletes,
     { title: "Keyboard shortcuts", key: "?", run: () => store.setHelp(true) },
   ];

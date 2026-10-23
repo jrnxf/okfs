@@ -126,6 +126,38 @@ body.open .ph .only-open { display: inline-flex; }
 .top .trail .ic { color: var(--accent); }
 .top .trail .phone-only { display: none; }
 
+/* Adding files: the folder a drag of files is over, the tray of uploads on their way, and the dialogs. */
+.row.drop { background: var(--accent-soft); outline: 1.5px dashed var(--accent); outline-offset: -3px; border-radius: var(--radius); }
+.left.dropping .list, .col.dropping .col-rows { outline: 1.5px dashed var(--accent); outline-offset: -4px; border-radius: var(--radius-lg); background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+.tray { position: fixed; z-index: 35; right: 14px; bottom: calc(28px * var(--density) + 10px); width: min(320px, calc(100vw - 28px)); box-sizing: border-box; display: grid; gap: 8px; padding: 10px 12px 11px; background: var(--surface); border: var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); font-size: var(--text-s); animation: tray-in 160ms var(--ease-out); }
+@keyframes tray-in { from { opacity: 0; transform: translateY(4px); } }
+.tray-hd { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tray-hd b { flex: 1; font-weight: var(--weight-strong); }
+.tray-hd .num { color: var(--muted); font-size: var(--text-xs); }
+.tray-hd .btn { height: 22px; padding: 0 4px; margin: -3px -6px -3px 0; }
+.up { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 10px; }
+.up .pg { max-width: 14em; color: var(--muted); font-size: var(--text-xs); text-align: right; }
+.up .track { grid-column: 1 / -1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.up .track i { display: block; height: 100%; background: var(--accent); transition: width 120ms linear; }
+.up.done .pg { color: var(--kind-code); }
+.up.done .track i { background: var(--kind-code); }
+.up.failed .pg { color: var(--accent); }
+.up.skipped .pg { color: var(--faint); }
+.up.asking .pg { color: var(--fg); }
+.tray-more { color: var(--muted); font-size: var(--text-xs); }
+.status .writes { color: var(--accent); font-family: var(--font-mono); letter-spacing: 0; white-space: nowrap; flex: none; }
+.ask code { font-family: var(--font-mono); font-size: var(--text-s); color: var(--fg); background: var(--sunken); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.cmp { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); gap: 5px 14px; padding: 9px 11px; border: var(--border); border-radius: var(--radius); font-size: var(--text-s); }
+.cmp > span:nth-child(3n + 1) { color: var(--faint); font-family: var(--font-ui); }
+.cmp b { color: var(--muted); font: var(--weight-strong) var(--text-s) var(--font-ui); }
+.ask-all { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-s); }
+.ask-all input { margin: 0; accent-color: var(--accent); }
+.ask-do .btn { min-width: 0; }
+.ask-field { align-items: center; padding: 0 11px; height: calc(34px * var(--density)); box-sizing: border-box; }
+.ask-field:focus-within { box-shadow: 0 0 0 var(--line-w) var(--accent); }
+.ask-field input { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; outline: none; }
+@media (prefers-reduced-motion: reduce) { .tray { animation: none; } .up .track i { transition: none; } }
+
 @media (max-width: 760px) {
   .main { grid-template-columns: minmax(0, 1fr); }
   .right { display: none; position: fixed; inset: 0; z-index: 20; grid-column: 1; }
@@ -184,6 +216,9 @@ body.open .ph .only-open { display: inline-flex; }
   /* At the folder entered from the matches, the back arrow beside it already goes back to them. */
   .top .trail.at-root { display: none; }
   .ask-do .btn { height: 38px; flex: 1; justify-content: center; }
+  .tray { left: 10px; right: 10px; width: auto; bottom: calc(44px * var(--density) + env(safe-area-inset-bottom) + 10px); }
+  .status .writes { display: none; }
+  .ask-field { height: 44px; }
 }
 
 /* A phone zooms the page into a text field set smaller than 16 px, and leaves it zoomed. */

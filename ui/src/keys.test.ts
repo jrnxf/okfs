@@ -245,3 +245,25 @@ test("y copies the page's own address for what is under the cursor, in a folder 
   store.s.finding = true;
   expect(keys.keyFor(store, host, press("y"))).toBeDefined();
 });
+
+test("u and n add to the folder on screen only while adding is on, and never over the matches or an open file", async () => {
+  const { config } = await import("./config");
+  const store = showing("a.txt", "sub/");
+  const press = (key: string): Press => ({ key, shift: false, chord: false, typing: false, pressing: false });
+  expect(keys.keyFor(store, host, press("n"))).toBeUndefined();
+  expect(keys.keyFor(store, host, press("u"))).toBeUndefined();
+  config.upload = true;
+  try {
+    keys.keyFor(store, host, press("n"))?.();
+    expect(store.s.naming).toEqual({ kind: "file", dir: "" });
+    store.setNaming(null);
+    expect(keys.keyFor(store, host, press("u"))).toBeDefined();
+    store.s.finding = true;
+    expect(keys.keyFor(store, host, press("n"))).toBeUndefined();
+    store.s.finding = false;
+    store.s.open = store.s.entries[0] ?? null;
+    expect(keys.keyFor(store, host, press("u"))).toBeUndefined();
+  } finally {
+    config.upload = false;
+  }
+});
