@@ -17,6 +17,7 @@ use crate::lan::{self, Scan};
 use crate::paths::Root;
 use crate::server::{self, App, Options, ThemeChoice};
 use crate::theme;
+use crate::tls;
 
 const EXAMPLES: &str = "\
 Examples:
@@ -26,6 +27,8 @@ Examples:
   okfs --bind 0.0.0.0             let other machines on the network in, with the key in the link
   okfs --bind 0.0.0.0 --qr        and print a QR code a phone can scan to open it
   okfs --bind 0.0.0.0 --no-key    behind a proxy that signs people in itself
+  okfs --bind 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
+                                  serve https, so the network sees neither the key nor a file
   okfs --no-open                  serve without opening the browser
   okfs --index index.html         open a folder that holds an index.html as that page
   okfs --theme paper              start in a built-in theme (see: okfs theme list)
@@ -127,6 +130,14 @@ struct Serve {
     /// Ask for the key on a loopback address too, as behind a tunnel that anyone can reach
     #[arg(long)]
     key: bool,
+
+    /// Serve https with this certificate, in PEM. Needs --tls-key
+    #[arg(long, value_name = "FILE", requires = "tls_key", help_heading = "TLS")]
+    tls_cert: Option<PathBuf>,
+
+    /// The private key of the --tls-cert certificate, in PEM
+    #[arg(long, value_name = "FILE", requires = "tls_cert", help_heading = "TLS")]
+    tls_key: Option<PathBuf>,
 
     /// Read the whole tree again this often instead of watching it for changes: --rescan 6h.
     /// For a tree too big to watch, or a network share that other machines write to
@@ -350,6 +361,10 @@ fn serve(args: Serve) -> Result<(), String> {
     {
         return Err(format!("--header {} is not a file", header.display()));
     }
+    let tls = match (&args.tls_cert, &args.tls_key) {
+        (Some(cert), Some(key)) => Some(tls::config(cert, key)?),
+        _ => None,
+    };
 
     // Beyond loopback, anyone on the network could otherwise read the folder. On loopback, any other
     // account on the machine could otherwise change it.
@@ -384,6 +399,7 @@ fn serve(args: Serve) -> Result<(), String> {
         pdf_limit: crate::pdf::LIMIT,
         key: key.clone(),
         once: once.clone(),
+        tls: tls.is_some(),
     };
     let theme_name = match &options.theme {
         ThemeChoice::BuiltIn(name) => name.clone(),
@@ -420,7 +436,7 @@ fn serve(args: Serve) -> Result<(), String> {
         let key = key.as_ref().map(Key::as_str);
         for (index, ip) in addresses.iter().enumerate() {
             let label = if index == 0 { "at" } else { "" };
-            println!("  {label:<8} {}", lan::link(*ip, address.port(), key));
+            println!("  {label:<8} {}", lan::link(*ip, address.port(), key, tls.is_some()));
         }
         if key.is_some() {
             println!("  key      on: anyone with one of these links can {can} every file shown");
@@ -434,6 +450,7 @@ fn serve(args: Serve) -> Result<(), String> {
                 &addresses,
                 address.port(),
                 key,
+                tls.is_some(),
                 std::io::stdout().is_terminal(),
             ) {
                 Scan::Code(lines) => {
@@ -448,21 +465,28 @@ fn serve(args: Serve) -> Result<(), String> {
         }
         if open && let Some(ip) = addresses.first() {
             let link = match &once {
-                Some(once) => lan::link_once(*ip, address.port(), once.as_str()),
-                None => lan::link(*ip, address.port(), key),
+                Some(once) => lan::link_once(*ip, address.port(), once.as_str(), tls.is_some()),
+                None => lan::link(*ip, address.port(), key, tls.is_some()),
             };
             if let Err(error) = webbrowser::open(&link) {
                 println!("  open     could not open the browser: {error}");
             }
         }
-        axum::serve(listener, server::router(app))
-            .with_graceful_shutdown(async move {
-                stopped().await;
-                // An open page holds a stream that would never end by itself.
-                index.feed().close();
-            })
-            .await
-            .map_err(|error| format!("the server stopped: {error}"))
+        let router = server::router(app);
+        let shutdown = async move {
+            stopped().await;
+            // An open page holds a stream that would never end by itself.
+            index.feed().close();
+        };
+        match tls {
+            Some(config) => {
+                let listener = tls::Listener::new(listener, config)
+                    .map_err(|error| format!("cannot listen on {address}: {error}"))?;
+                axum::serve(listener, router).with_graceful_shutdown(shutdown).await
+            }
+            None => axum::serve(listener, router).with_graceful_shutdown(shutdown).await,
+        }
+        .map_err(|error| format!("the server stopped: {error}"))
     })
 }
 

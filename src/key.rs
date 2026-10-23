@@ -165,7 +165,7 @@ pub fn cookies<'a>(headers: &'a HeaderMap, name: &'a str) -> impl Iterator<Item 
 }
 
 /// The cookie that hands a browser the key. Scripts cannot read it, no other site's page can send
-/// it, and over https, as a proxy in front says, it never travels in the clear.
+/// it, and over https, okfs's own or a proxy's in front, it never travels in the clear.
 pub fn set_cookie(name: &str, key: &Key, secure: bool) -> String {
     let secure = if secure { "; Secure" } else { "" };
     format!("{name}={}; Path=/; HttpOnly; SameSite=Strict{secure}", key.as_str())
