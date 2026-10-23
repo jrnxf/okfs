@@ -2,13 +2,15 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo/okfs-dark.svg"><img src="docs/logo/okfs-light.svg" alt="okfs" width="300"></picture>
 </h1>
 
-<p align="center">A web file browser. Run it in a folder and flip through every file inside.</p>
+<p align="center">An open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.</p>
+
+<p align="center"><a href="https://okfs.jrnxf.co/demo/">Try it in your browser</a> · <a href="https://okfs.jrnxf.co">okfs.jrnxf.co</a></p>
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.webp"><img src="docs/screenshots/hero-light.webp" alt="okfs serving a folder: a dense file list on the left, the photo under the cursor on the right" width="100%"></picture>
 </p>
 
-`okfs` stands for "ok file server". It is one binary with the page compiled into it, so there is nothing to install beside it, and the page loads nothing from another site while it runs. Run it in a folder and the whole tree is a keyboard-driven browser: a dense list, a preview of whatever is under the cursor, and a search of every name in the tree.
+okfs ("ok file server") is an open-source web file browser in one binary. The page is compiled into it, so there is nothing to install beside it, and the page loads nothing from another site while it runs. Run it in a folder and the whole tree is a keyboard-driven browser: a dense list, a preview of whatever is under the cursor, and a search of every name in the tree.
 
 ## Install
 
