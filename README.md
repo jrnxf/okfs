@@ -14,6 +14,12 @@ okfs ("ok file server") is an open-source web file browser in one binary. The pa
 
 ## Install
 
+With Homebrew, on macOS or Linux:
+
+```sh
+brew install jrnxf/tap/okfs
+```
+
 With nix, run it without installing anything, or put it on your `PATH`:
 
 ```sh
