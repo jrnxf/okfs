@@ -1,4 +1,5 @@
-// Builds the page into dist/: two scripts, one stylesheet, the fonts, the third-party notices and the HTML shell.
+// Builds the page into dist/: two scripts and the editor's chunk, one stylesheet, the fonts, the third-party notices
+// and the HTML shell.
 // The Rust build embeds everything in dist/ into the binary.
 import { cp, mkdir, rm } from "node:fs/promises";
 import { buildCss, uiSources } from "./css";
@@ -8,19 +9,20 @@ await rm(out, { recursive: true, force: true });
 await mkdir(`${out}/fonts`, { recursive: true });
 
 const scripts = [
-  // The app, loaded as a module.
-  { entry: "src/main.tsx", format: "esm" },
+  // The app, loaded as a module. What it imports only when it is needed, the editor, is a chunk of its own beside it.
+  { entry: "src/main.tsx", format: "esm", splitting: true },
   // Runs before first paint to apply the saved theme, so it must not be deferred.
-  { entry: "src/boot.ts", format: "iife" },
+  { entry: "src/boot.ts", format: "iife", splitting: false },
 ] as const;
-for (const { entry, format } of scripts) {
+for (const { entry, format, splitting } of scripts) {
   const result = await Bun.build({
     entrypoints: [entry],
     outdir: out,
     format,
+    splitting,
     target: "browser",
     minify: true,
-    naming: "[name].js",
+    naming: { entry: "[name].js", chunk: "[name]-[hash].js" },
   });
   if (!result.success) {
     for (const log of result.logs) console.error(log);

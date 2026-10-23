@@ -83,7 +83,9 @@ function commands(): Entry[] {
           { title: "New file", key: s.open ? undefined : "n", run: () => store.setNaming("file") },
           { title: "New folder", run: () => store.setNaming("folder") },
         ];
+  const editable = store.editable(s.open ?? store.cur()) && !s.finding && !s.editing ? (s.open ?? store.cur()) : null;
   return [
+    ...(editable ? [{ title: `Edit “${editable.name}”`, key: "e", run: () => store.edit(editable) }] : []),
     ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
     ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
@@ -95,7 +97,7 @@ function commands(): Entry[] {
     { title: s.hidden ? "Hide hidden files" : "Show hidden files", key: ".", run: () => store.setHidden() },
     { title: "Theme", menu: themeMenu },
     ...(under ? [{ title: `Copy link to this ${under.dir ? "folder" : "file"}`, key: "y", run: () => void store.copyLink(under) }] : []),
-    { title: "Go to the top folder", run: () => void store.showDir("") },
+    { title: "Go to the top folder", run: () => store.leave(() => void store.showDir("")) },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
     ...adds,
     ...deletes,
@@ -279,17 +281,17 @@ export function Palette() {
       command.run();
       return;
     }
-    if ("all" in row) return store.find(query);
+    if ("all" in row) return store.leave(() => store.find(query));
     store.setPalette(false);
-    if ("recent" in row) void store.go(row.recent.path, false);
-    else void store.go(row.hit.path, row.hit.dir);
+    if ("recent" in row) store.leave(() => void store.go(row.recent.path, false));
+    else store.leave(() => void store.go(row.hit.path, row.hit.dir));
   };
 
   const onKey = (event: KeyboardEvent) => {
     const { key, ctrlKey } = event;
     if (key === "ArrowDown" || (ctrlKey && key === "n")) setSelected(Math.min(at + 1, rows.length - 1));
     else if (key === "ArrowUp" || (ctrlKey && key === "p")) setSelected(Math.max(at - 1, 0));
-    else if (key === "Enter" && (ctrlKey || event.metaKey) && searching) store.find(query);
+    else if (key === "Enter" && (ctrlKey || event.metaKey) && searching) store.leave(() => store.find(query));
     else if (key === "Enter") pick(at);
     else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);

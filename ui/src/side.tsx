@@ -11,8 +11,9 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource } from "./kinds";
-import { AGE, BAR, BAR_BTN, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
+import { AGE, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
+import { Editor } from "./editor";
 import { DELETE_KEY } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
 import { SLIDE_MS } from "./slide";
@@ -41,9 +42,6 @@ const GHOST = "ghost:pointer-events-none ghost:absolute ghost:z-1";
  * kept in the page, hidden, while the panes slide: the slide shows it as it slides out. */
 const PANE = `order-1 min-h-0 min-w-0 flex-1 flex-col bg-surface ${GHOST}`;
 const PV = "pv relative flex h-full min-h-0 flex-col";
-/** The name in a pane's bar, and what is known of it, which gives up its room first. */
-const BAR_NAME = "min-w-0 flex-[0_1_auto] truncate font-strong phone:flex-1";
-const BAR_FACTS = "num min-w-0 flex-1 truncate text-xs text-muted phone:hidden";
 /** A button that only a file at the full width has. */
 const OPEN_ONLY = "hidden viewing:inline-flex";
 /** A row of the menu behind a phone's More button. Its names are a bar's names: see `BAR_NAME`. */
@@ -195,6 +193,12 @@ function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
       </button>
       {open && (
         <div class={`fixed top-full right-2 z-60 w-[220px] rounded-lg bg-surface p-1.5 shadow ${POP_IN} phone:absolute phone:z-30`} role="menu" onClick={() => setOpen(false)}>
+          {store.editable(file) && (
+            <button class={MORE_ROW} role="menuitem" onClick={() => store.edit(file)}>
+              <Icon name="pen" />
+              <span class={MORE_NAME}>Edit</span>
+            </button>
+          )}
           {wrappable && (
             <button class={MORE_ROW} role="menuitem" onClick={() => store.flipWrap()}>
               <Icon name="wrap" />
@@ -409,6 +413,11 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
             <Icon name="wrap" />
           </button>
         )}
+        {store.editable(file) && (
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Edit" title="Edit (e)" onClick={() => store.edit(file)}>
+            <Icon name="pen" />
+          </button>
+        )}
         <a class={`btn ${BAR_BTN} phone:hidden`} href={urls.raw(file.path)} download aria-label="Download" title="Download">
           <Icon name="download" />
         </a>
@@ -443,7 +452,11 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           would load again if it did. It goes by the path of the file it shows, as a column goes by its folder's:
           the same file is the same pane, which slides with the columns. One that has just gone slides out as it
           was, live: see `useGoing`. */}
-      {here ? (
+      {here && shown && s.editing?.path === shown.path ? (
+        <div class={`${PANE} flex`} key="pane" ref={pane} data-pane={shown.path}>
+          <Editor key={shown.path} file={shown} />
+        </div>
+      ) : here ? (
         <div class={`${PANE} flex`} key="pane" ref={pane} data-pane={shown?.path ?? ""}>
           {/* With nothing to preview, as in an empty folder or at a missing address, there is nothing to head. */}
           {header && (

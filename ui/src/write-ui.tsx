@@ -237,6 +237,8 @@ export function NameDialog({ kind, dir }: { kind: "file" | "folder"; dir: string
       }
       store.setNaming(null);
       await store.made(path);
+      // A new file is there to be written in.
+      if (kind === "file") store.edit(store.s.entries.find((entry) => entry.path === path) ?? null);
     } catch (error) {
       setBusy(false);
       const taken = error instanceof WriteError && error.clash ? `There is already ${error.clash.d ? "a folder" : "a file"} named “${trimmed}”.` : "";

@@ -267,3 +267,88 @@ test("u and n add to the folder on screen only while adding is on, and never ove
     config.upload = false;
   }
 });
+
+test("the editor opens on a text file only while editing is on, and leaving unsaved changes asks first", async () => {
+  const { config } = await import("./config");
+  const store = showing("notes.md", "photo.jpg", "sub/");
+  const [notes, photo, sub] = store.s.entries;
+  const press = (key: string): Press => ({ key, shift: false, chord: false, typing: false, pressing: false });
+  expect(store.editable(notes ?? null)).toBe(false);
+  config.edit = true;
+  try {
+    expect([notes, photo, sub].map((entry) => store.editable(entry ?? null))).toEqual([true, false, false]);
+    keys.keyFor(store, host, press("e"))?.();
+    expect(store.s.editing?.path).toBe("notes.md");
+    expect(store.s.open?.path).toBe("notes.md");
+    // While a file is edited the list's keys do nothing, except Esc, which leaves.
+    expect(keys.keyFor(store, host, press("j"))).toBeUndefined();
+
+    let unsaved = true;
+    const stop = store.watchUnsaved(() => unsaved);
+    let left = false;
+    store.leave(() => {
+      left = true;
+    });
+    expect(left).toBe(false);
+    expect(store.s.leaving).not.toBeNull();
+    store.leaveAnyway(false);
+    expect([left, store.s.editing?.path]).toEqual([false, "notes.md"]);
+    store.leave(() => {
+      left = true;
+    });
+    store.leaveAnyway(true);
+    expect([left, store.s.editing]).toEqual([true, null]);
+
+    // With nothing unsaved it leaves at once.
+    store.edit(notes ?? null);
+    unsaved = false;
+    keys.keyFor(store, host, press("Escape"))?.();
+    expect(store.s.editing).toBeNull();
+    expect(store.s.leaving).toBeNull();
+    stop();
+  } finally {
+    config.edit = false;
+  }
+});
+
+test("nothing moves off a file with unsaved changes without asking, and a file deleted on disk stays in the editor", async () => {
+  const { config } = await import("./config");
+  const store = showing("notes.md", "other.md");
+  const [notes] = store.s.entries;
+  Object.assign(config, { edit: true, upload: true, delete: true });
+  const fetching = globalThis.fetch;
+  const stop = store.watchUnsaved(() => true);
+  try {
+    store.edit(notes ?? null);
+    // A new file or folder leads away from the edited file: the question comes first, and the dialog after it.
+    store.setNaming("file");
+    expect([store.s.naming, store.s.editing?.path]).toEqual([null, "notes.md"]);
+    expect(store.s.leaving).not.toBeNull();
+    store.leaveAnyway(false);
+    store.askDelete(notes ?? null);
+    expect([store.s.doomed, store.s.editing?.path]).toEqual([null, "notes.md"]);
+    store.leaveAnyway(true);
+    expect([store.s.doomed?.path, store.s.editing, store.s.open?.path]).toEqual(["notes.md", null, "notes.md"]);
+    store.cancelDelete();
+
+    // The folder is read again without the edited file: the editor keeps it, and is told it changed.
+    store.edit(notes ?? null);
+    const stamp = notes ? store.stamp(notes) : "";
+    const listing = { path: "", m: 1, entries: [{ n: "other.md", d: false, s: 10, m: 1 }], total: 1 };
+    globalThis.fetch = (() => Promise.resolve(new Response(JSON.stringify(listing)))) as unknown as typeof fetch;
+    store.changed("", []);
+    for (let i = 0; i < 10 && store.s.caught === 0; i++) await new Promise((done) => setTimeout(done, 0));
+    expect(store.s.caught).toBe(1);
+    expect([store.s.open?.path, store.s.editing?.path]).toEqual(["notes.md", "notes.md"]);
+    expect(notes && store.stamp(notes)).not.toBe(stamp);
+
+    // Leaving the editor then closes the file that is gone, and its folder is shown again.
+    store.leave(() => undefined);
+    store.leaveAnyway(true);
+    expect([store.s.open, store.s.editing]).toEqual([null, null]);
+  } finally {
+    stop();
+    globalThis.fetch = fetching;
+    Object.assign(config, { edit: false, upload: false, delete: false });
+  }
+});

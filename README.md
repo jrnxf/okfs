@@ -80,7 +80,7 @@ okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the key
 - A palette that finds any file in the whole tree at once, from an index kept in memory.
 - Columns that show what is inside the folder under the cursor, and the page follows the folder as files are added, removed or rewritten, with no reload.
 - Five built-in themes, light and dark, each one CSS file.
-- Read only unless you say otherwise. There is no upload, no editing and no accounts. Deleting is behind `--allow-delete`.
+- Read only unless you turn writes on. Uploading, editing and deleting are each behind a flag of their own: `--allow-upload`, `--allow-edit`, `--allow-delete`. There are no accounts.
 - Loopback by default. Beyond it, only a link with a key that okfs prints gets in (see [Letting other machines in](#letting-other-machines-in)).
 
 <p align="center">
@@ -91,13 +91,13 @@ okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the key
 
 okfs is for looking at a folder. Its previews, columns and search are made for flipping through many files quickly with the keyboard, and its defaults are safe: loopback only, read only, dotfiles hidden, a key beyond loopback.
 
-It does less than the tools that manage files, on purpose. It has no upload and no accounts. For uploads, use dufs or copyparty. For a file manager with users, use File Browser Quantum. File Browser itself was archived in September 2026.
+It does less than the tools that manage files, on purpose. It reads until you turn writes on, and it has no accounts. For uploads of very large files that pick up where a dropped connection left them, use copyparty. For a file manager with users, use File Browser Quantum. File Browser itself was archived in September 2026.
 
 | | okfs | `python -m http.server` | miniserve | dufs | copyparty |
 | --- | --- | --- | --- | --- | --- |
 | Default address | loopback only | all interfaces | all interfaces | all interfaces | all interfaces |
 | Beyond loopback | secret link | none | basic auth, optional | basic or digest auth, optional | accounts |
-| Writes | none; delete behind a flag | none | upload, optional | upload, edit, move and delete, each optional | upload, per account |
+| Writes | none unless turned on: upload, edit and delete, each behind a flag | none | upload, optional | upload, edit, move and delete, each optional | upload, per account |
 | Previews | images, video, audio, PDF, Markdown, code, CSV, JSON, zip, HTML | none | none | none | thumbnails, audio spectrograms |
 | Search of the whole tree | instant, in memory | none | none | yes | yes, indexed |
 | Live updates | yes | none | none | none | not checked |
@@ -179,6 +179,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
 | `Esc` | Close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `e` | Edit the text file. Only with `--allow-edit`. |
 | `u` | Upload files into this folder. Only with `--allow-upload`. |
 | `n` | Make a new file in this folder. Only with `--allow-upload`. |
 | `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
@@ -408,6 +409,8 @@ With it, drop files or folders anywhere on the list to upload them into the fold
 When a name is taken, okfs asks: keep both, which is where the focus starts, skip, or replace the file that is there, which only `--allow-edit` offers. The choice can be made once for every other name that is taken in the same upload. `n` and the `+` button make a new, empty file, and the palette makes a new folder. On a phone the upload and `+` buttons sit at the top of the screen; there is no drag and drop.
 
 `--allow-edit` changes files in place. Every change names the version of the file it started from, and is refused when the file has changed on disk since: nothing is lost to a write that came in between. With it, a new file may also replace one of the same name.
+
+With it, `e`, the pen button above a text file and the palette open the file in an editor, in place of its preview and at the full width. That is any text file of up to 2 MB: code, Markdown, JSON, CSV, HTML, plain text and logs. The editor colors code in the theme's own colors, and finds and replaces with `Ctrl F` or `Cmd F`. Its bar says whether the text is saved and how many lines changed. `Ctrl S` or `Cmd S` saves, Discard drops the changes, and `Esc` leaves, asking first when something is unsaved. A file keeps the line endings and the byte-order mark it had. A file that mixes CRLF and LF endings is the one exception: the editor says so, and a save writes the ending most of its lines have at the end of every line, counted in the lines changed. When the file changes on disk while it is open, a bar says so and offers their version, which undo can take back, or yours over it. Nothing is lost either way. The editor is loaded only the first time a file is edited, so a server without `--allow-edit` never sends it. On a phone the pen sits behind the `...` button. With `--allow-upload` as well, a new file made with `n` opens in the editor.
 
 Every write lands whole or not at all. The file is written beside where it goes, under a hidden name okfs never shows (`.okfs-....part`), synced to disk, and moved into place in one step. A reader sees the old file or the new one, never part of one, and a write that is cut off leaves nothing. A replaced file keeps its permissions. A symbolic link stays a link, and the file it points at is the one written. A hard link to the old file keeps the old content.
 

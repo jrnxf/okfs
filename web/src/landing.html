@@ -161,7 +161,7 @@
     <div class="grid grid-cols-[90px_minmax(0,1fr)_minmax(0,440px)] items-baseline gap-x-10 pt-24 pb-10 under-1000:grid-cols-[minmax(0,1fr)] under-1000:gap-y-3.5 under-860:pt-16 under-860:pb-7">
       <span class="[font:500_13px/1_var(--mono)] text-ink-3">05 Binary</span>
       <h2 class="m-0 font-sans font-[760] text-[length:clamp(34px,4.4vw,68px)] leading-[.98] font-stretch-[112%] tracking-[-.03em] text-balance *:not-italic *:text-spot">The page is <em>inside the binary.</em></h2>
-      <div><p class="m-0 text-pretty text-ink-2">Nothing is fetched from another site while okfs runs. It is read only unless you start it with <code>--allow-delete</code>, and it follows the folder: a file added, removed, renamed or rewritten on disk shows at once, with no reload.</p></div>
+      <div><p class="m-0 text-pretty text-ink-2">Nothing is fetched from another site while okfs runs. It is read only unless you turn writes on, and it follows the folder: a file added, removed, renamed or rewritten on disk shows at once, with no reload.</p></div>
     </div>
     <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-16 gap-y-10 pb-12 under-1000:grid-cols-[minmax(0,1fr)]">
 <pre class="m-0 overflow-x-auto bg-bg-2 px-5 py-4.5 [font:14px/1.65_var(--mono)] text-ink-2" aria-label="okfs starting in a terminal"><span class="text-spot select-none">$ </span><b class="font-[400] text-ink">okfs ~/tidewater</b>
@@ -171,7 +171,7 @@ okfs <span id="term-version">0.1.0</span>
   theme    default</pre>
       <dl class="m-0 grid grid-cols-[max-content_minmax(0,1fr)] [align-content:start] gap-x-5.5 gap-y-3 text-[15px] under-760:grid-cols-[minmax(0,1fr)] under-760:gap-1 [&_dd]:m-0 [&_dd]:text-ink-2 under-760:[&_dd]:mb-3 [&_dt]:[font:14px/1.5_var(--mono)] [&_dt]:text-ink">
         <dt>--bind 0.0.0.0 --qr</dt><dd>Let other machines on the network in, and print a QR code for a phone.</dd>
-        <dt>--allow-delete</dt><dd>Off by default. Without it nothing is deleted, and there is no upload or editing.</dd>
+        <dt>--allow-upload --allow-edit</dt><dd>Off by default. Add files and folders by dropping them on the list, and edit text files in place. <code>--allow-delete</code> deletes.</dd>
         <dt>--rescan 6h</dt><dd>Read the tree again on a timer, for a tree too big to watch or a network share.</dd>
         <dt>--index index.html</dt><dd>A folder that holds that file opens as its page, so a folder can be a small site.</dd>
       </dl>

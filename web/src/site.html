@@ -103,7 +103,7 @@
         <li><span class="text-ink-2">Runs on</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>Linux, macOS</span></li>
         <li><span class="text-ink-2">Ships as</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>one binary, about 18 MB</span></li>
         <li><span class="text-ink-2">Serves at</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>127.0.0.1:8080</span></li>
-        <li><span class="text-ink-2">Deletes files</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>only with --allow-delete</span></li>
+        <li><span class="text-ink-2">Writes files</span><span class="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span><span>only when turned on</span></li>
       </ul>
       <div class="mt-2 flex flex-wrap items-center gap-5.5">
         <div class="font-serif font-[600] text-[34px] leading-[1] [font-variation-settings:'opsz'_144,'SOFT'_100,'WONK'_1]">Free<small class="mt-1 block [font:400_12px/1.3_var(--mono)] text-ink-2">MIT licence</small></div>
@@ -154,7 +154,7 @@
   </section>
 
   <section id="compare" class="scroll-mt-3 pt-16" aria-labelledby="compare-h">
-    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Comparison</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="compare-h">How okfs compares</h2><p class="mt-2.5 mb-0 max-w-[62ch] text-ink-2">okfs is for looking at a folder. It has no upload and no accounts, on purpose: for uploads, use dufs or copyparty; for a file manager with users, File Browser Quantum.</p></div></div>
+    <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Comparison</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="compare-h">How okfs compares</h2><p class="mt-2.5 mb-0 max-w-[62ch] text-ink-2">okfs is for looking at a folder. It is read only unless writes are turned on, and it has no accounts, on purpose: for uploads of very large files that resume, use copyparty; for a file manager with users, File Browser Quantum.</p></div></div>
     <div class="overflow-x-auto ml-46 tablet:ml-0">
       <table class="w-full min-w-[760px] border-collapse [font:400_14px/1.4_var(--mono)] [&_:is(th,td)]:border-b [&_:is(th,td)]:border-b-rule-faint [&_:is(th,td)]:pt-[9px] [&_:is(th,td)]:pr-3 [&_:is(th,td)]:pb-[9px] [&_:is(th,td)]:pl-0 [&_:is(th,td)]:text-left [&_:is(th,td)]:align-top [&_thead_th]:border-b-rule [&_thead_th]:font-[600] [&_tbody_th]:font-[400] [&_tbody_th]:text-ink-2 [&_th:first-child]:sticky [&_th:first-child]:left-0 [&_th:first-child]:bg-paper [&_td:nth-child(2)]:font-[600]">
         <caption class="absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]">okfs beside python -m http.server, miniserve, dufs and copyparty</caption>
@@ -162,7 +162,7 @@
         <tbody>
           <tr><th scope="row">Default address</th><td>loopback only</td><td>all interfaces</td><td>all interfaces</td><td>all interfaces</td><td>all interfaces</td></tr>
           <tr><th scope="row">Beyond loopback</th><td>secret link</td><td>none</td><td>basic auth, optional</td><td>basic or digest auth, optional</td><td>accounts</td></tr>
-          <tr><th scope="row">Writes</th><td>none; delete behind a flag</td><td>none</td><td>upload, optional</td><td>upload, edit, move and delete, each optional</td><td>upload, per account</td></tr>
+          <tr><th scope="row">Writes</th><td>none unless turned on: upload, edit and delete, each behind a flag</td><td>none</td><td>upload, optional</td><td>upload, edit, move and delete, each optional</td><td>upload, per account</td></tr>
           <tr><th scope="row">Previews</th><td>images, video, audio, PDF, Markdown, code, CSV, JSON, zip, HTML</td><td>none</td><td>none</td><td>none</td><td>thumbnails, audio spectrograms</td></tr>
           <tr><th scope="row">Search of the whole tree</th><td>instant, in memory</td><td>none</td><td>none</td><td>yes</td><td>yes, indexed</td></tr>
           <tr><th scope="row">Live updates</th><td>yes</td><td>none</td><td>none</td><td>none</td><td>not checked</td></tr>
@@ -177,9 +177,9 @@
     <div class="mb-6.5 grid grid-cols-[160px_1fr] gap-6 border-t-3 [border-top-style:double] border-t-rule pt-4.5 tablet:grid-cols-[1fr] tablet:gap-2"><div class="[font:500_12px/1.4_var(--mono)] tracking-[.1em] text-spot-ink uppercase">Questions</div><div><h2 class="m-0 font-serif font-[500] text-[length:clamp(30px,3.4vw,46px)] leading-[1.05] [font-variation-settings:'opsz'_96,'SOFT'_100,'WONK'_1] tracking-[-.01em]" id="questions-h">Questions</h2></div></div>
     <div class="ml-46 tablet:ml-0 *:max-w-[70ch] *:border-b *:border-b-rule-faint *:py-4 [&_h3]:mt-0 [&_h3]:mb-1.5 [&_h3]:font-serif [&_h3]:font-[600] [&_h3]:text-[19px] [&_h3]:leading-[1.3] [&_h3]:[font-variation-settings:'opsz'_48,'SOFT'_100] [&_p]:m-0 [&_p]:text-[16.5px] [&_p]:text-ink-2">
       <div><h3>How do I browse a folder in my browser?</h3><p>Run <code>okfs</code> in it. It serves the folder at http://127.0.0.1:8080 and opens your browser on it.</p></div>
-      <div><h3>Is okfs an alternative to python -m http.server or miniserve?</h3><p>Yes, for looking at files. It adds previews, a search of the whole tree and live updates, and stays read only. For uploads, use dufs or copyparty.</p></div>
+      <div><h3>Is okfs an alternative to python -m http.server or miniserve?</h3><p>Yes, for looking at files. It adds previews, a search of the whole tree and live updates, and stays read only unless you turn writes on.</p></div>
       <div><h3>How do I open files from my computer on my phone?</h3><p><code>okfs --bind 0.0.0.0 --qr</code> prints a QR code with a secret link. Scan it on a phone on the same network.</p></div>
-      <div><h3>Can visitors upload, edit or delete files?</h3><p>There is no upload and no editing. Deleting needs <code>--allow-delete</code>.</p></div>
+      <div><h3>Can visitors upload, edit or delete files?</h3><p>Only when you turn it on. <code>--allow-upload</code> adds files and folders and never replaces one, <code>--allow-edit</code> changes text files in place, and <code>--allow-delete</code> deletes. Each is off by default.</p></div>
       <div><h3>Does okfs need Docker, a database or an account?</h3><p>No. It is one binary with the page inside it.</p></div>
       <div><h3>Does it run on Windows?</h3><p>Not yet. It runs on Linux and macOS.</p></div>
     </div>

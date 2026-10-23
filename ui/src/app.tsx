@@ -8,6 +8,7 @@ import * as fmt from "./fmt";
 import { Icon, KindIcon, Sprite } from "./icons";
 import { keyFor, pressOf } from "./keys";
 import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInfo } from "./matches";
+import { ConfirmLeave } from "./editor";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
@@ -65,12 +66,15 @@ const subscribeResize = (listener: () => void) => {
   return () => removeEventListener("resize", listener);
 };
 
-/** A plain click navigates in place; a click meant for a new tab or window is left to the browser. */
+/**
+ * A plain click navigates in place; a click meant for a new tab or window is left to the browser. One that would leave
+ * unsaved changes in the editor asks first.
+ */
 function inPlace(run: () => void) {
   return (event: MouseEvent) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
-    run();
+    store.leave(run);
   };
 }
 
@@ -149,6 +153,9 @@ function pageOf(list: HTMLElement | null): number {
   if (!list || !row) return 10;
   return Math.max(1, Math.floor(list.clientHeight / row) - 1);
 }
+
+/** The keys the foot of the page hints at. */
+const HINTS = "items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
 
 /** What the foot of the page says for each reason okfs cannot be reached. */
 const UNREACHED = {
@@ -292,8 +299,10 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       const { s } = store;
       const { key } = event;
+      // A key the editor took is its own, as Esc is when it leaves.
+      if (event.defaultPrevented) return;
       // A dialog takes every key while it is up.
-      if (s.doomed || s.naming || uploads.asking) return;
+      if (s.doomed || s.naming || s.leaving || uploads.asking) return;
       if ((event.ctrlKey || event.metaKey) && key.toLowerCase() === "k") {
         event.preventDefault();
         store.setPalette(!s.palette);
@@ -591,7 +600,7 @@ export function App() {
             finding || s.open || s.filter ? "gap-0 rounded-[min(var(--radius),3px)] bg-accent px-1.75 py-px text-accent-fg before:hidden" : "gap-1.5 text-muted"
           }`}
         >
-          {finding ? "find" : s.open ? "view" : s.filter ? "filter" : "browse"}
+          {finding ? "find" : s.editing ? "edit" : s.open ? "view" : s.filter ? "filter" : "browse"}
         </span>
         <span class="num whitespace-nowrap">{finding ? matchesInfo() : s.status === "ready" ? info : ""}</span>
         <label class={`min-w-0 flex-1 items-center gap-1 font-mono tracking-[0] text-fg ${filterShown ? "flex" : "hidden"}`}>
@@ -620,55 +629,69 @@ export function App() {
           />
         </label>
         <span class="flex-1" />
-        <span class={`items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden ${filterShown ? "hidden" : "flex"}`}>
-          <span>
-            <kbd>j</kbd>
-            <kbd>k</kbd> move
-          </span>
-          <span>
-            <kbd>↵</kbd> open
-          </span>
-          {!finding && !s.open && store.trail() && (
+        {s.editing ? (
+          <span class={`${HINTS} flex`}>
             <span>
-              <kbd>esc</kbd> matches
+              <kbd>{MOD} S</kbd> save
             </span>
-          )}
-          {flippable && (
             <span>
-              <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
+              <kbd>{MOD} F</kbd> find in the file
             </span>
-          )}
-          {wrappable && (
             <span>
-              <kbd>w</kbd> {store.wraps(wrappable) ? "unwrap" : "wrap"}
+              <kbd>esc</kbd> leave
             </span>
-          )}
-          <span>
-            <kbd>/</kbd> {finding ? "refine" : "filter"}
           </span>
-          <span>
-            <kbd>s</kbd> sort
+        ) : (
+          <span class={`${HINTS} ${filterShown ? "hidden" : "flex"}`}>
+            <span>
+              <kbd>j</kbd>
+              <kbd>k</kbd> move
+            </span>
+            <span>
+              <kbd>↵</kbd> open
+            </span>
+            {!finding && !s.open && store.trail() && (
+              <span>
+                <kbd>esc</kbd> matches
+              </span>
+            )}
+            {flippable && (
+              <span>
+                <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
+              </span>
+            )}
+            {wrappable && (
+              <span>
+                <kbd>w</kbd> {store.wraps(wrappable) ? "unwrap" : "wrap"}
+              </span>
+            )}
+            <span>
+              <kbd>/</kbd> {finding ? "refine" : "filter"}
+            </span>
+            <span>
+              <kbd>s</kbd> sort
+            </span>
+            {finding ? (
+              <>
+                <span>
+                  <kbd>{MOD} K</kbd> palette
+                </span>
+                <span>
+                  <kbd>esc</kbd> back
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
+                </span>
+                <span>
+                  <kbd>?</kbd> keys
+                </span>
+              </>
+            )}
           </span>
-          {finding ? (
-            <>
-              <span>
-                <kbd>{MOD} K</kbd> palette
-              </span>
-              <span>
-                <kbd>esc</kbd> back
-              </span>
-            </>
-          ) : (
-            <>
-              <span>
-                <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
-              </span>
-              <span>
-                <kbd>?</kbd> keys
-              </span>
-            </>
-          )}
-        </span>
+        )}
         <button class="btn hidden phone:inline-flex phone:h-8" onClick={focusFilter}>
           <Icon name="search" />
           {finding ? "Refine" : "Filter"}
@@ -681,6 +704,7 @@ export function App() {
       <Tray />
       {uploads.asking && <ClashDialog />}
       {s.naming && <NameDialog kind={s.naming.kind} dir={s.naming.dir} />}
+      {s.leaving && <ConfirmLeave />}
       {menu && <ThemeMenu anchor={menu} onClose={closeMenu} />}
     </>
   );
