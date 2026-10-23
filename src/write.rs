@@ -60,8 +60,8 @@ impl Part {
     /// Puts the file in place under a new name in its folder, and never over an entry that is
     /// there: that fails with `AlreadyExists`, and nothing is changed. A hard link gives the
     /// name, which the disk refuses atomically when the name is taken. A disk that has no hard
-    /// links, such as FAT, gets a look and a rename instead: a rename that a process outside okfs
-    /// could beat to the name by a moment.
+    /// links, such as FAT, gets a rename that the disk refuses atomically in the same way; where
+    /// there is no such rename either, the write is refused with `Unsupported`.
     pub fn create(&mut self, to: &Path) -> io::Result<()> {
         match fs::hard_link(&self.path, to) {
             Ok(()) => {
@@ -70,15 +70,29 @@ impl Part {
                 Ok(())
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(error),
-            Err(linking) => {
-                if fs::symlink_metadata(to).is_ok() {
-                    return Err(io::ErrorKind::AlreadyExists.into());
-                }
-                fs::rename(&self.path, to).map_err(|_| linking)?;
-                self.placed = true;
-                Ok(())
-            }
+            Err(_) => self.rename_new(to),
         }
+    }
+
+    /// Renames the file to `to` in one step that the disk refuses when the name is taken:
+    /// `renameat2` with `RENAME_NOREPLACE` on Linux, `renameatx_np` with `RENAME_EXCL` on macOS.
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    fn rename_new(&mut self, to: &Path) -> io::Result<()> {
+        use rustix::fs::{CWD, RenameFlags, renameat_with};
+        renameat_with(CWD, &self.path, CWD, to, RenameFlags::NOREPLACE).map_err(|errno| {
+            match io::Error::from(errno) {
+                error if error.kind() == io::ErrorKind::InvalidInput => io::ErrorKind::Unsupported.into(),
+                error => error,
+            }
+        })?;
+        self.placed = true;
+        Ok(())
+    }
+
+    /// No rename here can refuse a name that is taken, so none is tried.
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+    fn rename_new(&mut self, _to: &Path) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
     }
 
     /// Puts the file in place under the first free name of `name`, `name (1)`, `name (2)` and so on
@@ -222,6 +236,27 @@ mod tests {
         drop(part);
         assert_eq!(fs::read_to_string(dir.join("taken (1).txt")).unwrap(), "new");
         assert_eq!(names(dir), ["taken (1).txt", "taken.txt"]);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[test]
+    fn a_rename_without_hard_links_never_lands_on_a_name_that_is_taken() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("taken.txt"), "old").unwrap();
+
+        let mut part = part_with(dir, "new");
+        let error = part.rename_new(&dir.join("taken.txt")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        drop(part);
+        assert_eq!(fs::read_to_string(dir.join("taken.txt")).unwrap(), "old");
+        assert_eq!(names(dir), ["taken.txt"]);
+
+        let mut part = part_with(dir, "new");
+        part.rename_new(&dir.join("free.txt")).unwrap();
+        drop(part);
+        assert_eq!(fs::read_to_string(dir.join("free.txt")).unwrap(), "new");
+        assert_eq!(names(dir), ["free.txt", "taken.txt"]);
     }
 
     #[test]

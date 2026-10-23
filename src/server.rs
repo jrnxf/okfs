@@ -1299,6 +1299,12 @@ fn commit(app: &App, aim: Aim, mut part: Part) -> Response {
                         &format!("there is already an entry named {}", place.name),
                     );
                 }
+                Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+                    return fail(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "this disk cannot add a file without a risk of replacing one",
+                    );
+                }
                 Err(error) => return disk_failed(&error),
             }
         }
