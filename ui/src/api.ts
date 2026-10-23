@@ -136,7 +136,16 @@ export const urls = {
   /** A small answer, to learn whether okfs is there and takes the page's key. */
   probe: "/assets/favicon.svg",
   /** One entry, for deleting it. */
-  entry: (path: string) => `/api/entry?path=${encodeURIComponent(path)}`,
+  entry: (path: string, forever = false) => `/api/entry?path=${encodeURIComponent(path)}${forever ? "&forever=1" : ""}`,
+  /** The Trash: what it holds, and with `id` or `all`, what to delete from it for good. */
+  trash: (id?: string, all = false) =>
+    `/api/trash${id !== undefined ? `?id=${encodeURIComponent(id)}` : all ? "?all=1" : ""}`,
+  restore: (id: string) => `/api/trash/restore?id=${encodeURIComponent(id)}`,
+  /** A move or a rename, and a copy, from one path to another. `keep`: under the first free name like it when it is taken. */
+  move: (from: string, to: string, keep = false) =>
+    `/api/move?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${keep ? "&keep=1" : ""}`,
+  copy: (from: string, to: string, keep = false) =>
+    `/api/copy?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${keep ? "&keep=1" : ""}`,
   /** One file, for writing it. With `keep`, a name that is taken gives way to the next free one. */
   file: (path: string, keep = false) => `/api/file?path=${encodeURIComponent(path)}${keep ? "&keep=1" : ""}`,
   /** One folder, for making it. */
@@ -203,24 +212,91 @@ export async function getAnswer<T>(url: string, signal?: AbortSignal): Promise<T
 
 /** A delete that did not go through, with the server's reason. */
 export class DeleteError extends Error {
-  /** `partial`: a folder was being removed when it stopped, so part of it may be gone. */
+  /**
+   * `partial`: a folder was being removed when it stopped, so part of it may be gone. `disk`: it is on another disk
+   * than the Trash, so it can only be deleted for good.
+   */
   constructor(
     reason: string,
     readonly partial: boolean,
+    readonly disk = false,
   ) {
     super(reason);
   }
 }
 
-/** Deletes a file, a link, or a folder with everything in it. Fails with a `DeleteError`. */
-export async function deleteEntry(path: string): Promise<void> {
-  // The header marks the request as the page's own: the server refuses a delete without it.
-  const response = await call(urls.entry(path), { method: "DELETE", headers: { "x-okfs": "delete" } });
-  if (response.ok) return;
-  const body: { error?: unknown; partial?: unknown } = await response.json().catch(() => ({}));
-  const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
-  throw new DeleteError(reason, body.partial === true);
+/** An entry in the Trash, as the server lists it. Times are in seconds. */
+export interface TrashItem {
+  id: string;
+  /** Where it was, relative to the served folder. */
+  path: string;
+  deleted: number;
+  /** When it goes for good. */
+  gone: number;
+  dir: boolean;
+  link: boolean;
+  size: number;
+  /** For a folder, how many entries it held. */
+  count: number;
 }
+
+export interface TrashList {
+  days: number;
+  items: TrashItem[];
+}
+
+/**
+ * Deletes a file, a link, or a folder with everything in it: into the Trash while the server keeps one, and then the
+ * answer is what the Trash lists for it, or for good with `forever` or without a Trash, and then it is nothing. Fails
+ * with a `DeleteError`.
+ */
+export async function deleteEntry(path: string, forever = false): Promise<TrashItem | null> {
+  // The header marks the request as the page's own: the server refuses a delete without it.
+  const response = await call(urls.entry(path, forever), { method: "DELETE", headers: { "x-okfs": "delete" } });
+  if (response.ok) {
+    const body: { trash?: TrashItem } = await response.json().catch(() => ({}));
+    return body.trash ?? null;
+  }
+  const body: { error?: unknown; partial?: unknown; disk?: unknown } = await response.json().catch(() => ({}));
+  const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
+  throw new DeleteError(reason, body.partial === true, body.disk === true);
+}
+
+/** A change the server refused, with its reason. */
+export class ChangeError extends Error {
+  constructor(
+    reason: string,
+    readonly status: number,
+  ) {
+    super(reason);
+  }
+}
+
+/** Sends a change the page asks for, `kind` naming it for the server, and reads what it answers. */
+async function change<T>(url: string, method: string, kind: "delete" | "move" | "write"): Promise<T> {
+  const response = await call(url, { method, headers: { "x-okfs": kind } });
+  const body = (await response.json().catch(() => ({}))) as T & { error?: unknown };
+  if (response.ok) return body;
+  const reason = typeof body.error === "string" ? body.error : `the server answered ${response.status}`;
+  throw new ChangeError(reason, response.status);
+}
+
+export const listTrash = (): Promise<TrashList> => getJson<TrashList>(urls.trash());
+
+/** Puts an entry of the Trash back where it was. Answers with where it went: its name differs when that was taken. */
+export const restoreEntry = (id: string): Promise<{ path: string; made: string | null }> => change(urls.restore(id), "POST", "delete");
+
+/** Deletes an entry of the Trash for good, or with `all`, all of them. */
+export const forgetEntry = (id: string | null): Promise<{ gone: number }> =>
+  change(id === null ? urls.trash(undefined, true) : urls.trash(id), "DELETE", "delete");
+
+/** Moves or renames an entry. Answers with where it is now. */
+export const moveEntry = (from: string, to: string, keep = false): Promise<{ path: string }> =>
+  change(urls.move(from, to, keep), "POST", "move");
+
+/** Copies an entry, a folder with all it shows. Answers with where the copy is. */
+export const copyEntry = (from: string, to: string, keep = false): Promise<{ path: string }> =>
+  change(urls.copy(from, to, keep), "POST", "write");
 
 /** A file as a write answers with it: where it landed, its tag, its size and its time in seconds. */
 export interface Written {

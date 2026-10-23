@@ -81,6 +81,10 @@ type Key = [string[], string];
 const keys = (): Key[] => [
   [["j", "k"], "Move down and up (arrows work too)"],
   [["↵"], "Open the folder, or the file at full width"],
+  [["a"], "The menu of the row or the selection (also Shift F10)"],
+  [["space"], "Select or unselect the row"],
+  [["⇧", "↑ ↓"], "Select from the anchor, as Shift and a click do"],
+  [[`${MOD} A`], "Select every row of the folder"],
   ...(store.flippable() ? [[["r"], "Rendered or source"] satisfies Key] : []),
   ...(store.wrappable() ? [[["w"], "Wrap long lines or not"] satisfies Key] : []),
   [["⌫", "-"], "Up one folder"],
@@ -95,11 +99,19 @@ const keys = (): Key[] => [
   [["t"], "Light or dark"],
   [["."], store.s.hidden ? "Hide hidden files" : "Show hidden files"],
   [["esc"], store.trail() ? "Back to the matches" : "Close the file or the filter"],
+  [["Y"], "Copy the path"],
   ...(config.edit ? [[["e"], "Edit the text file"] satisfies Key] : []),
+  ...(config.edit ? [[["F2", "R"], "Rename in place"] satisfies Key, [["m"], "Move to…"] satisfies Key] : []),
+  ...(config.upload ? [[["c"], "Copy to…"] satisfies Key] : []),
   ...(store.addsTo() !== null
-    ? [[["u"], "Upload files into this folder"] satisfies Key, [["n"], "New file in this folder"] satisfies Key]
+    ? [
+        [["u"], "Upload files into this folder"] satisfies Key,
+        [["n"], "New file in this folder"] satisfies Key,
+        [["N"], "New folder in this folder"] satisfies Key,
+      ]
     : []),
-  ...(config.delete ? [[[DELETE_KEY], "Delete the file or folder"] satisfies Key] : []),
+  ...(config.delete ? [[[DELETE_KEY], config.trash ? "Move to the Trash" : "Delete the file or folder"] satisfies Key] : []),
+  ...(config.trash ? [[[`${MOD} Z`], "Undo the last change while its note is up"] satisfies Key] : []),
   [["?"], "This list"],
 ];
 
@@ -176,6 +188,8 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
     else if (doomed.count === 0 && !hidden) what = "This empty folder will be removed.";
     else what = `This folder holds ${fmt.items(doomed.count)}${hidden}. It will be removed with everything in it.`;
   }
+  // With a Trash, this dialog only comes up for what cannot go there.
+  if (config.trash && doomed.forever) what = `This is on another disk than the Trash, so it cannot go there. ${what}`;
   return (
     // The delete dialog is rare and asks for a decision: it comes up over a fading backdrop rather than appearing.
     <div class={ASK_IN} onPointerDown={(event) => event.target === event.currentTarget && close()}>
@@ -187,7 +201,7 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
         aria-describedby="ask-what"
       >
         <h2 id="ask-title" class={`m-0 ${DIALOG_HEAD}`}>
-          Delete this {noun}?
+          {config.trash ? `Delete this ${noun} for good?` : `Delete this ${noun}?`}
         </h2>
         <div class="flex max-h-[8.5em] gap-2.25 overflow-auto overscroll-contain rounded bg-sunken px-2.75 py-2.25 text-s wrap-anywhere">
           <KindIcon kind={doomed.kind} class="mt-[0.14em]" />

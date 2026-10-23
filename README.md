@@ -80,7 +80,7 @@ okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the key
 - A palette that finds any file in the whole tree at once, from an index kept in memory.
 - Columns that show what is inside the folder under the cursor, and the page follows the folder as files are added, removed or rewritten, with no reload.
 - Five built-in themes, light and dark, each one CSS file.
-- Read only unless you turn writes on. Uploading, editing and deleting are each behind a flag of their own: `--allow-upload`, `--allow-edit`, `--allow-delete`. There are no accounts.
+- Read only unless you turn writes on. Uploading, editing and deleting are each behind a flag of their own: `--allow-upload`, `--allow-edit`, `--allow-delete`. A delete goes to a Trash for 30 days, with Undo. There are no accounts.
 - Loopback by default. Beyond it, only a link with a key that okfs prints gets in (see [Letting other machines in](#letting-other-machines-in)).
 
 <p align="center">
@@ -154,8 +154,10 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `--tls-cert <FILE>` | Serve https with this certificate, in PEM. Needs `--tls-key`. See [HTTPS](#https). |
 | `--tls-key <FILE>` | The private key of the `--tls-cert` certificate, in PEM. Needs `--tls-cert`. |
 | `--allow-upload` | Let anyone who can reach the address add files and folders. A file never replaces one that is there. Off by default. See [Uploading and editing](#uploading-and-editing). |
-| `--allow-edit` | Let anyone who can reach the address change the files that are there. Off by default. See [Uploading and editing](#uploading-and-editing). |
-| `--allow-delete` | Let anyone who can reach the address delete files and folders. Off by default. See [Deleting](#deleting). |
+| `--allow-edit` | Let anyone who can reach the address change the files that are there, and rename and move them. Off by default. See [Uploading and editing](#uploading-and-editing). |
+| `--allow-delete` | Let anyone who can reach the address delete files and folders. A delete goes to the Trash first. Off by default. See [Deleting](#deleting). |
+| `--trash-days <DAYS>` | How long the Trash keeps what is deleted before it goes for good. 30 by default. |
+| `--no-trash` | Delete for good at once, after asking, with no Trash and no undo. |
 | `--max-upload <SIZE>` | The largest file an upload or a save may be: `500M`, `4G`. No limit by default. |
 | `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
@@ -178,11 +180,20 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
-| `Esc` | Close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `Esc` | Let the selection go, or close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `a`, `Shift F10`, the menu key | The menu of the row under the cursor, or of the selection: the same menu a right click opens |
+| `Space` | Select the row and step down. With `Shift`, select from the anchor to the row. |
+| `Shift` and the arrows | Select from the anchor, growing and shrinking as `Shift` and a click do |
+| `Ctrl A`, `Cmd A` | Select every row of the folder |
+| `Y` | Copy the path of the row, or of every selected row |
 | `e` | Edit the text file. Only with `--allow-edit`. |
+| `F2`, `Shift R` | Rename in place. Only with `--allow-edit`. |
+| `m` | Move to a folder you pick. Only with `--allow-edit`. |
+| `c` | Copy to a folder you pick. Only with `--allow-upload`. |
 | `u` | Upload files into this folder. Only with `--allow-upload`. |
-| `n` | Make a new file in this folder. Only with `--allow-upload`. |
-| `Shift D` | Delete the file or folder. Only with `--allow-delete`. |
+| `n`, `Shift N` | Make a new file or folder in this folder and name it in place. Only with `--allow-upload`. |
+| `Shift D` | Move the file or folder, or the selection, to the Trash. Only with `--allow-delete`. |
+| `Ctrl Z`, `Cmd Z` | Undo the last move to the Trash, rename, move or copy, while its note is up |
 | `?` | Show the keys |
 ### Addresses you can rely on
 
@@ -410,6 +421,14 @@ When a name is taken, okfs asks: keep both, which is where the focus starts, ski
 
 `--allow-edit` changes files in place. Every change names the version of the file it started from, and is refused when the file has changed on disk since: nothing is lost to a write that came in between. With it, a new file may also replace one of the same name.
 
+With it, entries can also be renamed and moved. A right click on a row, a long press on a phone, or `a` opens a menu of what can be done there: open, rename, move, copy, duplicate, download, copy the link or the path, and move to the Trash. A right click on the empty space of the list is about the folder: a new file or folder, upload, select all, sort, the zip, and the Trash. `Shift` and a right click give the browser's own menu. What the server does not allow is left out of the menu, and a line at its foot says which flag would turn it on.
+
+Rename happens in the row: the name turns into a field with the part before the extension selected. `Enter` saves, `Esc` puts the old name back, and a click elsewhere saves. A name that is empty, holds a `/`, starts with a dot without `--hidden`, or is taken in the folder is refused under the field before it is sent. Move to and Copy to open a folder picker, with the tree open at the folder you are in and a field that finds any folder by name. Rows can also be dragged onto a folder in the list or a column, or onto a folder in the path above, to move them, or with `Alt` held, to copy them. A move is one rename on the disk and never replaces anything: a name taken where it goes is kept beside it under the next free name, such as `notes (1).md`, as an upload does. A folder cannot go inside itself, and a move across disks is refused. A copy is put together under a hidden name and moved into place whole, and copies only what okfs shows; `--max-upload` limits it as it does an upload. Copying needs `--allow-upload`, as it adds.
+
+Several rows can be selected: `Ctrl` or `Cmd` and a click picks one more, `Shift` and a click picks from the last one picked, and `Space`, `Shift` and the arrows, and `Ctrl A` do the same from the keys. As in Finder and Explorer, a `Shift` click replaces the range it made before rather than adding to it, so going back shrinks it, and what was picked with `Ctrl` stays. On a phone, Select in the menu ticks the row and shows a box on every row; a `Shift` tap gives every row between the last one tapped and this one the state this one takes, so a range can be unticked too. The menu, `m`, `c` and `Shift D` then act on all of them.
+
+What was just renamed, moved, copied or moved to the Trash is said in a note at the foot of the page, with Undo and `Ctrl Z` or `Cmd Z`, for 8 seconds or as long as the pointer is on it.
+
 With it, `e`, the pen button above a text file and the palette open the file in an editor, in place of its preview and at the full width. That is any text file of up to 2 MB: code, Markdown, JSON, CSV, HTML, plain text and logs. The editor colors code in the theme's own colors, and finds and replaces with `Ctrl F` or `Cmd F`. Its bar says whether the text is saved and how many lines changed. `Ctrl S` or `Cmd S` saves, Discard drops the changes, and `Esc` leaves, asking first when something is unsaved. A file keeps the line endings and the byte-order mark it had. A file that mixes CRLF and LF endings is the one exception: the editor says so, and a save writes the ending most of its lines have at the end of every line, counted in the lines changed. When the file changes on disk while it is open, a bar says so and offers their version, which undo can take back, or yours over it. Nothing is lost either way. The editor is loaded only the first time a file is edited, so a server without `--allow-edit` never sends it. On a phone the pen sits behind the `...` button. With `--allow-upload` as well, a new file made with `n` opens in the editor.
 
 Every write lands whole or not at all. The file is written beside where it goes, under a hidden name okfs never shows (`.okfs-....part`), synced to disk, and moved into place in one step. A reader sees the old file or the new one, never part of one, and a write that is cut off leaves nothing. A replaced file keeps its permissions. A symbolic link stays a link, and the file it points at is the one written. A hard link to the old file keeps the old content.
@@ -424,7 +443,11 @@ okfs deletes nothing until you start it with `--allow-delete`:
 okfs --allow-delete
 ```
 
-The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the palette has it as a command. The palette can also delete the folder you are in, and on a narrow screen such as a phone a button at the top does that. A folder goes with everything in it. okfs always asks first and names what will be removed. There is no trash and no undo.
+The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the menu and the palette have it as a command. The palette can also delete the folder you are in, and on a narrow screen such as a phone a button at the top does that. A folder goes with everything in it.
+
+A delete moves the entry to the Trash at once, without asking, and a note at the foot of the page offers Undo. The Trash keeps it for 30 days, or as many as `--trash-days` says, and then deletes it for good. The trash button in the top bar shows how many entries it holds and opens it in place of the list: each entry with the folder it was in, when it was deleted and how many days it has left, and beside it Put back and Delete forever. Put back returns the entry to where it was, makes its folder again when that is gone, and when its name is taken there by then, brings it back under the next free name. Delete forever and Empty Trash ask first and name what goes: those cannot be undone. In the Trash, `Shift R` puts back and `Shift Backspace` deletes for good.
+
+The Trash is a folder at the top of the served folder, `.okfs-trash`. okfs never lists, serves, searches, zips or writes to it through a request, even with `--hidden`. As it is on the same disk as the files, a move into the Trash and back is one rename: instant for a folder of any size, and whole or not at all. An entry in a folder on another disk, such as a drive mounted inside the served folder, cannot go there: okfs says so and offers to delete it for good. What is past its days goes when okfs starts and every hour after, and only while `--allow-delete` is on: without it, okfs changes nothing in the folder, and the Trash waits. `--no-trash` turns the Trash off: a delete then asks first, names what will be removed, and is for good, with no undo.
 
 okfs deletes only what it shows. A folder that holds something it does not show, at any depth, is not deleted: okfs removes nothing and tells you why. That is a dotfile while `--hidden` is off, or a symbolic link that leads out of the served folder. Pass `--hidden` to delete dotfiles too, or remove the entry yourself first. A symbolic link is removed as a link, and the file or folder it points at stays.
 
@@ -513,7 +536,7 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 ## What is safe to serve
 
 - No path leaves the served folder. Symbolic links that point outside it are not followed and not listed.
-- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-upload`, `--allow-edit` or `--allow-delete`. Thumbnails and the first pages of PDFs are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
+- Nothing is written into the served folder, and nothing in it is changed unless you pass `--allow-upload`, `--allow-edit` or `--allow-delete`. With `--allow-delete`, the Trash is kept in `.okfs-trash` at the top of the served folder. Thumbnails and the first pages of PDFs are cached in your cache folder (`$XDG_CACHE_HOME/okfs` on Linux).
 - HTML and SVG files from the served folder are always sent sandboxed. They run in an origin of their own, in the preview and when opened directly, so a served page can never act as okfs. One effect: such a page cannot `fetch` its neighbours or load module scripts and web fonts from the folder, and while a key is on, it cannot load its stylesheet, scripts or images from the folder at all.
 - A PDF is drawn in a process of its own, which is handed the open file and no path, and is ended after 5 seconds. A PDF that is broken, or made to break a reader, costs that one picture: its preview is then the browser's viewer alone. PDFs over 64 MB are not drawn.
 - Only dotfiles are withheld. A file that a `.gitignore` names is still listed, searched and served, as is every other file that is not a dotfile (see [A big folder](#a-big-folder): the ignore rules only decide what is searched and watched). A folder named in a `.gitignore` can be opened at its address. Put nothing in the served folder that you do not want a visitor to read, a `secrets.yml` listed in a `.gitignore` included, or move it out.
@@ -521,6 +544,8 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 - okfs has no accounts. On loopback, only programs on your machine can reach it. Beyond loopback, anyone with the key can read every file in the folder, and without [HTTPS](#https) the key crosses plain HTTP (see [Letting other machines in](#letting-other-machines-in)). With `--no-key`, anyone who can reach the address can read every file.
 
 With `--allow-upload` or `--allow-edit`:
+
+- With `--allow-edit`, a rename or a move never replaces an entry and never leaves the served folder. A folder moves with all it holds, a link moves as a link, and dotfiles are neither moved nor made without `--hidden`. A copy, with `--allow-upload`, follows no link inside a folder: it copies the link.
 
 - Anyone who can reach the address with the key (or anyone at all, with `--no-key`) can add files to the folder, and with `--allow-edit` change every file in it. Use them where you would hand everyone on that network the folder itself.
 - A write goes only where okfs shows: never out of the served folder, through a link or a `..`, and never to a dotfile unless you also pass `--hidden`. A new name is one name, with no control characters in it.
@@ -531,8 +556,9 @@ With `--allow-upload` or `--allow-edit`:
 
 With `--allow-delete`:
 
-- Anyone who can reach the address with the key (or anyone at all, with `--no-key`) can also delete every file and folder in it. There is no password in front of it and no way to get a file back. Use it where you would hand everyone on that network the folder itself.
-- Only what okfs shows can go: never the served folder itself, and no dotfile unless you also pass `--hidden`. A folder that holds something okfs does not show, at any depth, is refused whole and nothing in it is removed.
+- Anyone who can reach the address with the key (or anyone at all, with `--no-key`) can also delete every file and folder in it, and empty the Trash, after which nothing comes back. There is no password in front of it. Use it where you would hand everyone on that network the folder itself.
+- Only what okfs shows can go: never the served folder itself, and no dotfile unless you also pass `--hidden`. A folder that holds something okfs does not show, at any depth, is refused whole and nothing in it is removed or moved to the Trash.
+- What is in the Trash takes room on the disk until it goes for good. Empty it, or use `--trash-days` or `--no-trash`, where that matters.
 - Deleting never follows a symbolic link that sits in the folder. A link is removed as a link. What it points at is left alone, also when the link sits in a folder that is deleted. A link that leads out of the served folder is not shown, so it is never removed. A delete therefore stays inside the served folder, as long as nothing else changes the folder while the delete runs.
 - Deleting is not hardened against another process on the same machine that rewrites the served folder while a delete runs, for example one that swaps a folder for a link at that moment. Do not use `--allow-delete` on a folder that local users you do not trust can write to.
 - Another website cannot make your browser delete. okfs takes a delete only from its own page, at the address it answers to: `localhost`, a plain address, or a name from `--allow-host`.
