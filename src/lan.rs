@@ -68,19 +68,27 @@ fn reachable(ip: IpAddr) -> bool {
     }
 }
 
-/// `http://host:port/`, with an IPv6 address in brackets, and `?key=` when okfs asks for one.
-pub fn link(ip: IpAddr, port: u16, key: Option<&str>) -> String {
-    let at = SocketAddr::new(ip, port);
+/// `http` or, when okfs serves TLS itself, `https`.
+fn scheme(tls: bool) -> &'static str {
+    if tls { "https" } else { "http" }
+}
+
+/// `http://host:port/`, or `https://` with TLS, with an IPv6 address in brackets, and `?key=` when
+/// okfs asks for one.
+pub fn link(ip: IpAddr, port: u16, key: Option<&str>, tls: bool) -> String {
+    let (scheme, at) = (scheme(tls), SocketAddr::new(ip, port));
     match key {
-        Some(key) => format!("http://{at}/?{}={key}", crate::key::PARAM),
-        None => format!("http://{at}/"),
+        Some(key) => format!("{scheme}://{at}/?{}={key}", crate::key::PARAM),
+        None => format!("{scheme}://{at}/"),
     }
 }
 
-/// `http://host:port/?once=`, for the browser okfs opens itself with a one-time code.
-pub fn link_once(ip: IpAddr, port: u16, code: &str) -> String {
+/// `http://host:port/?once=`, or `https://` with TLS, for the browser okfs opens itself with a
+/// one-time code.
+pub fn link_once(ip: IpAddr, port: u16, code: &str, tls: bool) -> String {
     format!(
-        "http://{}/?{}={code}",
+        "{}://{}/?{}={code}",
+        scheme(tls),
         SocketAddr::new(ip, port),
         crate::key::ONCE_PARAM
     )
@@ -105,7 +113,7 @@ pub enum Scan {
     Skipped,
 }
 
-pub fn scan(bind: IpAddr, addresses: &[IpAddr], port: u16, key: Option<&str>, terminal: bool) -> Scan {
+pub fn scan(bind: IpAddr, addresses: &[IpAddr], port: u16, key: Option<&str>, tls: bool, terminal: bool) -> Scan {
     let Some(ip) = scan_target(addresses) else {
         return Scan::Nothing(if bind.is_loopback() {
             "nothing for another device to scan: listening on this machine only, try --bind 0.0.0.0"
@@ -116,7 +124,7 @@ pub fn scan(bind: IpAddr, addresses: &[IpAddr], port: u16, key: Option<&str>, te
     if !terminal {
         return Scan::Skipped;
     }
-    match qr_lines(&link(ip, port, key)) {
+    match qr_lines(&link(ip, port, key, tls)) {
         Some(lines) => Scan::Code(lines),
         None => Scan::Skipped,
     }
@@ -202,27 +210,49 @@ mod tests {
     #[test]
     fn links_bracket_ipv6() {
         assert_eq!(
-            link("192.168.1.20".parse().unwrap(), 8080, None),
+            link("192.168.1.20".parse().unwrap(), 8080, None, false),
             "http://192.168.1.20:8080/"
         );
-        assert_eq!(link("::1".parse().unwrap(), 9000, None), "http://[::1]:9000/");
-        assert_eq!(link("fd00::20".parse().unwrap(), 80, None), "http://[fd00::20]:80/");
+        assert_eq!(link("::1".parse().unwrap(), 9000, None, false), "http://[::1]:9000/");
+        assert_eq!(
+            link("fd00::20".parse().unwrap(), 80, None, false),
+            "http://[fd00::20]:80/"
+        );
     }
 
     #[test]
     fn links_carry_the_key_when_there_is_one() {
         assert_eq!(
-            link("192.168.1.20".parse().unwrap(), 8080, Some("Zm9vYg")),
+            link("192.168.1.20".parse().unwrap(), 8080, Some("Zm9vYg"), false),
             "http://192.168.1.20:8080/?key=Zm9vYg"
         );
         assert_eq!(
-            link("::1".parse().unwrap(), 9000, Some("k")),
+            link("::1".parse().unwrap(), 9000, Some("k"), false),
             "http://[::1]:9000/?key=k"
         );
         assert_eq!(
-            link_once("::1".parse().unwrap(), 9000, "c0de"),
+            link_once("::1".parse().unwrap(), 9000, "c0de", false),
             "http://[::1]:9000/?once=c0de"
         );
+    }
+
+    #[test]
+    fn with_tls_links_and_the_code_say_https() {
+        assert_eq!(
+            link("192.168.1.20".parse().unwrap(), 8443, Some("k"), true),
+            "https://192.168.1.20:8443/?key=k"
+        );
+        assert_eq!(link("::1".parse().unwrap(), 8443, None, true), "https://[::1]:8443/");
+        assert_eq!(
+            link_once("::1".parse().unwrap(), 8443, "c0de", true),
+            "https://[::1]:8443/?once=c0de"
+        );
+        let bind: IpAddr = "0.0.0.0".parse().unwrap();
+        let all = addresses(bind, &[up("192.168.1.20")]);
+        let Scan::Code(lines) = scan(bind, &all, 8443, Some("k"), true, true) else {
+            panic!("no code");
+        };
+        assert_eq!(Some(lines), qr_lines("https://192.168.1.20:8443/?key=k"));
     }
 
     #[test]
@@ -231,7 +261,7 @@ mod tests {
             let bind: IpAddr = bind.parse().unwrap();
             for found in [vec![], vec![up("192.168.1.20"), up("fd00::20")]] {
                 for ip in addresses(bind, &found) {
-                    let text = link(ip, 8080, None);
+                    let text = link(ip, 8080, None, false);
                     assert!(!text.contains("0.0.0.0") && !text.contains("[::]"), "{text}");
                 }
             }
@@ -250,28 +280,31 @@ mod tests {
     fn qr_on_a_loopback_bind_says_so_and_does_not_fail() {
         let bind: IpAddr = "127.0.0.1".parse().unwrap();
         for terminal in [true, false] {
-            match scan(bind, &[bind], 8080, None, terminal) {
+            match scan(bind, &[bind], 8080, None, false, terminal) {
                 Scan::Nothing(why) => assert!(why.contains("--bind 0.0.0.0")),
                 other => panic!("{other:?}"),
             }
         }
         let wildcard: IpAddr = "0.0.0.0".parse().unwrap();
         let lone = addresses(wildcard, &[]);
-        assert!(matches!(scan(wildcard, &lone, 8080, None, true), Scan::Nothing(_)));
+        assert!(matches!(
+            scan(wildcard, &lone, 8080, None, false, true),
+            Scan::Nothing(_)
+        ));
     }
 
     #[test]
     fn qr_is_skipped_when_output_is_not_a_terminal() {
         let bind: IpAddr = "0.0.0.0".parse().unwrap();
         let all = addresses(bind, &[up("192.168.1.20")]);
-        assert_eq!(scan(bind, &all, 8080, None, false), Scan::Skipped);
+        assert_eq!(scan(bind, &all, 8080, None, false, false), Scan::Skipped);
     }
 
     #[test]
     fn the_code_has_a_quiet_zone_and_the_modules_of_the_link() {
         let bind: IpAddr = "0.0.0.0".parse().unwrap();
         let all = addresses(bind, &[up("192.168.1.20")]);
-        let Scan::Code(lines) = scan(bind, &all, 8080, Some("Zm9vYg"), true) else {
+        let Scan::Code(lines) = scan(bind, &all, 8080, Some("Zm9vYg"), false, true) else {
             panic!("no code");
         };
         let text = "http://192.168.1.20:8080/?key=Zm9vYg";
