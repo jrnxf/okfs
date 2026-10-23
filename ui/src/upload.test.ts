@@ -72,14 +72,14 @@ Object.assign(globalThis, {
       const path = at.pathname.replace(/^\/raw\//, "").split("/").map(decodeURIComponent).join("/");
       sent.push(`HEAD ${path}`);
       const text = unseen.has(path) ? undefined : disk.get(path);
-      if (text === undefined) return new Response(null, { status: 404 });
-      // A folder sends its address on with a slash, which the page sees only as that.
-      if (!text) return { type: "opaqueredirect", ok: false, status: 0, headers: new Headers() };
+      // A folder without an --index file is not found here, as on the real server.
+      if (!text) return new Response(null, { status: 404 });
       const headers = { etag: `"${path}"`, "content-length": String(text.length), "last-modified": new Date(1000).toUTCString() };
       return new Response(null, { headers });
     }
     const path = at.searchParams.get("path") ?? "";
     sent.push(`${init.method ?? "GET"} ${path}`);
+    if (at.pathname === "/api/list") return new Response("{}", { status: !unseen.has(path) && disk.get(path) === "" ? 200 : 404 });
     if (init.method !== "POST") return new Response("{}");
     await new Promise((done) => setTimeout(done, folderTakes));
     if (disk.has(path)) return new Response(JSON.stringify({ error: "taken", d: !disk.get(path) }), { status: 412 });
@@ -202,7 +202,7 @@ test("a name that is taken is found before any of the file is sent, and the serv
   sent = [];
   await queue.add(into("notes", "also.csv"));
   await settled(queue);
-  expect(sent).toEqual(["HEAD notes/also.csv", "PUT notes/also.csv *"]);
+  expect(sent).toEqual(["HEAD notes/also.csv", "GET notes/also.csv", "PUT notes/also.csv *"]);
   expect(queue.asking?.clash).toMatchObject({ etag: '"notes/also.csv"' });
   expect(disk.get("notes/also.csv")).toBe("old");
   queue.choose("skip", false);

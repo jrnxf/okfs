@@ -307,11 +307,13 @@ export async function makeFolder(path: string): Promise<Clash | undefined> {
  * a folder, or a file with its tag, size and time. Nothing when the name is free.
  */
 export async function lookUp(path: string): Promise<Clash | undefined> {
-  // A folder answers by sending its address on with a slash.
+  // Not followed: a folder with an --index file sends its address on, to a page that is no file of that name.
   const response = await call(urls.raw(path), { method: "HEAD", cache: "no-store", redirect: "manual" });
   const error = "there is already an entry of that name";
-  if (response.type === "opaqueredirect") return { error, d: true };
-  if (!response.ok) return undefined;
+  if (!response.ok) {
+    const folder = await call(urls.list(path, 1), { cache: "no-store" });
+    return folder.ok ? { error, d: true } : undefined;
+  }
   const size = response.headers.get("content-length");
   const modified = Date.parse(response.headers.get("last-modified") ?? "");
   return {
