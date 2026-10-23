@@ -5,8 +5,8 @@ name: release
 # tag: the build writes it into Cargo.toml, so a release needs no version-bump commit.
 #
 # - A tag `v<version>` pushed by hand publishes that release, then points the Homebrew formula at
-#   it. A tag with a hyphen publishes a pre-release: it never shows as Latest, and the formula stays
-#   where it is. Development builds are tagged `v<next version>-pre.N`, such as `v0.1.0-pre.1`:
+#   it. A tag with a hyphen publishes a pre-release: it never shows as Latest, and the formula
+#   follows it only until okfs's first full release. Development builds are tagged `v<next version>-pre.N`, such as `v0.1.0-pre.1`:
 #   Homebrew and Cargo order `pre` below the release, which `dev` is not to Homebrew. Every
 #   pre-release carries the same archives as a full release.
 # - A pull request that changes this file, the notices' settings or the dependencies builds every
@@ -269,17 +269,37 @@ jobs:
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" assets/*
 
   # Points jrnxf/homebrew-tap's Formula/okfs.rb at this release's archives. The tap's
-  # docs/automatic-updates.md issues the TAP_DEPLOY_KEY secret this needs. A pre-release is for
-  # trying out, so the formula follows full releases only.
+  # docs/automatic-updates.md issues the TAP_DEPLOY_KEY secret this needs.
   tap:
-    if: github.event_name == 'push' && !contains(github.ref_name, '-')
+    if: github.event_name == 'push'
     needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       TAG: ${{ github.ref_name }}
     steps:
+      # Until okfs's first full release, brew installs the latest pre-release; after it, only full
+      # releases, so a pre-release never replaces a stable okfs.
+      - name: Check the formula follows this tag
+        id: follow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$TAG" in
+            *-*)
+              full=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts \
+                --limit 1 --json tagName --jq '.[0].tagName // ""')
+              if [ -n "$full" ]; then
+                echo "$full is out, so the formula stays on full releases"
+                echo "bump=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              ;;
+          esac
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+
       - name: Check for the tap's key
+        if: steps.follow.outputs.bump == 'true'
         env:
           KEY_SET: ${{ secrets.TAP_DEPLOY_KEY != '' }}
         run: |
@@ -290,12 +310,14 @@ jobs:
 
       # Pinned to a commit: this job holds the key that can push to the tap brew installs from.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.follow.outputs.bump == 'true'
         with:
           repository: jrnxf/homebrew-tap
           ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
 
       # The binary mode downloads each asset from the release and checks it against its .sha256.
-      - run: |
+      - if: steps.follow.outputs.bump == 'true'
+        run: |
           version=${TAG#v}
           scripts/bump-formula.sh okfs "$TAG" \
             macos-arm="okfs-$version-aarch64-apple-darwin.tar.gz" \
@@ -303,7 +325,8 @@ jobs:
             linux-arm="okfs-$version-aarch64-unknown-linux-musl.tar.gz" \
             linux-intel="okfs-$version-x86_64-unknown-linux-musl.tar.gz"
 
-      - run: |
+      - if: steps.follow.outputs.bump == 'true'
+        run: |
           if git diff --quiet; then
             echo "Formula/okfs.rb already points at $TAG"
             exit 0
