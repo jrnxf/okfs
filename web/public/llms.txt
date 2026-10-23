@@ -1,0 +1,12 @@
+# okfs
+
+> okfs is an open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.
+
+- Linux and macOS. MIT licence. Read only and loopback by default; a secret link (with a QR code) lets a phone in.
+- Install: `nix run github:jrnxf/okfs` or `cargo install --git https://github.com/jrnxf/okfs`. Release archives for Linux and macOS start with v0.1.0-pre.1.
+
+## Docs
+
+- [README](https://github.com/jrnxf/okfs/blob/main/README.md): install, flags, keys, proxies, safety
+- [Live demo](https://okfs.jrnxf.co/demo/): the real okfs, compiled to WebAssembly, in the browser
+- [Releases](https://github.com/jrnxf/okfs/releases)

@@ -109,7 +109,6 @@ void mountIn($("#view"), "/photos/", "okfs serving the demo folder, on the scree
 // ---------- Fig. 2: measured here ----------
 
 demo.then(({ backend, stats }) => {
-  $("#ver").textContent = stats.version;
   $("#b-size").textContent = `${fmt(Math.round(stats.wasmBytes / 1024))} KB`;
   $("#b-unpack").textContent = `${stats.unpackMs.toFixed(0)} ms`;
   $("#b-compile").textContent = `${stats.compileMs.toFixed(0)} ms`;
@@ -189,33 +188,15 @@ new IntersectionObserver(
 
 // ---------- the order coupon ----------
 
-const WAYS = {
-  nix: [
-    "nix run github:jrnxf/okfs -- ~/photos",
-    "nix profile install github:jrnxf/okfs",
-    "The first line runs it once in ~/photos. The second puts it on your PATH; nix profile upgrade okfs updates it.",
-  ],
-  release: [
-    "tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')",
-    "gh release download \"$tag\" --repo jrnxf/okfs --pattern '*-aarch64-apple-darwin.tar.gz*'",
-    "That is a Mac with Apple silicon: then tar -xzf the archive. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. The first release, v0.1.0-pre.1, is on its way.",
-  ],
-  cargo: [
-    "cargo install --git https://github.com/jrnxf/okfs",
-    "okfs ~/photos",
-    "It needs a Rust toolchain and bun, which builds the page.",
-  ],
-};
+// Every way's commands are in the page, so a reader without scripts sees them too: a tick shows one.
 function showWay(way) {
-  const [a, b, fine] = WAYS[way];
-  $("#lines").innerHTML = [a, b].map((cmd) => `<div class="line"><code>${esc(cmd)}</code><button type="button" data-c="${esc(cmd)}">Copy</button></div>`).join("");
-  $("#fine").textContent = fine;
-  for (const btn of $$("#lines button")) {
-    btn.addEventListener("click", async () => {
-      btn.textContent = (await copy(btn.dataset.c)) ? "Copied" : "Select it";
-      setTimeout(() => (btn.textContent = "Copy"), 1400);
-    });
-  }
+  for (const el of $$(".way")) el.hidden = el.dataset.way !== way;
+}
+for (const btn of $$(".way button")) {
+  btn.addEventListener("click", async () => {
+    btn.textContent = (await copy(btn.previousElementSibling.textContent)) ? "Copied" : "Select it";
+    setTimeout(() => (btn.textContent = "Copy"), 1400);
+  });
 }
 for (const r of $$('input[name="way"]')) r.addEventListener("change", () => showWay(r.value));
-showWay("nix");
+showWay($('input[name="way"]:checked').value);
