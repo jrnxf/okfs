@@ -1,0 +1,56 @@
+/* @name Solarized  @author okfs  @version 1
+   From Solarized by Ethan Schoonover (MIT). Palette: https://github.com/altercation/solarized */
+:root {
+  --bg: #fdf6e3;
+  --surface: #fdf6e3;
+  --sunken: #eee8d5;
+  --fg: #586e75;
+  --muted: #586e75;
+  --faint: #73878c;
+  --line: #eee8d5;
+  --line-strong: #ddd6c1;
+  --accent: #268bd2;
+  --accent-fg: #fdf6e3;
+  --accent-soft: #dfe7e1;
+  --hover: #f3ecd8;
+  --scrim: rgb(88 110 117 / 0.36);
+  --kind-folder: #268bd2;
+  --kind-image: #d33682;
+  --kind-media: #cb4b16;
+  --kind-doc: #657b83;
+  --kind-code: #859900;
+  --kind-data: #b58900;
+  --kind-archive: #6c71c4;
+  --syn-comment: #93a1a1;
+  --syn-keyword: #859900;
+  --syn-string: #2aa198;
+  --syn-number: #d33682;
+  --syn-title: #268bd2;
+}
+:root[data-scheme="dark"] {
+  --bg: #00212b;
+  --surface: #002b36;
+  --sunken: #00212b;
+  --fg: #93a1a1;
+  --muted: #839496;
+  --faint: #657b83;
+  --line: #073642;
+  --line-strong: #0d4655;
+  --accent: #268bd2;
+  --accent-fg: #002b36;
+  --accent-soft: #084058;
+  --hover: #073642;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #268bd2;
+  --kind-image: #d33682;
+  --kind-media: #cb4b16;
+  --kind-doc: #839496;
+  --kind-code: #859900;
+  --kind-data: #b58900;
+  --kind-archive: #6c71c4;
+  --syn-comment: #586e75;
+  --syn-keyword: #859900;
+  --syn-string: #2aa198;
+  --syn-number: #d33682;
+  --syn-title: #268bd2;
+}

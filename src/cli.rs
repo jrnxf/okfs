@@ -239,7 +239,7 @@ fn theme_check(file: &std::path::Path) -> Result<(), String> {
 fn theme_list() {
     for (id, _) in theme::BUILT_IN {
         if let Some(theme) = theme::built_in(id) {
-            println!("{id:<10} {}", theme.about);
+            println!("{id:<12} {}", theme.about);
         }
     }
 }

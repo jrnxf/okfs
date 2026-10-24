@@ -1,0 +1,56 @@
+/* @name Flexoki  @author okfs  @version 1
+   From Flexoki by Steph Ango (MIT), an inky color scheme for prose and code. Palette: https://github.com/kepano/flexoki */
+:root {
+  --bg: #f2f0e5;
+  --surface: #fffcf0;
+  --sunken: #f2f0e5;
+  --fg: #100f0f;
+  --muted: #6f6e69;
+  --faint: #878580;
+  --line: #e6e4d9;
+  --line-strong: #cecdc3;
+  --accent: #24837b;
+  --accent-fg: #fffcf0;
+  --accent-soft: #e0ebe0;
+  --hover: #f2f0e5;
+  --scrim: rgb(16 15 15 / 0.36);
+  --kind-folder: #ad8301;
+  --kind-image: #a02f6f;
+  --kind-media: #bc5215;
+  --kind-doc: #6f6e69;
+  --kind-code: #66800b;
+  --kind-data: #205ea6;
+  --kind-archive: #5e409d;
+  --syn-comment: #878580;
+  --syn-keyword: #66800b;
+  --syn-string: #24837b;
+  --syn-number: #5e409d;
+  --syn-title: #bc5215;
+}
+:root[data-scheme="dark"] {
+  --bg: #100f0f;
+  --surface: #1c1b1a;
+  --sunken: #100f0f;
+  --fg: #cecdc3;
+  --muted: #878580;
+  --faint: #6f6e69;
+  --line: #282726;
+  --line-strong: #403e3c;
+  --accent: #3aa99f;
+  --accent-fg: #100f0f;
+  --accent-soft: #213532;
+  --hover: #282726;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #d0a215;
+  --kind-image: #ce5d97;
+  --kind-media: #da702c;
+  --kind-doc: #878580;
+  --kind-code: #879a39;
+  --kind-data: #4385be;
+  --kind-archive: #8b7ec8;
+  --syn-comment: #6f6e69;
+  --syn-keyword: #879a39;
+  --syn-string: #3aa99f;
+  --syn-number: #8b7ec8;
+  --syn-title: #da702c;
+}
