@@ -60,8 +60,7 @@ impl Part {
     /// Puts the file in place under a new name in its folder, and never over an entry that is
     /// there: that fails with `AlreadyExists`, and nothing is changed. A hard link gives the
     /// name, which the disk refuses atomically when the name is taken. A disk that has no hard
-    /// links, such as FAT, gets a rename that the disk refuses atomically in the same way; where
-    /// there is no such rename either, the write is refused with `Unsupported`.
+    /// links, such as FAT, gets `rename_new`.
     pub fn create(&mut self, to: &Path) -> io::Result<()> {
         match fs::hard_link(&self.path, to) {
             Ok(()) => {
@@ -119,23 +118,103 @@ impl Drop for Part {
     }
 }
 
-/// Renames `from` to `to`, a file or a folder, in one step that the disk refuses with
-/// `AlreadyExists` when the name is taken: `renameat2` with `RENAME_NOREPLACE` on Linux,
-/// `renameatx_np` with `RENAME_EXCL` on macOS. A disk that cannot refuse that way answers
-/// `Unsupported`, and nothing is renamed. Across disks the answer is `CrossesDevices`.
-#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+/// Renames `from` to `to`, a file or a folder, and never over an entry that is there: that fails
+/// with `AlreadyExists`, and nothing is changed. Across disks the answer is `CrossesDevices`.
+///
+/// Where the disk can, it is one step that the disk refuses when the name is taken: `renameat2`
+/// with `RENAME_NOREPLACE` on Linux, `renameatx_np` with `RENAME_EXCL` on macOS. A disk that
+/// cannot, such as an NFS or SMB share, gets `rename_in_steps`.
 pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    match rename_exclusive(from, to) {
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => rename_in_steps(from, to),
+        done => done,
+    }
+}
+
+/// The rename the disk refuses in one step when the name is taken, or `Unsupported` when the disk
+/// cannot refuse that way: Linux answers `EINVAL` for a flag the disk does not know, and macOS
+/// `ENOTSUP`.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
     use rustix::fs::{CWD, RenameFlags, renameat_with};
-    renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE).map_err(|errno| match io::Error::from(errno) {
-        error if error.kind() == io::ErrorKind::InvalidInput => io::ErrorKind::Unsupported.into(),
-        error => error,
+    use rustix::io::Errno;
+    // ENOTSUP and EOPNOTSUPP are one error on Linux and two on macOS.
+    const CANNOT: [Errno; 4] = [Errno::INVAL, Errno::NOSYS, Errno::NOTSUP, Errno::OPNOTSUPP];
+    renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE).map_err(|errno| {
+        if CANNOT.contains(&errno) {
+            io::ErrorKind::Unsupported.into()
+        } else {
+            errno.into()
+        }
     })
 }
 
 /// No rename here can refuse a name that is taken, so none is tried.
 #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
-pub fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
+fn rename_exclusive(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::ErrorKind::Unsupported.into())
+}
+
+/// Renames `from` to `to` on a disk whose rename cannot refuse a name that is taken, as near to
+/// never replacing an entry as the disk allows.
+///
+/// A file or a link is given the new name with a hard link, which the disk refuses atomically
+/// when the name is taken, and then loses the old one. For that moment it has both names, and a
+/// power cut there leaves it under both: one file, nothing lost. A folder, and a file on a disk
+/// that has no hard links, gets `rename_over_reserved`.
+fn rename_in_steps(from: &Path, to: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(from)?.is_dir() {
+        return rename_over_reserved(from, to, true);
+    }
+    match fs::hard_link(from, to) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::AlreadyExists | io::ErrorKind::CrossesDevices
+            ) =>
+        {
+            return Err(error);
+        }
+        Err(_) => return rename_over_reserved(from, to, false),
+    }
+    if let Err(error) = fs::remove_file(from) {
+        // The old name stays, so the new one goes again: nothing has moved.
+        let _ = fs::remove_file(to);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Takes the name `to` with an empty entry of the kind `from` is, which the disk refuses
+/// atomically when the name is taken, then renames `from` over it.
+///
+/// What the rename replaces is that empty entry. Once it is made, nothing else can take the name,
+/// and a rename refuses a folder that is no longer empty. What is left is the moment between
+/// the two steps, in which a program outside okfs could write into the empty file, or remove the
+/// empty folder and make one of its own: a folder that is empty, so nothing in it is lost.
+fn rename_over_reserved(from: &Path, to: &Path, dir: bool) -> io::Result<()> {
+    if dir {
+        fs::create_dir(to)?;
+    } else {
+        OpenOptions::new().write(true).create_new(true).open(to)?;
+    }
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            // Only the empty entry it made goes, never one that holds something.
+            if dir {
+                let _ = fs::remove_dir(to);
+            } else if fs::symlink_metadata(to).is_ok_and(|meta| meta.is_file() && meta.len() == 0) {
+                let _ = fs::remove_file(to);
+            }
+            Err(match error.kind() {
+                // Something was put in the empty folder: the name is taken.
+                io::ErrorKind::DirectoryNotEmpty => io::ErrorKind::AlreadyExists.into(),
+                _ => error,
+            })
+        }
+    }
 }
 
 /// Renames `from` to the first free name of `name`, `name (1)`, `name (2)` and so on up to
@@ -331,6 +410,86 @@ mod tests {
         drop(part);
         assert_eq!(fs::read_to_string(dir.join("free.txt")).unwrap(), "new");
         assert_eq!(names(dir), ["free.txt", "taken.txt"]);
+    }
+
+    #[test]
+    fn a_file_renamed_in_steps_never_lands_on_a_name_that_is_taken() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("taken.txt"), "old").unwrap();
+        fs::write(dir.join("from.txt"), "new").unwrap();
+
+        let error = rename_in_steps(&dir.join("from.txt"), &dir.join("taken.txt")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(dir.join("taken.txt")).unwrap(), "old");
+        assert_eq!(names(dir), ["from.txt", "taken.txt"]);
+
+        rename_in_steps(&dir.join("from.txt"), &dir.join("free.txt")).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("free.txt")).unwrap(), "new");
+        assert_eq!(names(dir), ["free.txt", "taken.txt"]);
+    }
+
+    #[test]
+    fn a_folder_renamed_in_steps_never_lands_on_an_entry_not_even_an_empty_folder() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::create_dir_all(dir.join("box/inner")).unwrap();
+        fs::write(dir.join("box/inner/a.txt"), "a").unwrap();
+        fs::write(dir.join("file"), "f").unwrap();
+        fs::create_dir(dir.join("empty")).unwrap();
+        fs::create_dir(dir.join("full")).unwrap();
+        fs::write(dir.join("full/b.txt"), "b").unwrap();
+
+        for taken in ["file", "empty", "full"] {
+            let error = rename_in_steps(&dir.join("box"), &dir.join(taken)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{taken}");
+        }
+        assert_eq!(names(dir), ["box", "empty", "file", "full"]);
+        assert_eq!(fs::read_to_string(dir.join("file")).unwrap(), "f");
+        assert!(names(&dir.join("empty")).is_empty());
+        assert_eq!(names(&dir.join("full")), ["b.txt"]);
+
+        rename_in_steps(&dir.join("box"), &dir.join("moved")).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("moved/inner/a.txt")).unwrap(), "a");
+        assert_eq!(names(dir), ["empty", "file", "full", "moved"]);
+    }
+
+    #[test]
+    fn a_file_without_hard_links_is_renamed_over_the_name_it_took_and_never_over_another() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("taken.txt"), "old").unwrap();
+        fs::write(dir.join("from.txt"), "new").unwrap();
+
+        let error = rename_over_reserved(&dir.join("from.txt"), &dir.join("taken.txt"), false).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(dir.join("taken.txt")).unwrap(), "old");
+
+        rename_over_reserved(&dir.join("from.txt"), &dir.join("free.txt"), false).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("free.txt")).unwrap(), "new");
+        assert_eq!(names(dir), ["free.txt", "taken.txt"]);
+    }
+
+    #[test]
+    fn a_rename_refused_after_the_name_was_taken_gives_the_name_back() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("from.txt"), "new").unwrap();
+        // A file cannot go over a folder, so the rename after the empty folder fails.
+        assert!(rename_over_reserved(&dir.join("from.txt"), &dir.join("to"), true).is_err());
+        assert_eq!(names(dir), ["from.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_renamed_in_steps_stays_a_link() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::write(dir.join("target.txt"), "t").unwrap();
+        std::os::unix::fs::symlink("target.txt", dir.join("link")).unwrap();
+        rename_in_steps(&dir.join("link"), &dir.join("moved")).unwrap();
+        assert_eq!(fs::read_link(dir.join("moved")).unwrap(), Path::new("target.txt"));
+        assert_eq!(names(dir), ["moved", "target.txt"]);
     }
 
     #[test]

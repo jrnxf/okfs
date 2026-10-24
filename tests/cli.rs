@@ -37,15 +37,25 @@ fn start(served: &Path, cache: &Path, args: &[&str]) -> Running {
 
 /// Starts okfs on `served` with `args` alone, and waits until it listens.
 fn launch(served: &Path, cache: &Path, args: &[&str]) -> Running {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_okfs"))
+    listening(okfs(served, cache, args))
+}
+
+/// The command that starts okfs on `served` with `args`.
+fn okfs(served: &Path, cache: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_okfs"));
+    command
         .arg("--no-open")
         .args(args)
         .arg(served)
         .env("XDG_CACHE_HOME", cache)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::null());
+    command
+}
+
+/// Runs `command`, and waits until okfs listens.
+fn listening(mut command: Command) -> Running {
+    let mut child = command.spawn().unwrap();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
     let mut said = String::new();
     let (port, key) = loop {
@@ -800,4 +810,180 @@ fn at_start_the_trash_deletes_what_is_past_its_days_and_nothing_without_deleting
     }
     assert!(!old.exists(), "past its 30 days");
     assert!(young.exists(), "2 days old");
+}
+
+/// Makes `command` run with `renameat2` as an NFS share answers it: any flag, such as
+/// `RENAME_NOREPLACE`, fails with `EINVAL`. A rename with no flag is left alone.
+#[cfg(target_os = "linux")]
+fn as_on_nfs(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    fn statement(code: u32, k: u32) -> libc::sock_filter {
+        libc::sock_filter {
+            code: code as u16,
+            jt: 0,
+            jf: 0,
+            k,
+        }
+    }
+    fn jump(code: u32, k: u32, jt: u8, jf: u8) -> libc::sock_filter {
+        libc::sock_filter {
+            code: code as u16,
+            jt,
+            jf,
+            k,
+        }
+    }
+    // In `seccomp_data`: the call's number at 0, then the arguments from 16, 8 bytes each. The
+    // flags are the fifth argument, and the low half of it is enough.
+    let filter = [
+        statement(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, 0),
+        jump(
+            libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+            libc::SYS_renameat2 as u32,
+            0,
+            3,
+        ),
+        statement(libc::BPF_LD | libc::BPF_W | libc::BPF_ABS, 16 + 4 * 8),
+        jump(libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K, 0, 1, 0),
+        statement(
+            libc::BPF_RET | libc::BPF_K,
+            libc::SECCOMP_RET_ERRNO | libc::EINVAL as u32,
+        ),
+        statement(libc::BPF_RET | libc::BPF_K, libc::SECCOMP_RET_ALLOW),
+    ];
+    // Safety: between fork and exec the child makes only the two calls, which allocate nothing,
+    // on a filter the closure holds.
+    unsafe {
+        command.pre_exec(move || {
+            let program = libc::sock_fprog {
+                len: filter.len() as u16,
+                filter: filter.as_ptr().cast_mut(),
+            };
+            let filtered = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0
+                && libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program) == 0;
+            if filtered {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "linux")]
+/// What okfs answers a change sent as its own page sends one: `method` on `path`, saying it is the
+/// page's `change`, from the page's origin, with the key in the cookie.
+fn change(okfs: &Running, method: &str, change: &str, path: &str, extra: &str) -> (u16, String) {
+    let port = okfs.port;
+    let key = okfs.key.as_deref().unwrap_or("");
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+         x-okfs: {change}\r\nCookie: okfs-key-{port}={key}\r\n{extra}Content-Length: 0\r\n\
+         Connection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    let status = answer.split(' ').nth(1).unwrap().parse().unwrap();
+    (status, answer)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn on_a_disk_with_no_exclusive_rename_moves_copies_and_the_trash_still_never_replace() {
+    let tmp = TempDir::new().unwrap();
+    let served = tmp.path().join("served");
+    fs::create_dir_all(served.join("docs/inner")).unwrap();
+    fs::create_dir_all(served.join("dest")).unwrap();
+    fs::create_dir_all(served.join("empty")).unwrap();
+    fs::write(served.join("PLAYBOOK.md"), "playbook").unwrap();
+    fs::write(served.join("docs/inner/a.txt"), "a").unwrap();
+    fs::write(served.join("dest/taken.txt"), "taken").unwrap();
+    let mut command = okfs(
+        &served,
+        &tmp.path().join("cache"),
+        &["--port", "0", "--allow-upload", "--allow-edit", "--allow-delete"],
+    );
+    as_on_nfs(&mut command);
+    let okfs = listening(command);
+    let ok = |method: &str, own: &str, path: &str, extra: &str, want: u16| {
+        let (status, answer) = change(&okfs, method, own, path, extra);
+        assert_eq!(status, want, "{method} {path}: {answer}");
+        answer
+    };
+
+    // A rename and a move, of a file and of a folder.
+    ok("POST", "move", "/api/move?from=PLAYBOOK.md&to=README.md", "", 200);
+    ok("POST", "move", "/api/move?from=README.md&to=dest/README.md", "", 200);
+    ok("POST", "move", "/api/move?from=docs&to=dest/docs", "", 200);
+    assert_eq!(fs::read_to_string(served.join("dest/README.md")).unwrap(), "playbook");
+    assert_eq!(fs::read_to_string(served.join("dest/docs/inner/a.txt")).unwrap(), "a");
+    assert!(!served.join("docs").exists() && !served.join("PLAYBOOK.md").exists());
+
+    // Never over an entry, not even an empty folder; with keep, beside it.
+    ok(
+        "POST",
+        "move",
+        "/api/move?from=dest/README.md&to=dest/taken.txt",
+        "",
+        412,
+    );
+    ok("POST", "move", "/api/move?from=dest/docs&to=empty", "", 412);
+    assert_eq!(fs::read_to_string(served.join("dest/taken.txt")).unwrap(), "taken");
+    assert!(fs::read_dir(served.join("empty")).unwrap().next().is_none());
+    let kept = ok(
+        "POST",
+        "move",
+        "/api/move?from=dest/README.md&to=dest/taken.txt&keep=1",
+        "",
+        200,
+    );
+    assert!(kept.contains(r#""path":"dest/taken (1).txt""#), "{kept}");
+
+    // A copy of a folder is put in place by a rename too.
+    ok("POST", "write", "/api/copy?from=dest/docs&to=docs", "", 201);
+    assert_eq!(fs::read_to_string(served.join("docs/inner/a.txt")).unwrap(), "a");
+
+    // To the Trash and back, and back beside a name taken since.
+    let trash_id = |answer: &str| {
+        answer
+            .split(r#""id":""#)
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    let gone = ok("DELETE", "delete", "/api/entry?path=dest/taken.txt", "", 200);
+    ok(
+        "POST",
+        "delete",
+        &format!("/api/trash/restore?id={}", trash_id(&gone)),
+        "",
+        200,
+    );
+    assert_eq!(fs::read_to_string(served.join("dest/taken.txt")).unwrap(), "taken");
+    let gone = ok("DELETE", "delete", "/api/entry?path=docs", "", 200);
+    fs::create_dir_all(served.join("docs")).unwrap();
+    let back = ok(
+        "POST",
+        "delete",
+        &format!("/api/trash/restore?id={}", trash_id(&gone)),
+        "",
+        200,
+    );
+    assert!(back.contains(r#""path":"docs (1)""#), "{back}");
+    assert_eq!(fs::read_to_string(served.join("docs (1)/inner/a.txt")).unwrap(), "a");
+
+    // Nothing is left behind under a hidden name.
+    let mut hidden: Vec<String> = fs::read_dir(&served)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('.'))
+        .collect();
+    hidden.retain(|name| name != ".okfs-trash");
+    assert!(hidden.is_empty(), "{hidden:?}");
 }

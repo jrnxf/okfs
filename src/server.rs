@@ -1365,10 +1365,6 @@ fn transfer_failed(app: &App, place: &Place, error: &std::io::Error, what: &str)
             &place.rel,
             &format!("there is already an entry named {}", place.name),
         ),
-        ErrorKind::Unsupported => fail(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("this disk cannot {what} without a risk of replacing an entry"),
-        ),
         ErrorKind::CrossesDevices => fail(
             StatusCode::CONFLICT,
             &format!("the two folders are on different disks: okfs does not {what} across disks"),
@@ -1745,12 +1741,6 @@ fn commit(app: &App, aim: Aim, mut part: Part) -> Response {
                         app,
                         &place.rel,
                         &format!("there is already an entry named {}", place.name),
-                    );
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
-                    return fail(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "this disk cannot add a file without a risk of replacing one",
                     );
                 }
                 Err(error) => return disk_failed(&error),
