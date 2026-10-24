@@ -19,4 +19,5 @@ pub mod skip;
 pub mod theme;
 pub mod thumb;
 pub mod tls;
+pub mod trash;
 pub mod write;

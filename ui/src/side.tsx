@@ -14,11 +14,11 @@ import { hasSource } from "./kinds";
 import { AGE, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
 import { Editor } from "./editor";
-import { DELETE_KEY } from "./palette";
+import { DELETE_KEY, deleteLabel } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
 import { SLIDE_MS } from "./slide";
 import { type Chain, type Left, columnsOf, focusOf, standIn } from "./slots";
-import { type Doomed, type Entry, store, toEntry } from "./store";
+import { type Doomed, type Entry, type MenuTarget, store, toEntry } from "./store";
 import { pick, uploads } from "./upload";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
@@ -28,6 +28,23 @@ function visit(listing: Listing, item: Item, open: boolean): void {
   if (item.d) void store.showDir(path, { enter: [] });
   else if (open) void store.go(path, false);
   else void store.showDir(listing.path, { select: item.n });
+}
+
+/**
+ * A right click in a column: the menu of the row, in the column's folder, or of that folder on its empty space. Shift
+ * and a right click leave the browser's own menu.
+ */
+function menuOf(listing: Listing | undefined, folder: Entry) {
+  return (event: MouseEvent) => {
+    if (event.shiftKey || !listing || listing.path !== folder.path) return;
+    const row = (event.target as Element).closest<HTMLElement>("[data-i]");
+    const item = row ? listing.entries[Number(row.dataset.i)] : undefined;
+    event.preventDefault();
+    const target: MenuTarget = item
+      ? { kind: "entries", entries: [toEntry(item, listing.path, Number(row?.dataset.i))], dir: listing.path }
+      : { kind: "folder", path: folder.path, name: folder.name };
+    store.openMenu(target, event.clientX, event.clientY);
+  };
 }
 
 /** What an empty folder says, in the main list and in a column. */
@@ -102,7 +119,7 @@ export function FolderBar({
         </a>
       )}
       {doomed && (
-        <button class={`btn ${BAR_BTN}`} aria-label="Delete" title="Delete" onClick={() => store.askDelete(doomed)}>
+        <button class={`btn ${BAR_BTN}`} aria-label={deleteLabel()} title={deleteLabel()} onClick={() => store.askDelete(doomed)}>
           <Icon name="trash" />
         </button>
       )}
@@ -141,7 +158,7 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
         <span class={`${HEAD} justify-end`}>Size</span>
         <span class={`${HEAD} justify-end`}>Mod.</span>
       </div>
-      <div class="col-rows min-h-0 flex-1 overflow-auto overscroll-contain" onClick={go(false)} onDblClick={go(true)}>
+      <div class="col-rows min-h-0 flex-1 overflow-auto overscroll-contain" onClick={go(false)} onDblClick={go(true)} onContextMenu={menuOf(listing, folder)}>
         {listing?.entries.map((item, at) => {
           const entry = toEntry(item, listing.path, at);
           // The entry the next slot shows is marked.
@@ -212,7 +229,7 @@ function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
           {config.delete && (
             <button class={MORE_ROW} role="menuitem" onClick={() => store.askDelete(file)}>
               <Icon name="trash" />
-              <span class={MORE_NAME}>Delete</span>
+              <span class={MORE_NAME}>{deleteLabel()}</span>
             </button>
           )}
         </div>
@@ -422,7 +439,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           <Icon name="download" />
         </a>
         {config.delete && (
-          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Delete" title={`Delete (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label={deleteLabel()} title={`${deleteLabel()} (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
             <Icon name="trash" />
           </button>
         )}

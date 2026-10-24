@@ -27,12 +27,17 @@ function open(): void {
     tries = 0;
     setDown(null);
     store.sync();
+    store.trashChanged();
   };
   source.addEventListener("change", (event) => {
     const { dir, files }: { dir: string; files: string[] } = JSON.parse(event.data);
     store.changed(dir, files);
   });
-  source.addEventListener("sync", () => store.sync());
+  source.addEventListener("sync", () => {
+    store.sync();
+    store.trashChanged();
+  });
+  source.addEventListener("trash", () => store.trashChanged());
   // The browser would try again by itself, at one fixed pace and also against a server that refuses.
   source.onerror = () => {
     close();

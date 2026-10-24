@@ -41,7 +41,14 @@ beforeEach(() => {
   asked.length = 0;
 });
 
-const host: KeyHost = { filter: () => undefined, closeMenu: () => undefined, flipScheme: () => undefined, page: () => 4 };
+const host: KeyHost = {
+  filter: () => undefined,
+  closeMenu: () => undefined,
+  flipScheme: () => undefined,
+  page: () => 4,
+  menu: () => undefined,
+  copyPath: () => undefined,
+};
 
 /** A store showing a folder that holds `names`, in that order, with the cursor on the first. A name ending in `/` is a folder. */
 function showing(...names: string[]) {
@@ -107,11 +114,16 @@ test("Markdown, a drawing and JSON open as their source, and the flip holds for 
   expect(store.isRaw(json!)).toBe(false);
 });
 
-test("space does nothing on the list, and is left alone where it types or presses", () => {
-  const store = showing("notes.md", "inner/");
-  expect(keys.keyFor(store, host, press(" "))).toBeUndefined();
-  store.moveTo(1);
-  expect(keys.keyFor(store, host, press(" "))).toBeUndefined();
+test("space selects the row and steps down on the list, and is left alone where it types or presses", () => {
+  const store = showing("notes.md", "inner/", "z.txt");
+  keys.keyFor(store, host, press(" "))?.();
+  expect([...store.s.picked.sel]).toEqual(["notes.md"]);
+  expect(store.s.cursor).toBe(1);
+  keys.keyFor(store, host, press(" "))?.();
+  expect([...store.s.picked.sel].sort()).toEqual(["inner", "notes.md"]);
+  // Escape lets the selection go before it does anything else.
+  keys.keyFor(store, host, press("Escape"))?.();
+  expect(store.s.picked.sel.size).toBe(0);
 
   // In the filter, the palette or any text box it is a space; on a button or a player it presses that.
   for (const focused of ["input", "textarea", "select", "[contenteditable]", "button", "summary", "video", "audio", "a[href]"]) {
@@ -351,4 +363,32 @@ test("nothing moves off a file with unsaved changes without asking, and a file d
     globalThis.fetch = fetching;
     Object.assign(config, { edit: false, upload: false, delete: false });
   }
+});
+
+/** A press with Shift held. */
+function shifted(key: string): Press {
+  return keys.pressOf({ key, shiftKey: true, ctrlKey: false, metaKey: false, altKey: false, target: { closest: () => null } as unknown as EventTarget });
+}
+
+test("Shift and the arrows select from the anchor and shrink back toward it", () => {
+  const store = showing("a.txt", "b.txt", "c.txt", "d.txt");
+  store.moveTo(1);
+  keys.keyFor(store, host, shifted("ArrowDown"))?.();
+  keys.keyFor(store, host, shifted("ArrowDown"))?.();
+  expect([...store.s.picked.sel].sort()).toEqual(["b.txt", "c.txt", "d.txt"]);
+  keys.keyFor(store, host, shifted("ArrowUp"))?.();
+  expect([...store.s.picked.sel].sort()).toEqual(["b.txt", "c.txt"]);
+  expect(store.s.cursor).toBe(2);
+});
+
+test("a, the menu key and Shift F10 open the menu, and the changing keys need their flags", () => {
+  const store = showing("notes.md", "inner/");
+  let opened = 0;
+  const counting = { ...host, menu: () => void opened++ };
+  keys.keyFor(store, counting, press("a"))?.();
+  keys.keyFor(store, counting, press("ContextMenu"))?.();
+  keys.keyFor(store, counting, shifted("F10"))?.();
+  expect(opened).toBe(3);
+  // This page has no write flags on: renaming, moving and copying are not keys.
+  for (const key of ["F2", "R", "m", "c", "N"]) expect(keys.keyFor(store, host, press(key))).toBeUndefined();
 });

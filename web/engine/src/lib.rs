@@ -153,6 +153,8 @@ pub extern "C" fn okfs_reread(ptr: *const u8, len: usize) -> *const u8 {
             told.push(match change {
                 Change::Folder { dir, files } => serde_json::json!({ "event": "change", "dir": dir, "files": files }),
                 Change::Sync => serde_json::json!({ "event": "sync" }),
+                // The demo has no Trash: its index never tells of one.
+                Change::Trash => serde_json::json!({ "event": "trash" }),
             });
         }
         reply(&told)

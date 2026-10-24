@@ -1,5 +1,6 @@
 // The keys that work on the list and on an open file. The palette, the dialogs and the filter take their own.
 
+import { config } from "./config";
 import type { Store } from "./store";
 import { pick } from "./upload";
 
@@ -11,6 +12,10 @@ export interface KeyHost {
   flipScheme: () => void;
   /** How many rows of the list a page is: those on screen at once. */
   page: () => number;
+  /** Opens the menu of the selection, or of the row under the cursor, at that row. */
+  menu: () => void;
+  /** Copies the path of the selection, or of the row under the cursor. */
+  copyPath: () => void;
 }
 
 /** All that the keys ask about a press. */
@@ -47,7 +52,19 @@ export function keyFor(store: Store, host: KeyHost, press: Press): (() => void) 
   // While a file is edited only Esc is the list's, and it leaves the editor: any other key would leave its file.
   if (store.s.editing) return press.key === "Escape" ? () => store.leave(() => undefined) : undefined;
   if (press.pressing && (press.key === " " || press.key === "Enter")) return undefined;
+  // The menu key, and Shift F10 as in every desktop: the menu of the row under the cursor.
+  if (press.key === "ContextMenu" || (press.shift && press.key === "F10")) return host.menu;
+  if (store.s.trashView) {
+    if (press.key === "Backspace") return press.shift ? () => store.askForget(store.trashCur()) : () => store.showTrash(false);
+    return trashKeys(store, host)[press.key];
+  }
   if (press.shift && press.key === "D") return () => store.askDelete();
+  // Shift with an arrow or Space selects from the anchor: see pick.ts.
+  if (press.shift && !store.s.finding && !store.s.open) {
+    const by = { ArrowDown: 1, ArrowUp: -1, J: 1, K: -1 }[press.key];
+    if (by !== undefined) return () => store.pickMove(by);
+    if (press.key === " ") return () => store.pickCursor(true);
+  }
   return listKeys(store, host)[press.key];
 }
 
@@ -79,6 +96,7 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     "-": () => store.up(),
     Escape: () => {
       if (s.open) store.close();
+      else if (store.clearPicks()) return;
       else if (s.filter) store.setFilter("");
       else if (store.trail()) store.toMatches();
       host.closeMenu();
@@ -89,10 +107,53 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     ...(modal ? {} : { PageDown: () => store.move(host.page()), PageUp: () => store.move(-host.page()) }),
     "/": host.filter,
     y: () => void store.copyLink(),
+    Y: host.copyPath,
     s: () => store.setSort(),
     t: host.flipScheme,
     "?": () => store.setHelp(true),
+    // Not over an open file: its keys are the file's, and a menu or a selection is the list's.
+    ...(modal ? {} : { a: host.menu, " ": () => store.pickCursor(false) }),
     ...adding(store),
+    ...changing(store),
+  };
+}
+
+/**
+ * The keys that change entries that are there: rename, move and copy, each while its flag is on. Not over an open
+ * file, where the keys are the file's.
+ */
+function changing(store: Store): Record<string, () => void> {
+  if (store.s.open || store.s.status !== "ready") return {};
+  const rename = () => store.startRename();
+  return {
+    ...(config.edit ? { F2: rename, R: rename, m: () => store.startPicking("move") } : {}),
+    ...(config.upload ? { c: () => store.startPicking("copy") } : {}),
+  };
+}
+
+/** The keys in the Trash: moving through it, putting back, deleting for good, and the way out. */
+function trashKeys(store: Store, host: KeyHost): Record<string, () => void> {
+  const leave = () => store.showTrash(false);
+  const forget = () => store.askForget(store.trashCur());
+  return {
+    j: () => store.trashMove(1),
+    ArrowDown: () => store.trashMove(1),
+    k: () => store.trashMove(-1),
+    ArrowUp: () => store.trashMove(-1),
+    Home: () => store.trashMoveTo(0),
+    End: () => store.trashMoveTo(Number.MAX_SAFE_INTEGER),
+    PageDown: () => store.trashMove(host.page()),
+    PageUp: () => store.trashMove(-host.page()),
+    R: () => void store.restore(),
+    // Shift and Backspace, or Delete: Backspace alone is the way out.
+    Delete: forget,
+    a: host.menu,
+    Escape: leave,
+    h: leave,
+    ArrowLeft: leave,
+    "-": leave,
+    t: host.flipScheme,
+    "?": () => store.setHelp(true),
   };
 }
 
@@ -104,7 +165,7 @@ function adding(store: Store): Record<string, () => void> {
   const dir = store.addsTo();
   const edits: Record<string, () => void> = store.editable(store.s.open ?? store.cur()) ? { e: () => store.edit() } : {};
   if (dir === null || store.s.open) return edits;
-  return { ...edits, u: () => pick(dir), n: () => store.setNaming("file") };
+  return { ...edits, u: () => pick(dir), n: () => void store.newHere("file"), N: () => void store.newHere("folder") };
 }
 
 /** The keys on the matches: as on a folder, except that the ways out of the folder go back to it, and `s` sorts the matches. */

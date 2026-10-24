@@ -25,6 +25,8 @@ export interface Config {
   target: { path: string; kind: "dir" | "file" | "missing" };
   /** True when the server was started with deleting on. */
   delete: boolean;
+  /** With deleting on, how many days the Trash keeps what is deleted. Absent when a delete is for good. */
+  trash?: number;
   /** True when the server was started with `--allow-upload`: files and folders can be added. */
   upload?: boolean;
   /** True when the server was started with `--allow-edit`: the files that are there can be changed. */

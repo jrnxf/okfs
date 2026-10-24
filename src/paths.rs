@@ -43,6 +43,21 @@ impl Entry {
         self.kind.is_symlink()
     }
 
+    /// True for a folder, and not a link to one.
+    pub fn is_dir(&self) -> bool {
+        self.kind.is_dir()
+    }
+
+    /// Where it is on disk: its real folder, then its own name. A link is not followed.
+    pub fn abs(&self) -> &Path {
+        &self.abs
+    }
+
+    /// The path it was asked for by, cleaned.
+    pub fn rel(&self) -> &str {
+        &self.rel
+    }
+
     /// Where it really is, relative to the served folder: its real folder, then its name.
     pub fn place(&self) -> String {
         join(&self.folder, file_name(&self.rel))
@@ -162,9 +177,10 @@ impl Root {
         self.hidden
     }
 
-    /// True for a name that may be shown. A write's file in progress never is, even with `--hidden`.
-    fn shows(&self, name: &str) -> bool {
-        (self.hidden || !name.starts_with('.')) && !is_part(name)
+    /// True for a name that may be shown. A write's file in progress never is, and neither is the
+    /// Trash, even with `--hidden`.
+    pub fn shows(&self, name: &str) -> bool {
+        (self.hidden || !name.starts_with('.')) && !is_part(name) && name != TRASH
     }
 
     /// Splits a request path into segments, refusing anything that is not a plain name.
@@ -288,10 +304,27 @@ impl Root {
     /// checked first, by a walk that removes nothing, so a name that appears in the
     /// folder after the check goes with the folder.
     pub fn remove(&self, entry: &Entry) -> Result<(), Kept> {
+        self.whole(entry)?;
+        self.remove_unchecked(entry)
+    }
+
+    /// Checks that an entry may go as a whole: a file or a link always, a folder when all it
+    /// holds, at every depth, is shown. A delete and a move to the Trash both ask here first.
+    pub fn whole(&self, entry: &Entry) -> Result<(), Kept> {
         if entry.kind.is_dir() {
             self.all_shown(&entry.abs)?;
         }
-        self.remove_unchecked(entry)
+        Ok(())
+    }
+
+    /// The entry found by `entry` as it is now: its place may have been moved since `entry` gave it,
+    /// and what changes has to be inside the served folder now. `NotFound` when it is no longer the
+    /// same entry at the same place.
+    pub fn again(&self, entry: &Entry) -> io::Result<Entry> {
+        self.entry(&entry.rel)
+            .ok()
+            .filter(|now| now.abs == entry.abs && now.kind == entry.kind)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
     }
 
     /// Checks that all a folder holds, at every depth, is shown. Removes nothing.
@@ -316,11 +349,7 @@ impl Root {
     /// followed: it is removed as a link, and so is the entry itself when it is one.
     /// This does not hold against a process that rewrites the served folder while it runs.
     fn remove_unchecked(&self, entry: &Entry) -> Result<(), Kept> {
-        let now = self
-            .entry(&entry.rel)
-            .ok()
-            .filter(|now| now.abs == entry.abs && now.kind == entry.kind)
-            .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
+        let now = self.again(entry)?;
         if now.kind.is_dir() {
             return fs::remove_dir_all(&now.abs).map_err(Kept::Partly);
         }
@@ -406,6 +435,10 @@ impl Root {
 
 /// The start and the end of the name of a file that a write is still putting together. See `write`.
 pub const PART: (&str, &str) = (".okfs-", ".part");
+
+/// The name of the folder at the top of the served folder that holds the Trash. It is never shown,
+/// served, searched or written to by a request, even with `--hidden`, at any depth. See `trash`.
+pub const TRASH: &str = ".okfs-trash";
 
 /// True for the name of a file that a write is still putting together. It is never shown.
 pub fn is_part(name: &str) -> bool {

@@ -24,6 +24,8 @@ pub enum Change {
     },
     /// More changed than is named: read again whatever is on screen.
     Sync,
+    /// Something went into the Trash or left it.
+    Trash,
 }
 
 pub struct Feed {

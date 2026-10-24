@@ -114,9 +114,18 @@ struct Serve {
     #[arg(long, help_heading = "Writes")]
     allow_edit: bool,
 
-    /// Let anyone who can reach the address delete files and folders. Off by default
+    /// Let anyone who can reach the address delete files and folders. A delete goes to the Trash
+    /// first. Off by default
     #[arg(long, help_heading = "Writes")]
     allow_delete: bool,
+
+    /// How many days the Trash keeps what is deleted before it goes for good [default: 30]
+    #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..=36500), help_heading = "Writes")]
+    trash_days: Option<u32>,
+
+    /// Delete for good at once, with no Trash and no undo
+    #[arg(long, conflicts_with = "trash_days", help_heading = "Writes")]
+    no_trash: bool,
 
     /// The largest file an upload or a save may be: --max-upload 4G. No limit without it
     #[arg(long, value_name = "SIZE", value_parser = byte_size, help_heading = "Writes")]
@@ -391,6 +400,7 @@ fn serve(args: Serve) -> Result<(), String> {
         allow_hosts: args.allow_host,
         check_host: true,
         allow_delete: args.allow_delete,
+        trash: (!args.no_trash).then(|| args.trash_days.unwrap_or(crate::trash::DAYS)),
         allow_upload: args.allow_upload,
         allow_edit: args.allow_edit,
         max_upload: args.max_upload,
@@ -409,6 +419,19 @@ fn serve(args: Serve) -> Result<(), String> {
     let index = Index::spawn(root.clone(), follow);
     let app = App::new(root.clone(), std::sync::Arc::clone(&index), options)?;
     std::thread::spawn(crate::render::warm);
+    // What the Trash has kept past its days goes for good now, and then every hour.
+    if app.trash().is_some() {
+        let sweeper = std::sync::Arc::clone(&app);
+        std::thread::Builder::new()
+            .name("okfs-trash".to_owned())
+            .spawn(move || {
+                loop {
+                    sweeper.sweep_trash();
+                    std::thread::sleep(std::time::Duration::from_secs(60 * 60));
+                }
+            })
+            .map_err(|error| format!("cannot start the Trash's sweep: {error}"))?;
+    }
 
     let runtime = tokio::runtime::Runtime::new().map_err(|error| format!("cannot start: {error}"))?;
     runtime.block_on(async {
@@ -426,6 +449,13 @@ fn serve(args: Serve) -> Result<(), String> {
             ),
         };
         println!("  serving  {} ({writes})", root.dir().display());
+        if let Some(trash) = app.trash() {
+            println!(
+                "  trash    a delete is kept {} days in {}, then goes for good",
+                trash.days(),
+                crate::paths::TRASH
+            );
+        }
         if let Follow::Rescan(every) = follow {
             println!("  rescan   every {}", every::spoken(every));
         }

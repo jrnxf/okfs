@@ -23,6 +23,9 @@ export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 /** The key that deletes. It takes two fingers, so it is not hit by rolling over `j` and `k`. */
 export const DELETE_KEY = `${MOD === "⌘" ? "⇧" : "Shift"} D`;
 
+/** What a delete is called: a move to the Trash while the server keeps one, and a delete for good without. */
+export const deleteLabel = (): string => (config.trash ? "Move to Trash" : "Delete");
+
 interface Command {
   title: string;
   key?: string;
@@ -68,10 +71,29 @@ function commands(): Entry[] {
   const wrappable = store.wrappable();
   // Both are missing when the server has deleting off, and over the matches: a match is deleted from its own folder.
   const deletes: Command[] = [];
+  const verb = config.trash ? "Move to Trash" : "Delete";
   if (config.delete && !s.finding) {
-    if (under) deletes.push({ title: `Delete “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
-    if (here) deletes.push({ title: `Delete this folder, “${here.name}”`, run: () => store.askDelete(here) });
+    if (under) deletes.push({ title: `${verb}: “${under.name}”`, key: DELETE_KEY, run: () => store.askDelete(under) });
+    if (here) deletes.push({ title: `${verb}: this folder, “${here.name}”`, run: () => store.askDelete(here) });
   }
+  // The Trash, while the server keeps one.
+  const trash = s.trash;
+  const trashing: Command[] = trash
+    ? [
+        { title: `Open Trash${trash.items.length ? ` (${trash.items.length})` : ""}`, run: () => store.showTrash(true) },
+        ...(trash.items.length ? [{ title: "Empty Trash…", run: () => store.askForget("all") }] : []),
+      ]
+    : [];
+  // Renaming, moving and copying the entry under the cursor, while their flags are on.
+  const changes: Command[] =
+    under && !s.finding && !s.open
+      ? [
+          ...(config.edit ? [{ title: `Rename “${under.name}”`, key: "F2", run: () => store.startRename(under) }] : []),
+          ...(config.edit ? [{ title: `Move “${under.name}” to…`, key: "m", run: () => store.startPicking("move", [under]) }] : []),
+          ...(config.upload ? [{ title: `Copy “${under.name}” to…`, key: "c", run: () => store.startPicking("copy", [under]) }] : []),
+          ...(config.upload ? [{ title: `Duplicate “${under.name}”`, run: () => void store.duplicate(under) }] : []),
+        ]
+      : [];
   // Missing when the server has adding off, and over the matches: they are in many folders.
   const dir = store.addsTo();
   const adds: Command[] =
@@ -80,8 +102,8 @@ function commands(): Entry[] {
       : [
           { title: "Upload files here", key: s.open ? undefined : "u", run: () => pick(dir) },
           { title: "Upload a folder here", run: () => pick(dir, true) },
-          { title: "New file", key: s.open ? undefined : "n", run: () => store.setNaming("file") },
-          { title: "New folder", run: () => store.setNaming("folder") },
+          { title: "New file", key: s.open ? undefined : "n", run: () => void store.newHere("file") },
+          { title: "New folder", key: s.open ? undefined : "N", run: () => void store.newHere("folder") },
         ];
   const editable = store.editable(s.open ?? store.cur()) && !s.finding && !s.editing ? (s.open ?? store.cur()) : null;
   return [
@@ -100,7 +122,9 @@ function commands(): Entry[] {
     { title: "Go to the top folder", run: () => store.leave(() => void store.showDir("")) },
     { title: "Download this folder as a zip", run: () => location.assign(urls.zip(s.path)) },
     ...adds,
+    ...changes,
     ...deletes,
+    ...trashing,
     { title: "Keyboard shortcuts", key: "?", run: () => store.setHelp(true) },
   ];
 }

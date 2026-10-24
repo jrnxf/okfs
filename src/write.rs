@@ -74,25 +74,12 @@ impl Part {
         }
     }
 
-    /// Renames the file to `to` in one step that the disk refuses when the name is taken:
-    /// `renameat2` with `RENAME_NOREPLACE` on Linux, `renameatx_np` with `RENAME_EXCL` on macOS.
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    /// Renames the file to `to` in one step that the disk refuses when the name is taken. See
+    /// `rename_new`.
     fn rename_new(&mut self, to: &Path) -> io::Result<()> {
-        use rustix::fs::{CWD, RenameFlags, renameat_with};
-        renameat_with(CWD, &self.path, CWD, to, RenameFlags::NOREPLACE).map_err(|errno| {
-            match io::Error::from(errno) {
-                error if error.kind() == io::ErrorKind::InvalidInput => io::ErrorKind::Unsupported.into(),
-                error => error,
-            }
-        })?;
+        rename_new(&self.path, to)?;
         self.placed = true;
         Ok(())
-    }
-
-    /// No rename here can refuse a name that is taken, so none is tried.
-    #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
-    fn rename_new(&mut self, _to: &Path) -> io::Result<()> {
-        Err(io::ErrorKind::Unsupported.into())
     }
 
     /// Puts the file in place under the first free name of `name`, `name (1)`, `name (2)` and so on
@@ -128,6 +115,93 @@ impl Drop for Part {
         self.file.take();
         if !self.placed {
             let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Renames `from` to `to`, a file or a folder, in one step that the disk refuses with
+/// `AlreadyExists` when the name is taken: `renameat2` with `RENAME_NOREPLACE` on Linux,
+/// `renameatx_np` with `RENAME_EXCL` on macOS. A disk that cannot refuse that way answers
+/// `Unsupported`, and nothing is renamed. Across disks the answer is `CrossesDevices`.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    renameat_with(CWD, from, CWD, to, RenameFlags::NOREPLACE).map_err(|errno| match io::Error::from(errno) {
+        error if error.kind() == io::ErrorKind::InvalidInput => io::ErrorKind::Unsupported.into(),
+        error => error,
+    })
+}
+
+/// No rename here can refuse a name that is taken, so none is tried.
+#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+pub fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
+/// Renames `from` to the first free name of `name`, `name (1)`, `name (2)` and so on up to
+/// `MAX_COPIES`, in the folder `dir`, with `rename_new`. Answers with the name it took.
+pub fn rename_free(from: &Path, dir: &Path, name: &str) -> io::Result<String> {
+    for copy in 0..=MAX_COPIES {
+        let tried = if copy == 0 {
+            name.to_owned()
+        } else {
+            numbered(name, copy)
+        };
+        match rename_new(from, &dir.join(&tried)) {
+            Ok(()) => return Ok(tried),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::ErrorKind::AlreadyExists.into())
+}
+
+/// A folder that a copy is putting together, beside where it goes, under a name that is never
+/// shown. It is removed with what it holds when it is dropped, unless it was put in place.
+pub struct PartDir {
+    path: PathBuf,
+    placed: bool,
+}
+
+impl PartDir {
+    /// Makes an empty folder in the folder `dir`, under a name no other write can have.
+    pub fn new(dir: &Path) -> io::Result<Self> {
+        let (start, end) = PART;
+        loop {
+            let mut bytes = [0u8; 8];
+            getrandom::fill(&mut bytes).map_err(|error| io::Error::other(error.to_string()))?;
+            let random: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+            let path = dir.join(format!("{start}{random}{end}"));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path, placed: false }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Puts the folder in place under the name `name` in `dir`, or with `keep` under the first free
+    /// name like it, never over an entry that is there. Answers with the name it took.
+    pub fn place(&mut self, dir: &Path, name: &str, keep: bool) -> io::Result<String> {
+        let took = if keep {
+            rename_free(&self.path, dir, name)?
+        } else {
+            rename_new(&self.path, &dir.join(name))?;
+            name.to_owned()
+        };
+        self.placed = true;
+        Ok(took)
+    }
+}
+
+impl Drop for PartDir {
+    fn drop(&mut self) {
+        if !self.placed {
+            let _ = fs::remove_dir_all(&self.path);
         }
     }
 }

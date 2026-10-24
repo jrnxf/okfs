@@ -3604,3 +3604,478 @@ async fn a_page_with_the_cookie_writes_and_one_without_never_does() {
     }
     assert!(site.served.join("fresh.txt").is_file() && site.served.join("fresh").is_dir());
 }
+
+// The Trash, moving and copying.
+
+impl Site {
+    /// With deleting on and the Trash keeping what is deleted for 30 days, as okfs runs by default.
+    fn trashing(&self) -> axum::Router {
+        self.app(Options {
+            allow_delete: true,
+            trash: Some(30),
+            ..Options::default()
+        })
+    }
+
+    /// With every write on and the Trash too, `hidden` as for `--hidden`.
+    fn all_writes(&self, hidden: bool) -> axum::Router {
+        self.serving(
+            hidden,
+            Options {
+                allow_delete: true,
+                trash: Some(30),
+                allow_upload: true,
+                allow_edit: true,
+                ..Options::default()
+            },
+        )
+    }
+
+    fn trash_dir(&self) -> PathBuf {
+        self.served.join(".okfs-trash")
+    }
+}
+
+/// A change as the page asks for it: `method` on `uri`, with the header naming the kind of change.
+fn page_change(method: &str, uri: &str, change: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, HOME)
+        .header(header::ORIGIN, format!("http://{HOME}"))
+        .header("x-okfs", change)
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn page_move(from: &str, to: &str) -> Request<Body> {
+    page_change("POST", &format!("/api/move?from={from}&to={to}"), "move")
+}
+
+fn page_copy(from: &str, to: &str) -> Request<Body> {
+    page_change("POST", &format!("/api/copy?from={from}&to={to}"), "write")
+}
+
+async fn trash_ids(app: &axum::Router) -> Vec<String> {
+    json(app, "/api/trash").await["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_delete_goes_to_the_trash_and_can_be_put_back() {
+    let site = Site::new();
+    let app = site.trashing();
+    let (status, answer) = wrote(&app, page_delete("sub").unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    let item = &answer["trash"];
+    assert_eq!(item["path"], "sub");
+    assert_eq!(item["dir"], true);
+    assert_eq!(item["count"], 2, "b.txt and deep");
+    assert!(!site.served.join("sub").exists());
+    assert!(!names(&json(&app, "/api/list?path=").await).contains(&"sub"));
+
+    let listed = json(&app, "/api/trash").await;
+    assert_eq!(listed["days"], 30);
+    let items = listed["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"], item["id"]);
+    let id = item["id"].as_str().unwrap();
+    let deleted = items[0]["deleted"].as_i64().unwrap();
+    assert_eq!(items[0]["gone"].as_i64().unwrap() - deleted, 30 * 24 * 60 * 60);
+
+    let (status, back) = wrote(
+        &app,
+        page_change("POST", &format!("/api/trash/restore?id={id}"), "delete"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(back["path"], "sub");
+    assert_eq!(
+        fs::read_to_string(site.served.join("sub/deep/c.rs")).unwrap(),
+        "fn main() {}\n"
+    );
+    assert!(trash_ids(&app).await.is_empty());
+    assert!(names(&json(&app, "/api/list?path=").await).contains(&"sub"));
+}
+
+#[tokio::test]
+async fn a_restore_onto_a_name_taken_since_keeps_both() {
+    let site = Site::new();
+    let app = site.trashing();
+    let (_, answer) = wrote(&app, page_delete("file2.txt").unwrap()).await;
+    let id = answer["trash"]["id"].as_str().unwrap().to_owned();
+    fs::write(site.served.join("file2.txt"), "newer").unwrap();
+    let (status, back) = wrote(
+        &app,
+        page_change("POST", &format!("/api/trash/restore?id={id}"), "delete"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(back["path"], "file2 (1).txt");
+    assert_eq!(fs::read_to_string(site.served.join("file2.txt")).unwrap(), "newer");
+    assert_eq!(fs::read_to_string(site.served.join("file2 (1).txt")).unwrap(), "two");
+}
+
+#[tokio::test]
+async fn deleting_forever_and_emptying_the_trash_remove_for_good() {
+    let site = Site::new();
+    let app = site.trashing();
+    for path in ["a.txt", "file2.txt", "file10.txt"] {
+        assert_eq!(delete(&app, path).await, StatusCode::OK);
+    }
+    let ids = trash_ids(&app).await;
+    assert_eq!(ids.len(), 3);
+    let (status, gone) = wrote(
+        &app,
+        page_change("DELETE", &format!("/api/trash?id={}", ids[0]), "delete"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(gone["gone"], 1);
+    assert_eq!(trash_ids(&app).await.len(), 2);
+    let (status, _) = wrote(
+        &app,
+        page_change("DELETE", &format!("/api/trash?id={}", ids[0]), "delete"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "already gone");
+    let (status, _) = wrote(&app, page_change("DELETE", "/api/trash", "delete")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "emptying is asked for by name");
+    let (status, gone) = wrote(&app, page_change("DELETE", "/api/trash?all=1", "delete")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(gone["gone"], 2);
+    assert!(trash_ids(&app).await.is_empty());
+    assert_eq!(fs::read_dir(site.trash_dir()).unwrap().count(), 0);
+    assert!(!site.served.join("a.txt").exists());
+}
+
+#[tokio::test]
+async fn the_trash_sweeps_what_is_older_than_its_days_before_it_lists() {
+    let site = Site::new();
+    let app = site.trashing();
+    assert_eq!(delete(&app, "a.txt").await, StatusCode::OK);
+    assert_eq!(delete(&app, "file2.txt").await, StatusCode::OK);
+    let ids = trash_ids(&app).await;
+    // The first one was deleted 31 days ago, as far as the Trash knows.
+    let info_path = site.trash_dir().join(&ids[0]).join("info.json");
+    let mut info: Value = serde_json::from_slice(&fs::read(&info_path).unwrap()).unwrap();
+    info["deleted"] = (info["deleted"].as_i64().unwrap() - 31 * 24 * 60 * 60).into();
+    fs::write(&info_path, info.to_string()).unwrap();
+
+    assert_eq!(trash_ids(&app).await, [ids[1].clone()]);
+    assert!(!site.trash_dir().join(&ids[0]).exists());
+}
+
+#[tokio::test]
+async fn trash_days_set_how_long_the_trash_keeps() {
+    let site = Site::new();
+    let app = site.app(Options {
+        allow_delete: true,
+        trash: Some(7),
+        ..Options::default()
+    });
+    let (_, answer) = wrote(&app, page_delete("a.txt").unwrap()).await;
+    let item = &answer["trash"];
+    assert_eq!(
+        item["gone"].as_i64().unwrap() - item["deleted"].as_i64().unwrap(),
+        7 * 24 * 60 * 60
+    );
+    assert_eq!(json(&app, "/api/trash").await["days"], 7);
+    let (_, page) = browse(&app, "/").await;
+    assert!(String::from_utf8_lossy(&page).contains("\"trash\":7"));
+}
+
+#[tokio::test]
+async fn with_no_trash_a_delete_is_for_good_and_there_is_no_trash_to_ask_for() {
+    let site = Site::new();
+    let app = site.deleting();
+    assert_eq!(delete(&app, "a.txt").await, StatusCode::NO_CONTENT);
+    assert!(!site.served.join("a.txt").exists());
+    assert!(!site.trash_dir().exists());
+    let (response, _) = get(&app, "/api/trash").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let (_, page) = browse(&app, "/").await;
+    assert!(!String::from_utf8_lossy(&page).contains("\"trash\""));
+}
+
+#[tokio::test]
+async fn forever_skips_the_trash() {
+    let site = Site::new();
+    let app = site.trashing();
+    let request = page_change("DELETE", "/api/entry?path=a.txt&forever=1", "delete");
+    assert_eq!(send(&app, request).await.0.status(), StatusCode::NO_CONTENT);
+    assert!(!site.served.join("a.txt").exists());
+    assert!(trash_ids(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn the_trash_is_off_without_deleting_and_takes_changes_only_from_the_page() {
+    let site = Site::new();
+    let off = site.app(Options {
+        trash: Some(30),
+        ..Options::default()
+    });
+    assert_eq!(get(&off, "/api/trash").await.0.status(), StatusCode::NOT_FOUND);
+    let refused = page_change("DELETE", "/api/trash?all=1", "delete");
+    assert_eq!(send(&off, refused).await.0.status(), StatusCode::FORBIDDEN);
+
+    let app = site.trashing();
+    assert_eq!(delete(&app, "a.txt").await, StatusCode::OK);
+    let id = trash_ids(&app).await.remove(0);
+    let not_the_page = [
+        Request::delete("/api/trash?all=1")
+            .header(header::HOST, HOME)
+            .body(Body::empty())
+            .unwrap(),
+        page_change("DELETE", "/api/trash?all=1", "write"),
+        Request::post(format!("/api/trash/restore?id={id}"))
+            .header(header::HOST, HOME)
+            .header(header::ORIGIN, "https://evil.example")
+            .header("x-okfs", "delete")
+            .body(Body::empty())
+            .unwrap(),
+    ];
+    for request in not_the_page {
+        assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
+    }
+    assert_eq!(trash_ids(&app).await, [id]);
+}
+
+#[tokio::test]
+async fn the_trash_is_never_listed_served_searched_or_written_even_with_hidden() {
+    let site = Site::new();
+    let app = site.all_writes(true);
+    assert_eq!(delete(&app, "sub/b.txt").await, StatusCode::OK);
+    let id = trash_ids(&app).await.remove(0);
+    assert!(site.trash_dir().join(&id).join("item").exists());
+
+    assert_eq!(
+        get(&app, "/raw/.hidden").await.0.status(),
+        StatusCode::OK,
+        "--hidden is on"
+    );
+    let listed = get(&app, "/api/list?path=").await.1;
+    assert!(!String::from_utf8_lossy(&listed).contains(".okfs-trash"));
+    for uri in [
+        "/api/list?path=.okfs-trash".to_owned(),
+        format!("/raw/.okfs-trash/{id}/item"),
+        format!("/raw/.okfs-trash/{id}/info.json"),
+        "/zip/.okfs-trash".to_owned(),
+    ] {
+        assert_eq!(get(&app, &uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+    for query in ["item", "info", "okfs-trash"] {
+        let found = json(&app, &format!("/api/search?q={query}&all=1")).await;
+        assert!(!found.to_string().contains(".okfs-trash"), "{query}: {found}");
+    }
+    let zipped = get(&app, "/zip/").await.1;
+    assert!(!String::from_utf8_lossy(&zipped).contains(".okfs-trash"));
+
+    let writes = [
+        page_write(".okfs-trash/x.txt", NEW, "x"),
+        page_folder(".okfs-trash/x"),
+        page_move("a.txt", ".okfs-trash"),
+        page_move("a.txt", &format!(".okfs-trash/{id}/item")),
+        page_copy("a.txt", ".okfs-trash/x.txt"),
+        page_delete(".okfs-trash").unwrap(),
+    ];
+    for request in writes {
+        let uri = request.uri().to_string();
+        let status = send(&app, request).await.0.status();
+        assert!(
+            status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
+            "{uri}: {status}"
+        );
+    }
+    assert_eq!(trash_ids(&app).await, [id]);
+}
+
+#[tokio::test]
+async fn a_folder_holding_a_dotfile_does_not_go_to_the_trash() {
+    let site = Site::new();
+    fs::write(site.served.join("sub/.env"), "x").unwrap();
+    let app = site.trashing();
+    let (status, why) = refusal(&app, page_delete("sub").unwrap()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(why.contains("dotfile"), "{why}");
+    assert!(site.served.join("sub/b.txt").exists());
+    assert!(trash_ids(&app).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_rename_and_a_move_happen_in_one_step_and_never_replace() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    let (status, moved) = wrote(&app, page_move("a.txt", "renamed.txt")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(moved["path"], "renamed.txt");
+    assert_eq!(
+        fs::read_to_string(site.served.join("renamed.txt")).unwrap(),
+        "0123456789abcdefghij"
+    );
+    assert!(!site.served.join("a.txt").exists());
+
+    // Into a folder, and a folder with all it holds.
+    let (status, moved) = wrote(&app, page_move("renamed.txt", "sub/deep/renamed.txt")).await;
+    assert_eq!(
+        (status, moved["path"].as_str()),
+        (StatusCode::OK, Some("sub/deep/renamed.txt"))
+    );
+    let (status, moved) = wrote(&app, page_move("sub", "moved")).await;
+    assert_eq!((status, moved["path"].as_str()), (StatusCode::OK, Some("moved")));
+    assert!(site.served.join("moved/deep/renamed.txt").exists());
+    let found = json(&app, "/api/search?q=renamed").await;
+    assert!(found.to_string().contains("moved/deep"), "the index follows: {found}");
+
+    // A name that is taken is refused and nothing changes, unless both are kept.
+    let (status, _) = wrote(&app, page_move("file2.txt", "file10.txt")).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(fs::read_to_string(site.served.join("file10.txt")).unwrap(), "ten");
+    assert_eq!(fs::read_to_string(site.served.join("file2.txt")).unwrap(), "two");
+    let (status, moved) = wrote(
+        &app,
+        page_change("POST", "/api/move?from=file2.txt&to=file10.txt&keep=1", "move"),
+    )
+    .await;
+    assert_eq!(
+        (status, moved["path"].as_str()),
+        (StatusCode::OK, Some("file10 (1).txt"))
+    );
+    assert_eq!(fs::read_to_string(site.served.join("file10 (1).txt")).unwrap(), "two");
+}
+
+#[tokio::test]
+async fn a_move_is_refused_into_itself_out_of_the_folder_onto_hidden_names_and_without_its_flag() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    let (status, why) = refusal(&app, page_move("sub", "sub/deep/sub")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{why}");
+    let refused = [
+        page_move("sub", "../outside/sub"),
+        page_move("a.txt", ".a.txt"),
+        page_move(".hidden", "seen.txt"),
+        page_move("", "x"),
+        page_move("a.txt", "link-out-dir/a.txt"),
+    ];
+    for request in refused {
+        let uri = request.uri().to_string();
+        let status = send(&app, request).await.0.status();
+        assert!(status.is_client_error(), "{uri}: {status}");
+    }
+    assert!(site.served.join("sub/deep/c.rs").exists());
+    assert!(site.served.join("a.txt").exists());
+    assert!(
+        fs::read_dir(&site.outside)
+            .unwrap()
+            .all(|entry| entry.unwrap().file_name() != "sub")
+    );
+
+    let upload_only = site.app(Options {
+        allow_upload: true,
+        allow_delete: true,
+        ..Options::default()
+    });
+    assert_eq!(
+        send(&upload_only, page_move("a.txt", "b.txt")).await.0.status(),
+        StatusCode::FORBIDDEN
+    );
+    let not_the_page = page_change("POST", "/api/move?from=a.txt&to=b.txt", "write");
+    assert_eq!(send(&app, not_the_page).await.0.status(), StatusCode::FORBIDDEN);
+    assert!(site.served.join("a.txt").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_moved_link_stays_a_link() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    assert_eq!(
+        send(&app, page_move("link-in.txt", "sub/deep/link.txt"))
+            .await
+            .0
+            .status(),
+        StatusCode::OK
+    );
+    assert!(
+        fs::symlink_metadata(site.served.join("sub/deep/link.txt"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_to_string(site.served.join("sub/b.txt")).unwrap(), "inside");
+}
+
+#[tokio::test]
+async fn a_copy_lands_whole_beside_or_in_another_folder() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    let (status, copied) = wrote(&app, page_copy("a.txt", "sub/a.txt")).await;
+    assert_eq!(
+        (status, copied["path"].as_str()),
+        (StatusCode::CREATED, Some("sub/a.txt"))
+    );
+    assert_eq!(
+        fs::read_to_string(site.served.join("sub/a.txt")).unwrap(),
+        "0123456789abcdefghij"
+    );
+    assert!(site.served.join("a.txt").exists());
+
+    // Duplicate: the same folder, keeping both.
+    let (status, copied) = wrote(
+        &app,
+        page_change("POST", "/api/copy?from=a.txt&to=a.txt&keep=1", "write"),
+    )
+    .await;
+    assert_eq!(
+        (status, copied["path"].as_str()),
+        (StatusCode::CREATED, Some("a (1).txt"))
+    );
+    let (status, _) = wrote(&app, page_copy("a.txt", "file2.txt")).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(fs::read_to_string(site.served.join("file2.txt")).unwrap(), "two");
+
+    // A folder, with all it shows and nothing it does not.
+    fs::write(site.served.join("sub/.env"), "secret").unwrap();
+    let (status, copied) = wrote(&app, page_copy("sub", "sub%20copy")).await;
+    assert_eq!(
+        (status, copied["path"].as_str()),
+        (StatusCode::CREATED, Some("sub copy"))
+    );
+    assert_eq!(
+        fs::read_to_string(site.served.join("sub copy/deep/c.rs")).unwrap(),
+        "fn main() {}\n"
+    );
+    assert!(!site.served.join("sub copy/.env").exists());
+    assert!(parts_in(&site.served).iter().all(|name| name == ".okfs-trash"));
+    assert!(names(&json(&app, "/api/list?path=").await).contains(&"sub copy"));
+}
+
+#[tokio::test]
+async fn a_copy_is_refused_into_itself_past_max_upload_and_without_its_flag() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    let (status, _) = wrote(&app, page_copy("sub", "sub/deep/sub")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let small = site.app(Options {
+        allow_upload: true,
+        max_upload: Some(5),
+        ..Options::default()
+    });
+    assert_eq!(
+        send(&small, page_copy("a.txt", "big.txt")).await.0.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let edit_only = site.app(Options {
+        allow_edit: true,
+        ..Options::default()
+    });
+    assert_eq!(
+        send(&edit_only, page_copy("a.txt", "c.txt")).await.0.status(),
+        StatusCode::FORBIDDEN
+    );
+    assert!(!site.served.join("big.txt").exists() && !site.served.join("c.txt").exists());
+    assert!(!site.served.join("sub/deep/sub").exists());
+}

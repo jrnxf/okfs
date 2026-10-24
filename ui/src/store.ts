@@ -1,6 +1,7 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
 import {
+  DeleteError,
   type Found,
   type Hit,
   HttpError,
@@ -8,7 +9,15 @@ import {
   type Listing,
   type MatchOrder,
   type Readme,
+  type TrashItem,
+  copyEntry,
   deleteEntry,
+  forgetEntry,
+  listTrash,
+  makeFolder,
+  moveEntry,
+  putFile,
+  restoreEntry,
   findOf,
   getJson,
   joinPath,
@@ -22,6 +31,7 @@ import { copyText } from "./clip";
 import { type Config, config, locate } from "./config";
 import { setShowsHidden, showsHidden } from "./hidden";
 import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
+import { NONE, type Picked, check, everything, extend, only, toggle, within as stillIn } from "./pick";
 import { prefs } from "./prefs";
 import { NoAnswer } from "./reach";
 import { MAX_EDIT } from "./text";
@@ -49,7 +59,61 @@ export interface Entry {
 }
 
 /** What a delete is asked for: an entry of the list, or the folder being shown. */
-export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count" | "unlisted">;
+export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count" | "unlisted"> & {
+  /** For good, past the Trash: the entry is on another disk than the Trash, or there is no Trash. */
+  forever?: boolean;
+};
+
+/** What a right click, a long press or `a` opened a menu on. */
+export type MenuTarget =
+  /** One entry or the selected ones, all in the folder `dir`. */
+  | { kind: "entries"; entries: Entry[]; dir: string }
+  /** The empty space of a list: the folder itself. */
+  | { kind: "folder"; path: string; name: string }
+  | { kind: "trash"; item: TrashItem };
+
+export interface Menu {
+  target: MenuTarget;
+  /** Where it opens, in the window. A phone puts it at the foot as a sheet. */
+  x: number;
+  y: number;
+  /** Opened from the keys: its first action starts highlighted. */
+  keys: boolean;
+}
+
+/** A name being written in place of an entry's, in its row. */
+export interface Renaming {
+  path: string;
+  /** Made just now with a name of okfs's choosing: Esc keeps it, under that name. */
+  fresh?: boolean;
+  /** Open the file in the editor once it is named. */
+  edit?: boolean;
+  /** Why the last name tried was refused. */
+  error?: string;
+}
+
+/** The folder picker of Move to and Copy to, while it is up. */
+export interface Picking {
+  mode: "move" | "copy";
+  paths: string[];
+  /** The folder they are in. */
+  from: string;
+}
+
+/** What was just done, with a way to undo it, while the toast is up. */
+export interface Toast {
+  text: string;
+  undo?: () => Promise<void>;
+  /** Tells one toast from the next, so an old timer does not take a new one down. */
+  id: number;
+}
+
+/** The Trash as the page knows it: what it holds, the last deleted first. */
+export interface TrashState {
+  days: number;
+  items: TrashItem[];
+  loaded: boolean;
+}
 
 export type SortKey = "name" | "time" | "size" | "kind";
 export interface Sort {
@@ -152,6 +216,22 @@ export interface State {
   caught: number;
   /** A word on what was just done, such as a link copied, while it is shown. See `say`. */
   notice: string | null;
+  /** The rows selected in the list, by path: see pick.ts. */
+  picked: Picked;
+  /** Select mode: each row has a box to tick, as on a phone after Select. */
+  selecting: boolean;
+  /** The Trash is on screen in place of the folder's list. */
+  trashView: boolean;
+  /** Where the cursor is in the Trash's list. */
+  trashCursor: number;
+  /** The Trash, while the server keeps one. */
+  trash: TrashState | null;
+  menu: Menu | null;
+  renaming: Renaming | null;
+  picking: Picking | null;
+  toast: Toast | null;
+  /** What the dialog that asks before deleting from the Trash for good is about: one entry, or `all` of them. */
+  forgetting: TrashItem | "all" | null;
 }
 
 type HistoryMode = "push" | "replace" | "none";
@@ -261,6 +341,16 @@ export class Store {
     leaving: null,
     caught: 0,
     notice: null,
+    picked: NONE,
+    selecting: false,
+    trashView: false,
+    trashCursor: 0,
+    trash: config.trash ? { days: config.trash, items: [], loaded: false } : null,
+    menu: null,
+    renaming: null,
+    picking: null,
+    toast: null,
+    forgetting: null,
   };
 
   private readonly listeners = new Set<() => void>();
@@ -479,6 +569,12 @@ export class Store {
   private take(listing: Listing): void {
     const { s } = this;
     if (this.listing?.path !== listing.path) this.last = this.listing;
+    // A selection is of one folder's rows.
+    if (s.path !== listing.path) {
+      s.picked = NONE;
+      s.selecting = false;
+      s.renaming = null;
+    }
     this.listing = listing;
     s.status = "ready";
     s.path = listing.path;
@@ -489,6 +585,7 @@ export class Store {
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.unlisted = listing.hidden ?? 0;
     s.readme = listing.readme;
+    s.picked = stillIn(s.picked, s.all.map((entry) => entry.path));
   }
 
   /** Shows that nothing is at a path. */
@@ -1116,9 +1213,10 @@ export class Store {
     this.emit();
   }
 
-  /** Puts up a notice for a moment. A newer one takes its place. */
+  /** Puts up a notice for a moment. A newer one takes its place, and so it does a toast's: one word at a time. */
   say(text: string): void {
     clearTimeout(this.noticed);
+    this.s.toast = null;
     this.s.notice = text;
     this.emit();
     this.noticed = setTimeout(() => {
@@ -1256,10 +1354,19 @@ export class Store {
     return { name: nameOf(s.path), path: s.path, dir: true, link: s.link, kind: "folder", count: s.all.length, unlisted: s.unlisted };
   }
 
-  /** Puts up the delete dialog, for the open file or the entry under the cursor unless one is given. */
+  /**
+   * Deletes the open file, the selected entries or the entry under the cursor unless one is given. With a Trash, at
+   * once, with a way to undo it; without one, the delete dialog asks first.
+   */
   askDelete(doomed: Doomed | null = this.s.open ?? this.cur()): void {
     // A match is deleted from its own folder, where the list shows what is left.
     if (!config.delete || !doomed || this.s.finding) return;
+    const picked = this.pickedEntries();
+    const many = !doomed.forever && picked.length > 1 && picked.some((entry) => entry.path === doomed.path);
+    if (this.s.trash && !doomed.forever) {
+      this.leave(() => void this.trash(many ? picked : [doomed]));
+      return;
+    }
     this.leave(() => {
       this.s.doomed = doomed;
     });
@@ -1282,13 +1389,14 @@ export class Store {
     }
   }
 
-  private async removeNow(doomed: Doomed): Promise<void> {
+  /** `got` hears what the Trash lists for the entry, when it went there. */
+  private async removeNow(doomed: Doomed, got?: (item: TrashItem | null) => void): Promise<void> {
     const { s } = this;
     const here = doomed.path === s.path;
     // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.
     const above = here ? await getJson<Listing>(urls.list(parentOf(doomed.path))).catch(() => null) : null;
     try {
-      await deleteEntry(doomed.path);
+      got?.(await deleteEntry(doomed.path, doomed.forever === true || this.s.trash === null));
     } catch (error) {
       // Part of a folder may be gone all the same: the list, the pane and the dialog show what is there now.
       await this.showDir(s.path, { open: s.open?.name, listing: true, history: "none" }).catch(() => undefined);
@@ -1329,6 +1437,526 @@ export class Store {
       this.emit();
     }
   }
+
+  // Selecting rows: see pick.ts.
+
+  /** The selected entries in the list's order, or the entry under the cursor alone when none is selected. */
+  pickedEntries(): Entry[] {
+    const { s } = this;
+    if (s.finding) return [];
+    const chosen = s.entries.filter((entry) => s.picked.sel.has(entry.path));
+    if (chosen.length) return chosen;
+    const cur = this.cur();
+    return cur ? [cur] : [];
+  }
+
+  private paths(): string[] {
+    return this.s.entries.map((entry) => entry.path);
+  }
+
+  /**
+   * A click on a row of the list with Shift, Ctrl or ⌘ held, or any click in select mode. False when the click is a
+   * plain one, which goes where it always went.
+   */
+  pickClick(index: number, mods: { shift: boolean; add: boolean }): boolean {
+    const { s } = this;
+    const entry = s.entries[index];
+    if (!entry || s.finding) return false;
+    const cur = this.cur()?.path ?? null;
+    if (s.selecting) s.picked = check(s.picked, this.paths(), entry.path, mods.shift);
+    else if (mods.shift) s.picked = extend(s.picked, this.paths(), entry.path, cur, mods.add);
+    else if (mods.add) s.picked = toggle(s.picked, entry.path, cur);
+    else return false;
+    s.cursor = index;
+    this.emit();
+    return true;
+  }
+
+  /** A plain click leaves only the row it was on selected, or nothing when nothing was. */
+  pickOnly(index: number): void {
+    const { s } = this;
+    const entry = s.entries[index];
+    if (!entry || !s.picked.sel.size) return;
+    s.picked = only(entry.path);
+    if (s.picked.sel.size === 1) s.picked = NONE;
+    this.emit();
+  }
+
+  /** Space: selects or unselects the row under the cursor and steps down. With Shift, selects from the anchor to it. */
+  pickCursor(shift: boolean): void {
+    const { s } = this;
+    const cur = this.cur();
+    if (!cur || s.finding) return;
+    s.picked = shift ? extend(s.picked, this.paths(), cur.path, cur.path) : toggle(s.picked, cur.path);
+    if (!shift) s.cursor = Math.min(s.entries.length - 1, s.cursor + 1);
+    this.emit();
+  }
+
+  /** Shift and an arrow: moves the cursor and selects from the anchor to where it lands. */
+  pickMove(delta: number): void {
+    const { s } = this;
+    if (s.finding || !s.entries.length) return;
+    const from = this.cur()?.path ?? null;
+    const to = Math.max(0, Math.min(s.entries.length - 1, s.cursor + delta));
+    const target = s.entries[to];
+    if (!target) return;
+    s.picked = extend(s.picked, this.paths(), target.path, from);
+    s.cursor = to;
+    this.emit();
+  }
+
+  selectAll(): void {
+    const { s } = this;
+    if (s.finding || s.trashView) return;
+    s.picked = everything(this.paths());
+    this.emit();
+  }
+
+  /** Lets go of the selection and leaves select mode. False when there was nothing to let go of. */
+  clearPicks(): boolean {
+    const { s } = this;
+    if (!s.picked.sel.size && !s.selecting) return false;
+    s.picked = NONE;
+    s.selecting = false;
+    this.emit();
+    return true;
+  }
+
+  /** Select mode, as a phone's Select starts it: a box on every row, and `with` ticked. */
+  startSelecting(with_: Entry[] = []): void {
+    const { s } = this;
+    s.selecting = true;
+    s.picked = with_.length ? { sel: new Set(with_.map((entry) => entry.path)), anchor: with_[0]?.path ?? null, base: new Set() } : NONE;
+    this.emit();
+  }
+
+  // The menu a right click, a long press or `a` opens.
+
+  openMenu(target: MenuTarget, x: number, y: number, keys = false): void {
+    this.s.menu = { target, x, y, keys };
+    this.emit();
+  }
+
+  closeMenu(): void {
+    if (!this.s.menu) return;
+    this.s.menu = null;
+    this.emit();
+  }
+
+  /** The menu of the selection, or of the row under the cursor, opened from the keys at the row. */
+  menuForCursor(at: { x: number; y: number }): void {
+    const { s } = this;
+    if (s.trashView) {
+      const item = this.trashCur();
+      if (item) this.openMenu({ kind: "trash", item }, at.x, at.y, true);
+      return;
+    }
+    const entries = this.pickedEntries();
+    if (!entries.length) {
+      if (s.status === "ready" && !s.finding) this.openMenu({ kind: "folder", path: s.path, name: s.path ? nameOf(s.path) : config.root }, at.x, at.y, true);
+      return;
+    }
+    this.openMenu({ kind: "entries", entries, dir: s.path }, at.x, at.y, true);
+  }
+
+  // What is said, with a way back.
+
+  private toasts = 0;
+  private toasted: ReturnType<typeof setTimeout> | undefined;
+
+  /** Puts up the toast: what was just done, and Undo when it can be undone. A newer one takes its place. */
+  toast(text: string, undo?: () => Promise<void>): void {
+    const id = ++this.toasts;
+    this.s.toast = { text, undo, id };
+    this.s.notice = null;
+    this.emit();
+    this.holdToast(false);
+  }
+
+  /** The toast stays while the pointer is on it, and goes `TOAST_MS` after it leaves. */
+  holdToast(held: boolean): void {
+    clearTimeout(this.toasted);
+    const toast = this.s.toast;
+    if (!toast || held) return;
+    this.toasted = setTimeout(() => {
+      if (this.s.toast?.id !== toast.id) return;
+      this.s.toast = null;
+      this.emit();
+    }, TOAST_MS);
+  }
+
+  dropToast(): void {
+    clearTimeout(this.toasted);
+    this.s.toast = null;
+    this.emit();
+  }
+
+  /** Undoes what the toast says was done, while it is up. False when there is nothing to undo. */
+  undo(): boolean {
+    const undo = this.s.toast?.undo;
+    if (!undo) return false;
+    this.dropToast();
+    undo().catch((error: unknown) => this.say(`Not undone: ${reasonOf(error)}`));
+    return true;
+  }
+
+  /**
+   * Reads the folder on screen again. The cursor goes to the entry at `path` when that is in the folder, and otherwise
+   * stays on its entry.
+   */
+  private async showAgain(path?: string): Promise<void> {
+    const { s } = this;
+    if (s.status !== "ready") return;
+    const select = path !== undefined && parentOf(path) === s.path ? nameOf(path) : undefined;
+    await this.showDir(s.path, { select, open: s.open && select === undefined ? s.open.name : undefined, listing: true, history: "none" });
+  }
+
+  // Renaming in place, and new files and folders named in place.
+
+  /** Puts a field in place of the entry's name, in its row. */
+  startRename(entry: Entry | null = this.cur()): void {
+    const { s } = this;
+    if (!config.edit || !entry || s.finding || s.trashView) return;
+    if (s.open && s.open.path !== entry.path) return;
+    // An entry of a column is renamed in its own folder, which is shown first.
+    if (parentOf(entry.path) !== s.path) {
+      void this.showDir(parentOf(entry.path), { select: entry.name, listing: true }).then(() => {
+        const listed = this.s.entries.find((one) => one.path === entry.path);
+        if (listed) this.startRename(listed);
+      });
+      return;
+    }
+    this.leave(() => {
+      s.menu = null;
+      const at = s.entries.findIndex((one) => one.path === entry.path);
+      if (at >= 0) s.cursor = at;
+      s.renaming = { path: entry.path };
+    });
+  }
+
+  /**
+   * The name written in the field: `null` puts the old one back. The entry is renamed on the server, and the toast
+   * offers to undo it. A name the server refuses leaves the field up with the reason under it.
+   */
+  async rename(name: string | null): Promise<void> {
+    const { s } = this;
+    const renaming = s.renaming;
+    if (!renaming) return;
+    const was = nameOf(renaming.path);
+    const dir = parentOf(renaming.path);
+    const fresh = renaming.fresh === true;
+    name = name?.trim() ?? null;
+    if (name === null || name === was) {
+      s.renaming = null;
+      this.emit();
+      if (fresh && renaming.edit) this.editPath(renaming.path);
+      return;
+    }
+    const refused = refusedName(name, s.all, was);
+    if (refused) {
+      s.renaming = { ...renaming, error: refused };
+      this.emit();
+      return;
+    }
+    try {
+      const moved = await moveEntry(renaming.path, joinPath(dir, name));
+      s.renaming = null;
+      await this.showAgain(moved.path);
+      if (fresh) {
+        if (renaming.edit) this.editPath(moved.path);
+        return;
+      }
+      this.toast(`Renamed to “${nameOf(moved.path)}”`, async () => {
+        await moveEntry(moved.path, renaming.path);
+        await this.showAgain(renaming.path);
+      });
+    } catch (error) {
+      if (s.renaming?.path !== renaming.path) return;
+      s.renaming = { ...renaming, error: reasonOf(error) };
+      this.emit();
+    }
+  }
+
+  /** Opens the editor on a file of the folder on screen by its path, once the list holds it. */
+  private editPath(path: string): void {
+    const entry = this.s.entries.find((one) => one.path === path);
+    if (entry && this.editable(entry)) this.edit(entry);
+  }
+
+  /**
+   * Makes a new file or folder in the folder on screen, under a name of okfs's choosing that is free, and puts the
+   * field up on it to name it. Without `--allow-edit` there is no renaming: the dialog asks for the name first.
+   */
+  async newHere(kind: "file" | "folder"): Promise<void> {
+    const { s } = this;
+    const dir = this.addsTo();
+    if (dir === null) return;
+    if (!config.edit) return this.setNaming(kind);
+    const taken = new Set(s.all.map((entry) => entry.name.toLowerCase()));
+    const name = freeName(kind === "file" ? "untitled.txt" : "New folder", taken);
+    const path = joinPath(dir, name);
+    try {
+      if (kind === "file") await putFile(path, new Blob([]), { new: true });
+      else {
+        const clash = await makeFolder(path);
+        if (clash) throw new Error(clash.error);
+      }
+    } catch (error) {
+      this.say(`Not made: ${reasonOf(error)}`);
+      return;
+    }
+    await this.showAgain(path);
+    if (s.path !== dir) return;
+    s.renaming = { path, fresh: true, edit: kind === "file" };
+    this.emit();
+  }
+
+  // Moving and copying.
+
+  /** Puts up the folder picker of Move to or Copy to, for the selected entries or the one under the cursor. */
+  startPicking(mode: Picking["mode"], entries: Entry[] = this.pickedEntries(), from = this.s.path): void {
+    const { s } = this;
+    if (mode === "move" ? !config.edit : !config.upload) return;
+    if (!entries.length) return;
+    this.leave(() => {
+      s.menu = null;
+      s.picking = { mode, paths: entries.map((entry) => entry.path), from };
+    });
+  }
+
+  stopPicking(): void {
+    this.s.picking = null;
+    this.emit();
+  }
+
+  /**
+   * Moves or copies `paths` into the folder `to`. A name taken there is kept beside it under the next free name, as
+   * an upload does. The toast says what went where, and offers to undo a move.
+   */
+  async transfer(mode: Picking["mode"], paths: string[], to: string): Promise<void> {
+    const { s } = this;
+    s.picking = null;
+    this.emit();
+    const done: { from: string; path: string }[] = [];
+    let failed: string | null = null;
+    for (const from of paths) {
+      if (mode === "move" && parentOf(from) === to) continue;
+      try {
+        const went = mode === "move" ? await moveEntry(from, joinPath(to, nameOf(from)), true) : await copyEntry(from, joinPath(to, nameOf(from)), true);
+        done.push({ from, path: went.path });
+      } catch (error) {
+        failed = `${nameOf(from)}: ${reasonOf(error)}`;
+        break;
+      }
+    }
+    s.picked = NONE;
+    s.selecting = false;
+    await this.showAgain(mode === "copy" ? done[0]?.path : undefined);
+    if (failed) {
+      this.say(`${mode === "move" ? "Not moved" : "Not copied"}: ${failed}`);
+      if (!done.length) return;
+    }
+    if (!done.length) return;
+    const where = to ? nameOf(to) : config.root;
+    const what = done.length === 1 ? `“${nameOf(done[0]?.from ?? "")}”` : `${done.length} items`;
+    const renamed = done.find((one) => nameOf(one.path) !== nameOf(one.from));
+    const as = renamed ? `, as “${nameOf(renamed.path)}”` : "";
+    if (mode === "copy") {
+      // A copy is undone by deleting it for good, which needs deleting on.
+      const undo = config.delete
+        ? async () => {
+            for (const one of done) await deleteEntry(one.path, true);
+            await this.showAgain();
+          }
+        : undefined;
+      this.toast(`Copied ${what} to “${where}”${as}`, undo);
+      return;
+    }
+    this.toast(`Moved ${what} to “${where}”${as}`, async () => {
+      for (const one of [...done].reverse()) await moveEntry(one.path, one.from, true);
+      await this.showAgain();
+    });
+  }
+
+  /** Copies an entry beside itself, under the next free name: `notes (1).md`. */
+  async duplicate(entry: Entry): Promise<void> {
+    if (!config.upload) return;
+    try {
+      const copy = await copyEntry(entry.path, entry.path, true);
+      await this.showAgain(copy.path);
+      const undo = config.delete
+        ? async () => {
+            await deleteEntry(copy.path, true);
+            await this.showAgain(entry.path);
+          }
+        : undefined;
+      this.toast(`Made “${nameOf(copy.path)}”`, undo);
+    } catch (error) {
+      this.say(`Not copied: ${reasonOf(error)}`);
+    }
+  }
+
+  // The Trash.
+
+  /**
+   * Moves entries to the Trash, one after another, and shows the list without them. The toast offers to put them
+   * back. An entry on another disk than the Trash can only be deleted for good: the dialog asks about that one.
+   */
+  async trash(entries: Doomed[]): Promise<void> {
+    const { s } = this;
+    if (!s.trash || !entries.length) return;
+    const one = entries.length === 1 ? entries[0] : undefined;
+    // One entry goes the way a delete always went: the cursor and an open file move on as they did.
+    if (one) {
+      let item: TrashItem | null = null;
+      this.removing = true;
+      try {
+        await this.removeNow(one, (got) => {
+          item = got;
+        });
+      } catch (error) {
+        if (error instanceof DeleteError && error.disk) {
+          s.doomed = { ...one, forever: true };
+          this.emit();
+          return;
+        }
+        s.doomed = null;
+        this.say(`Not moved to the Trash: ${reasonOf(error)}`);
+        return;
+      } finally {
+        this.removing = false;
+        void this.drain();
+      }
+      const got = item as TrashItem | null;
+      if (got) this.trashed([got], `“${one.name}”`);
+      return;
+    }
+    const items: TrashItem[] = [];
+    let failed: string | null = null;
+    for (const entry of entries) {
+      try {
+        const item = await deleteEntry(entry.path);
+        if (item) items.push(item);
+      } catch (error) {
+        failed = `${entry.name}: ${reasonOf(error)}`;
+        break;
+      }
+    }
+    s.picked = NONE;
+    s.selecting = false;
+    const order = s.entries.map((entry) => entry.path);
+    const gone = new Set(items.map((item) => item.path));
+    const last = Math.max(...entries.map((entry) => order.indexOf(entry.path)));
+    const beside = s.entries.slice(last + 1).find((entry) => !gone.has(entry.path)) ?? [...s.entries.slice(0, last)].reverse().find((entry) => !gone.has(entry.path));
+    await this.showAgain(beside?.path);
+    forgetAnswers();
+    if (failed) this.say(`Not moved to the Trash: ${failed}`);
+    if (items.length) this.trashed(items, `${items.length} items`);
+  }
+
+  /** Says what went to the Trash, with Undo, and reads the Trash again. */
+  private trashed(items: TrashItem[], what: string): void {
+    this.toast(`Moved ${what} to the Trash`, async () => {
+      let back: string | undefined;
+      for (const item of [...items].reverse()) back = (await restoreEntry(item.id)).path;
+      await this.showAgain(back);
+    });
+    void this.loadTrash();
+  }
+
+  /** Reads what the Trash holds. */
+  async loadTrash(): Promise<void> {
+    const { s } = this;
+    if (!s.trash) return;
+    try {
+      const listed = await listTrash();
+      s.trash = { days: listed.days, items: listed.items, loaded: true };
+      s.trashCursor = Math.max(0, Math.min(s.trashCursor, listed.items.length - 1));
+      this.emit();
+    } catch {
+      // The server did not answer: the stream drops too, and the Trash is read again when it is back.
+    }
+  }
+
+  /** The server says the Trash changed. */
+  trashChanged(): void {
+    void this.loadTrash();
+  }
+
+  trashCur(): TrashItem | null {
+    return this.s.trash?.items[this.s.trashCursor] ?? null;
+  }
+
+  /** Puts the Trash on screen in place of the list, or takes it away. */
+  showTrash(on = !this.s.trashView): void {
+    const { s } = this;
+    if (!s.trash) return;
+    this.leave(() => {
+      s.trashView = on;
+      s.menu = null;
+      s.picked = NONE;
+      s.selecting = false;
+      s.renaming = null;
+      if (on) {
+        s.open = null;
+        s.finding = false;
+        s.trashCursor = 0;
+        void this.loadTrash();
+      }
+    });
+  }
+
+  trashMove(delta: number): void {
+    const { s } = this;
+    const count = s.trash?.items.length ?? 0;
+    if (!count) return;
+    s.trashCursor = Math.max(0, Math.min(count - 1, s.trashCursor + delta));
+    this.emit();
+  }
+
+  trashMoveTo(index: number): void {
+    const count = this.s.trash?.items.length ?? 0;
+    this.s.trashCursor = Math.max(0, Math.min(count - 1, index));
+    this.emit();
+  }
+
+  /** Puts an entry of the Trash back where it was, and says where that is: its name differs when that was taken. */
+  async restore(item: TrashItem | null = this.trashCur()): Promise<void> {
+    const { s } = this;
+    if (!item || !s.trash) return;
+    try {
+      const back = await restoreEntry(item.id);
+      await this.loadTrash();
+      if (s.status === "ready" && parentOf(back.path) === s.path) await this.showAgain();
+      const as = nameOf(back.path) !== nameOf(item.path) ? `, as “${nameOf(back.path)}”: the name was taken` : "";
+      const made = back.made ? `, and made “${nameOf(back.made)}” again` : "";
+      this.toast(`Put back “${nameOf(item.path)}” in /${parentOf(back.path)}${as}${made}`, async () => {
+        await deleteEntry(back.path);
+        await this.loadTrash();
+        if (parentOf(back.path) === this.s.path) await this.showAgain();
+      });
+    } catch (error) {
+      this.say(`Not put back: ${reasonOf(error)}`);
+    }
+  }
+
+  /** Puts up the dialog that asks before deleting one entry of the Trash, or `all` of them, for good. */
+  askForget(what: TrashItem | "all" | null): void {
+    this.s.menu = null;
+    this.s.forgetting = what;
+    this.emit();
+  }
+
+  /** Deletes what the dialog asked about for good. Fails with the server's reason. */
+  async forget(): Promise<void> {
+    const { s } = this;
+    const what = s.forgetting;
+    if (!what) return;
+    const answer = await forgetEntry(what === "all" ? null : what.id);
+    s.forgetting = null;
+    await this.loadTrash();
+    this.say(what === "all" ? `Emptied the Trash: ${fmtItems(answer.gone)} deleted for good` : `Deleted “${nameOf(what.path)}” for good`);
+  }
 }
 
 /** Matches for `q`, before any has come. */
@@ -1342,3 +1970,40 @@ export function matchEntry(hit: Hit, rank: number): Entry {
 }
 
 export const store = new Store();
+
+/** How long the toast stays once the pointer is not on it. */
+const TOAST_MS = 8000;
+
+/** The reason a change was refused, as the page says it. */
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const fmtItems = (count: number): string => `${count} item${count === 1 ? "" : "s"}`;
+
+/** The first of `name`, `name (1)`, `name (2)` and so on that is not in `taken`, which holds names in lower case. */
+export function freeName(name: string, taken: ReadonlySet<string>): string {
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let copy = 0; ; copy++) {
+    const tried = copy ? `${stem} (${copy})${ext}` : name;
+    if (!taken.has(tried.toLowerCase())) return tried;
+  }
+}
+
+/**
+ * Why a new name for an entry is refused before it is sent, as okfs would refuse it, or nothing when it may go: it is
+ * empty, holds a slash or a control character, or is taken in the folder. A disk may ignore case, so a name taken in
+ * another case is taken, unless it is the entry's own. A leading dot hides the entry unless hidden entries are served.
+ */
+export function refusedName(name: string, siblings: readonly Pick<Entry, "name">[], own: string): string | null {
+  if (!name.trim()) return "A name cannot be empty";
+  if (name.includes("/")) return "A name cannot hold a /";
+  if (name === "." || name === "..") return "That name is not a name";
+  if (/[\u0000-\u001f\u007f]/.test(name)) return "A name cannot hold a line break or a control character";
+  if (name.startsWith(".") && !config.hidden) return "A name starting with a dot would be hidden";
+  if (name === ".okfs-trash" || (name.startsWith(".okfs-") && name.endsWith(".part"))) return "okfs keeps that name for itself";
+  const lower = name.toLowerCase();
+  if (lower !== own.toLowerCase() && siblings.some((entry) => entry.name.toLowerCase() === lower)) return `“${name}” is already in this folder`;
+  return null;
+}
