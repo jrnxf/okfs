@@ -563,13 +563,19 @@ async function main() {
   const themesView = $("#themes-view");
   const themeList = $("#theme-list");
   const blurbs = {
-    default: "The contract's own values.",
-    paper: "Warm and bookish, set in a serif.",
-    terminal: "Monospace, square, tight.",
-    fjord: "Cool and roomy.",
-    riso: "Two-ink print, loud on purpose.",
+    default: "Warm greys and one orange.",
+    "tokyo-night": "Neon at night, crisp blue by day.",
+    catppuccin: "Pastel Latte and Mocha.",
+    "rose-pine": "Soft rose and pine.",
+    gruvbox: "Retro, warm, high contrast.",
+    kanagawa: "Ink, gold and indigo.",
+    everforest: "Calm greens.",
+    nord: "Arctic blue-greys.",
+    solarized: "The classic, one blue accent.",
+    one: "One Light and One Dark.",
+    flexoki: "Inky, paper-warm.",
   };
-  let themeId = "paper";
+  let themeId = "tokyo-night";
   let themeScheme = scheme();
   const themeInfos = await backend.answer("/").then((r) => JSON.parse(r.body.match(/>(.*)</s)[1]).themes);
   const showTheme = () => {
@@ -591,9 +597,10 @@ async function main() {
     const b = document.createElement("button");
     b.type = "button";
     b.dataset.id = t.id;
-    // A row of five, then of three, and on a phone a list with the swatches beside the name.
+    // Rows of five, then of three, and on a phone a list with the swatches beside the name. Every cell rules
+    // its right and bottom edge; the list's frame clips the ones that fall on its own edge.
     b.className =
-      "group grid w-full cursor-pointer gap-1.5 border-0 border-r border-r-rule bg-transparent px-4 pt-4 pb-4.5 text-left aria-pressed:shadow-[inset_0_3px_0_var(--spot)] [li:last-child>&]:border-r-0 under-1180:[li:nth-child(3)>&]:border-r-0 under-1180:[li:nth-child(n+4)>&]:border-t under-1180:[li:nth-child(n+4)>&]:border-t-rule under-760:grid-cols-[auto_minmax(0,1fr)] under-760:items-center under-760:gap-x-3.5 under-760:border-t under-760:border-r-0 under-760:border-t-rule under-760:[li:first-child>&]:border-t-0";
+      "group grid h-full w-full cursor-pointer gap-1.5 border-0 border-r border-b border-r-rule border-b-rule bg-transparent px-4 pt-4 pb-4.5 text-left aria-pressed:shadow-[inset_0_3px_0_var(--spot)] under-760:grid-cols-[auto_minmax(0,1fr)] under-760:items-center under-760:gap-x-3.5";
     const [bg, fg, accent] = t.dark;
     const [lbg, , laccent] = t.light;
     const dot = "size-3.5 rounded-[50%] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ink)_18%,transparent)]";

@@ -31,7 +31,7 @@ Examples:
                                   serve https, so the network sees neither the key nor a file
   okfs --no-open                  serve without opening the browser
   okfs --index index.html         open a folder that holds an index.html as that page
-  okfs --theme paper              start in a built-in theme (see: okfs theme list)
+  okfs --theme gruvbox            start in a built-in theme (see: okfs theme list)
   okfs --theme ./mine.css         start in your own theme
   okfs theme check ./mine.css     check a theme file against the contract
   okfs --allow-upload             let visitors add files and folders
