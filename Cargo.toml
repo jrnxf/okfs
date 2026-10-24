@@ -45,6 +45,8 @@ notify = "8.2.0"
 nucleo-matcher = "0.3.1"
 percent-encoding = "2.3.2"
 pulldown-cmark = "0.13.4"
+# HMAC for the read-only passes a framed page gets. TLS already builds it.
+ring = "0.17.14"
 # TLS for --tls-cert and --tls-key, with ring as the crypto: it builds with the C compiler the
 # release builds already have.
 rustls-pki-types = { version = "1.15.1", features = ["std"] }

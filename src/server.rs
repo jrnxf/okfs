@@ -29,7 +29,7 @@ use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 
 use crate::index::{Index, Order, Page};
-use crate::key::{self, Key, Once};
+use crate::key::{self, Key, Once, Passes};
 use crate::live::Change;
 use crate::paths::{self, Kept, NoEntry, Resolved, Root, Target as Place, Unshown};
 use crate::pdf::{self, Drawer};
@@ -159,6 +159,8 @@ pub struct App {
     locks: Locks,
     /// Where a delete puts what it deletes, with `--allow-delete` and the Trash on.
     trash: Option<Trash>,
+    /// What a page in the preview reads the files beside it with, while a key is on.
+    passes: Passes,
 }
 
 impl App {
@@ -188,6 +190,7 @@ impl App {
             custom: Mutex::new(custom),
             heavy: Semaphore::new(workers),
             locks: Locks::default(),
+            passes: Passes::new()?,
         }))
     }
 
@@ -298,6 +301,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/file", put(put_file))
         .route("/api/folder", post(make_folder))
         .route("/api/picture", get(picture))
+        .route("/api/frame/{*path}", get(frame))
+        .route("/api/view/{pass}/{*path}", get(view))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
         .route("/zip", get(zip_folder))
@@ -390,6 +395,10 @@ fn admit(app: &App, request: &Request) -> Option<Response> {
         return Some((StatusCode::FORBIDDEN, message).into_response());
     }
     let key = app.options.key.as_ref()?;
+    // A page in the preview brings its pass in place of the key, which `view` checks.
+    if request.uri().path().starts_with("/api/view/") {
+        return None;
+    }
     let headers = request.headers();
     let cookie = key::cookie_name(host);
     let query = request.uri().query();
@@ -1927,15 +1936,59 @@ fn index_page(app: &App, folder: &str) -> Option<Resolved> {
 }
 
 async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
-    let found = match app.root.resolve(&path) {
-        Some(found) if found.meta.is_file() => found,
-        Some(folder) if folder.meta.is_dir() => {
-            let Some(found) = index_page(&app, &folder.rel) else {
+    match app.root.resolve(&path) {
+        Some(found) => send_found(&app, found, "/raw/", &uri, &headers).await,
+        None => not_found(),
+    }
+}
+
+/// The address a page in the preview is framed at. A page is sandboxed, and a browser sends no
+/// cookie with what it asks for: while a key is on, it goes to an address that carries the pass
+/// to its folder in place of the key, so the images, stylesheets and scripts beside it load. See
+/// `key::Passes`. Without a key it is the file under `/raw/`.
+async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Response {
+    let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_file()) else {
+        return not_found();
+    };
+    let encoded = encode_path(&found.rel);
+    let to = match app.options.key {
+        Some(_) => format!("/api/view/{}/{encoded}", app.passes.of(paths::parent(&found.rel))),
+        None => format!("/raw/{encoded}"),
+    };
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(header::LOCATION, to.as_str()), (header::CACHE_CONTROL, "no-store")],
+    )
+        .into_response()
+}
+
+/// A file a page in the preview asks for with its pass, sent as `/raw/` sends it. Only a file the
+/// pass opens is found: one in the page's own folder or below it.
+async fn view(
+    State(app): State<Arc<App>>,
+    Path((pass, path)): Path<(String, String)>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    match app.root.resolve(&path) {
+        Some(found) if app.passes.opens(&pass, &found.rel) => {
+            send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers).await
+        }
+        _ => not_found(),
+    }
+}
+
+/// Sends a file, or a folder's `--index` page, found under the address `base`.
+async fn send_found(app: &App, found: Resolved, base: &str, uri: &Uri, headers: &HeaderMap) -> Response {
+    let found = match found {
+        found if found.meta.is_file() => found,
+        folder if folder.meta.is_dir() => {
+            let Some(found) = index_page(app, &folder.rel) else {
                 return not_found();
             };
             // A folder's address ends with a slash, so links inside its index page resolve.
             if !uri.path().ends_with('/') {
-                let mut to = format!("/raw/{}/", encode_path(&folder.rel));
+                let mut to = format!("{base}{}/", encode_path(&folder.rel));
                 if let Some(query) = uri.query() {
                     to = format!("{to}?{query}");
                 }
@@ -1945,7 +1998,7 @@ async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Ur
         }
         _ => return not_found(),
     };
-    match raw::serve(found, &headers).await {
+    match raw::serve(found, headers).await {
         Ok(response) => response,
         Err(_) => not_found(),
     }

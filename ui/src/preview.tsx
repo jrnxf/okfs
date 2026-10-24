@@ -790,8 +790,15 @@ interface Slot {
 
 const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms";
 
-/** Where a frame is sent for a file: the file itself, and for a PDF how its viewer opens. */
-const frameUrl = (entry: { path: string; kind: string }): string => (entry.kind === "pdf" ? `${urls.raw(entry.path)}#navpanes=0&view=FitH` : urls.raw(entry.path));
+/**
+ * Where a frame is sent for a file: the file itself, and for a PDF how its viewer opens. A sandboxed page sends
+ * no cookie with what it asks for, so while okfs asks for a key a page goes by `urls.frame`, which sends it on
+ * to an address that lets in the files beside it.
+ */
+const frameUrl = (entry: { path: string; kind: string }): string => {
+  if (entry.kind === "pdf") return `${urls.raw(entry.path)}#navpanes=0&view=FitH`;
+  return config.key ? urls.frame(entry.path) : urls.raw(entry.path);
+};
 
 /**
  * A PDF that the server found damaged is a card with a way to download it, and no frame: the browser's viewer

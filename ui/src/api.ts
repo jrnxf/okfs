@@ -151,6 +151,8 @@ export const urls = {
   /** One folder, for making it. */
   folder: (path: string) => `/api/folder?path=${encodeURIComponent(path)}`,
   raw: (path: string) => `/raw/${encode(path)}`,
+  /** A page to show in a frame. The server sends it on to an address its own images and scripts load from. */
+  frame: (path: string) => `/api/frame/${encode(path)}`,
   zip: (path: string) => `/zip/${encode(path)}`,
   /** The shareable address of a folder or of an open file. */
   view(path: string, dir: boolean): string {

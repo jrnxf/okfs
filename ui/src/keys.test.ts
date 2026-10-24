@@ -82,26 +82,28 @@ test("a file under the cursor is shown, and asked for ahead, with the columns of
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
 });
 
-test("Markdown, a drawing and JSON open as their source, and the flip holds for their kind", () => {
+test("Markdown and a page open rendered, a drawing and JSON as their source, and the flip holds for their kind", () => {
   const store = showing("a.md", "b.md", "page.html", "shape.svg", "t.csv", "d.json", "main.rs");
   const [a, b, page, shape, csv, json, rs] = store.s.entries;
-  for (const file of [a, b, shape, json]) expect(store.isRaw(file!)).toBe(true);
-  // A page and a table open as what is made from them, and code has no second form.
-  for (const file of [page, csv, rs]) expect(store.isRaw(file!)).toBe(false);
+  for (const file of [shape, json]) expect(store.isRaw(file!)).toBe(true);
+  // Markdown, a page and a table open as what is made from them, and code has no second form.
+  for (const file of [a, b, page, csv, rs]) expect(store.isRaw(file!)).toBe(false);
 
-  // The source is the form asked for ahead, and the flip is the page's: its request is the rendered one.
+  // The rendered form is the one asked for ahead.
   asked.length = 0;
   preview.forgetAnswers();
   preview.lookAhead(store.s.entries, 0, 1, (entry) => store.stamp(entry), null, (entry) => store.isRaw(entry));
-  expect(asked.some((url) => url.startsWith("/api/previews?") && url.includes("raw=1"))).toBe(true);
+  expect(asked).toContain("/api/previews?lines=80&p=b.md&p=t.csv&p=main.rs");
+  expect(asked).toContain("/api/previews?lines=80&raw=1&p=shape.svg&p=d.json");
 
+  // The flip is the page's: Markdown goes to its source, and the Markdown that follows with it.
   keys.keyFor(store, host, press("r"))?.();
-  expect(store.isRaw(a!)).toBe(false);
-  expect(store.isRaw(b!)).toBe(false);
+  expect(store.isRaw(a!)).toBe(true);
+  expect(store.isRaw(b!)).toBe(true);
   // Another kind is left as it was.
   expect(store.isRaw(page!)).toBe(false);
   keys.keyFor(store, host, press("r"))?.();
-  expect(store.isRaw(a!)).toBe(true);
+  expect(store.isRaw(a!)).toBe(false);
 
   // A table flips to its source, and holds it for the tables that follow.
   store.moveTo(4);
@@ -171,8 +173,8 @@ test("r flips only a file that has two forms", () => {
   }
 });
 
-test("a page opens rendered, Markdown, a drawing and JSON open as their source, and r flips each", () => {
-  const opens = { "page.html": false, "page.htm": false, "table.csv": false, "notes.md": true, "shape.svg": true, "data.json": true };
+test("a page and Markdown open rendered, a drawing and JSON open as their source, and r flips each", () => {
+  const opens = { "page.html": false, "page.htm": false, "table.csv": false, "notes.md": false, "notes.markdown": false, "shape.svg": true, "data.json": true };
   for (const [name, raw] of Object.entries(opens)) {
     const store = showing(name, "other.md");
     const file = store.s.entries.find((entry) => entry.name === name)!;

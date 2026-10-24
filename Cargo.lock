@@ -1826,6 +1826,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "rcgen",
+ "ring",
  "rustix",
  "rustls-pki-types",
  "serde",
