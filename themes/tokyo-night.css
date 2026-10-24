@@ -1,0 +1,56 @@
+/* @name Tokyo Night  @author okfs  @version 1
+   Night from Tokyo Night by enkia (MIT). Day from tokyonight.nvim by Folke Lemaitre (Apache-2.0). Palette: https://github.com/folke/tokyonight.nvim */
+:root {
+  --bg: #e1e2e7;
+  --surface: #e9e9ed;
+  --sunken: #d5d6db;
+  --fg: #3760bf;
+  --muted: #4f5b93;
+  --faint: #6172b0;
+  --line: #d0d5e3;
+  --line-strong: #b4b5b9;
+  --accent: #2e7de9;
+  --accent-fg: #ffffff;
+  --accent-soft: #c4cdea;
+  --hover: #dcdde4;
+  --scrim: rgb(55 96 191 / 0.36);
+  --kind-folder: #2e7de9;
+  --kind-image: #9854f1;
+  --kind-media: #b15c00;
+  --kind-doc: #6172b0;
+  --kind-code: #587539;
+  --kind-data: #8c6c3e;
+  --kind-archive: #007197;
+  --syn-comment: #848cb5;
+  --syn-keyword: #9854f1;
+  --syn-string: #587539;
+  --syn-number: #b15c00;
+  --syn-title: #2e7de9;
+}
+:root[data-scheme="dark"] {
+  --bg: #16161e;
+  --surface: #1a1b26;
+  --sunken: #13131a;
+  --fg: #c0caf5;
+  --muted: #a9b1d6;
+  --faint: #737aa2;
+  --line: #292e42;
+  --line-strong: #3b4261;
+  --accent: #7aa2f7;
+  --accent-fg: #16161e;
+  --accent-soft: #283457;
+  --hover: #1f2335;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #7aa2f7;
+  --kind-image: #bb9af7;
+  --kind-media: #ff9e64;
+  --kind-doc: #a9b1d6;
+  --kind-code: #9ece6a;
+  --kind-data: #e0af68;
+  --kind-archive: #7dcfff;
+  --syn-comment: #565f89;
+  --syn-keyword: #bb9af7;
+  --syn-string: #9ece6a;
+  --syn-number: #ff9e64;
+  --syn-title: #7aa2f7;
+}

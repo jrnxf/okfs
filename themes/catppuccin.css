@@ -1,0 +1,56 @@
+/* @name Catppuccin  @author okfs  @version 1
+   Latte and Mocha from Catppuccin (MIT). Palette: https://github.com/catppuccin/catppuccin */
+:root {
+  --bg: #e6e9ef;
+  --surface: #eff1f5;
+  --sunken: #dce0e8;
+  --fg: #4c4f69;
+  --muted: #5c5f77;
+  --faint: #7c7f93;
+  --line: #ccd0da;
+  --line-strong: #bcc0cc;
+  --accent: #8839ef;
+  --accent-fg: #ffffff;
+  --accent-soft: #e1d7f4;
+  --hover: #e2e5ec;
+  --scrim: rgb(76 79 105 / 0.36);
+  --kind-folder: #1e66f5;
+  --kind-image: #ea76cb;
+  --kind-media: #fe640b;
+  --kind-doc: #6c6f85;
+  --kind-code: #40a02b;
+  --kind-data: #df8e1d;
+  --kind-archive: #e64553;
+  --syn-comment: #7c7f93;
+  --syn-keyword: #8839ef;
+  --syn-string: #40a02b;
+  --syn-number: #fe640b;
+  --syn-title: #1e66f5;
+}
+:root[data-scheme="dark"] {
+  --bg: #181825;
+  --surface: #1e1e2e;
+  --sunken: #11111b;
+  --fg: #cdd6f4;
+  --muted: #a6adc8;
+  --faint: #7f849c;
+  --line: #313244;
+  --line-strong: #45475a;
+  --accent: #cba6f7;
+  --accent-fg: #11111b;
+  --accent-soft: #3a344e;
+  --hover: #262637;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #89b4fa;
+  --kind-image: #f5c2e7;
+  --kind-media: #fab387;
+  --kind-doc: #a6adc8;
+  --kind-code: #a6e3a1;
+  --kind-data: #f9e2af;
+  --kind-archive: #eba0ac;
+  --syn-comment: #9399b2;
+  --syn-keyword: #cba6f7;
+  --syn-string: #a6e3a1;
+  --syn-number: #fab387;
+  --syn-title: #89b4fa;
+}

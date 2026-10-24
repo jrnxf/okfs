@@ -1,0 +1,56 @@
+/* @name Gruvbox  @author okfs  @version 1
+   Light and Dark from gruvbox by Pavel Pertsev (MIT). Palette: https://github.com/morhetz/gruvbox */
+:root {
+  --bg: #fbf1c7;
+  --surface: #f9f5d7;
+  --sunken: #f2e5bc;
+  --fg: #3c3836;
+  --muted: #665c54;
+  --faint: #7c6f64;
+  --line: #ebdbb2;
+  --line-strong: #d5c4a1;
+  --accent: #af3a03;
+  --accent-fg: #f9f5d7;
+  --accent-soft: #efdbb9;
+  --hover: #f2e5bc;
+  --scrim: rgb(60 56 54 / 0.36);
+  --kind-folder: #076678;
+  --kind-image: #8f3f71;
+  --kind-media: #9d0006;
+  --kind-doc: #7c6f64;
+  --kind-code: #79740e;
+  --kind-data: #b57614;
+  --kind-archive: #427b58;
+  --syn-comment: #928374;
+  --syn-keyword: #9d0006;
+  --syn-string: #79740e;
+  --syn-number: #8f3f71;
+  --syn-title: #b57614;
+}
+:root[data-scheme="dark"] {
+  --bg: #1d2021;
+  --surface: #282828;
+  --sunken: #1d2021;
+  --fg: #ebdbb2;
+  --muted: #bdae93;
+  --faint: #928374;
+  --line: #3c3836;
+  --line-strong: #504945;
+  --accent: #fe8019;
+  --accent-fg: #1d2021;
+  --accent-soft: #4a3626;
+  --hover: #32302f;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #83a598;
+  --kind-image: #d3869b;
+  --kind-media: #fb4934;
+  --kind-doc: #a89984;
+  --kind-code: #b8bb26;
+  --kind-data: #fabd2f;
+  --kind-archive: #8ec07c;
+  --syn-comment: #928374;
+  --syn-keyword: #fb4934;
+  --syn-string: #b8bb26;
+  --syn-number: #d3869b;
+  --syn-title: #fabd2f;
+}

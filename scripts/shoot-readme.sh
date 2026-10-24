@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Shoots the 16 pictures in docs/screenshots/ again: the hero, the grid and the palette in light
-# and dark, and the five themes in light and dark.
+# Shoots the pictures in docs/screenshots/ again: the hero and the palette in light and dark, and
+# every built-in theme (`okfs theme list`) in light and dark.
 #
 #   scripts/shoot-readme.sh DEMO_DIR [OUT_DIR]
 #
 # DEMO_DIR is the folder to serve. The pictures were made from a small folder called "tidewater".
 # Outside the repository it holds, at its top level: field-notes.md, gauges.json, harbor-at-dawn.jpg,
 # harbor-bell.wav, README.md, ridge-line.jpg, stations.csv, survey-2026.zip and tide-table.txt, and
-# the folders data/ (two files), photos/ (eight pictures, 01-low-tide.jpg to 08-last-light.jpg,
-# with 05-headland.jpg among them) and src/ (tide.rs, plot.py, Makefile.toml). The script moves the
-# cursor to those names, so a folder without them fails with "cursor never reached". File ages show
+# the folders data/ (two files), photos/ (eight pictures, 01-low-tide.jpg to 08-last-light.jpg)
+# and src/ (tide.rs, plot.py, Makefile.toml). The script moves the cursor to those names, so a
+# folder without them fails with "cursor never reached". File ages show
 # as "2d" or "Jul 1", so the pictures differ a little with the day they are shot.
 # OUT_DIR defaults to docs/screenshots.
 #
@@ -102,27 +102,23 @@ shoot() { # name scheme size url setup-function
   echo "$name"
 }
 
-# The preview is closed when the page loads: space opens it on what is under the cursor.
-preview() { "$cdp" press Space >/dev/null; }
-
-hero() { move_to harbor-at-dawn.jpg j; preview; }
-grid() { "$cdp" press g >/dev/null; move_to 05-headland.jpg l; preview; }
+hero() { move_to harbor-at-dawn.jpg j; }
 palette() {
   move_to harbor-at-dawn.jpg j
-  preview
   "$cdp" press Control+k >/dev/null
   "$cdp" wait 300 >/dev/null
   "$cdp" type tide >/dev/null
   "$cdp" wait 400 >/dev/null
 }
-notes() { move_to field-notes.md j; preview; }
+# Markdown opens as its source: r shows it rendered.
+notes() { move_to field-notes.md j; "$cdp" press r >/dev/null; }
 
+themes=$("$bin" theme list | cut -d" " -f1)
 for scheme in light dark; do
   q="scheme=$scheme"
   shoot "hero-$scheme" "$scheme" 1280x800 "/?theme=default&$q" hero
-  shoot "grid-$scheme" "$scheme" 960x640 "/photos/?theme=default&$q" grid
   shoot "palette-$scheme" "$scheme" 960x640 "/?theme=default&$q" palette
-  for theme in default paper terminal fjord riso; do
+  for theme in $themes; do
     shoot "theme-$theme-$scheme" "$scheme" 960x640 "/?theme=$theme&$q" notes
   done
 done
