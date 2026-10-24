@@ -433,6 +433,8 @@ With it, `e`, the pen button above a text file and the palette open the file in 
 
 Every write lands whole or not at all. The file is written beside where it goes, under a hidden name okfs never shows (`.okfs-....part`), synced to disk, and moved into place in one step. A reader sees the old file or the new one, never part of one, and a write that is cut off leaves nothing. A replaced file keeps its permissions. A symbolic link stays a link, and the file it points at is the one written. A hard link to the old file keeps the old content.
 
+A rename, a move, a copy of a folder and putting back from the Trash take one step on most disks, which the disk refuses when the name is taken. An NFS or SMB share has no such step, and there okfs takes two, still never over an entry that is there. A file gets its new name with a hard link, which the disk refuses when the name is taken, and then loses the old one: for that moment it has both names, and a power cut then leaves it under both, with nothing lost. A folder, or a file on a disk with no hard links, first takes its new name with an empty folder or file of its own and is then renamed over it. Only in the moment between the two steps could a program outside okfs write into that empty file, which the rename would then replace, or swap that empty folder for an empty one of its own.
+
 There is no limit on size unless you give one: `--max-upload 4G`.
 
 ### Deleting
@@ -545,7 +547,7 @@ To add a theme to okfs itself, open a pull request that adds one file to `themes
 
 With `--allow-upload` or `--allow-edit`:
 
-- With `--allow-edit`, a rename or a move never replaces an entry and never leaves the served folder. A folder moves with all it holds, a link moves as a link, and dotfiles are neither moved nor made without `--hidden`. A copy, with `--allow-upload`, follows no link inside a folder: it copies the link.
+- With `--allow-edit`, a rename or a move never replaces an entry and never leaves the served folder. On an NFS or SMB share it takes two steps, with a moment between them that a program outside okfs could write in (see [Uploading and editing](#uploading-and-editing)). A folder moves with all it holds, a link moves as a link, and dotfiles are neither moved nor made without `--hidden`. A copy, with `--allow-upload`, follows no link inside a folder: it copies the link.
 
 - Anyone who can reach the address with the key (or anyone at all, with `--no-key`) can add files to the folder, and with `--allow-edit` change every file in it. Use them where you would hand everyone on that network the folder itself.
 - A write goes only where okfs shows: never out of the served folder, through a link or a `..`, and never to a dotfile unless you also pass `--hidden`. A new name is one name, with no control characters in it.

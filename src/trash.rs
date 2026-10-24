@@ -4,8 +4,9 @@
 //!
 //! The Trash is a folder at the top of the served folder, `.okfs-trash`, which okfs never shows,
 //! serves, searches or lets a request write to, even with `--hidden` (see `paths::TRASH`). Being on
-//! the same disk as the files, a move in or out is one rename: instant for a folder of any size,
-//! and whole or not at all. Each entry has a folder of its own, named by when it was deleted so a
+//! the same disk as the files, a move in or out is a rename: instant for a folder of any size,
+//! and whole or not at all. On a disk such as an NFS share, putting back takes two steps that
+//! still never replace an entry: see `write::rename_new`. Each entry has a folder of its own, named by when it was deleted so a
 //! listing comes in date order, holding the entry as `item` and what is known of it as `info.json`:
 //!
 //! ```text

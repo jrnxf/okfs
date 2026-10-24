@@ -1817,6 +1817,7 @@ dependencies = [
  "ignore",
  "image",
  "jiff",
+ "libc",
  "mimalloc",
  "mime_guess",
  "notify",

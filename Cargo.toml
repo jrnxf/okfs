@@ -73,3 +73,7 @@ http-body-util = "0.1.5"
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 tempfile = "3.27.0"
 tower = { version = "0.5.3", features = ["util"] }
+
+# A test runs okfs with a seccomp filter that makes a rename answer as an NFS share does.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2.190"
