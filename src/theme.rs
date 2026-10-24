@@ -7,8 +7,18 @@ use std::fmt;
 pub const TOKENS_CSS: &str = include_str!("../ui/src/styles/tokens.css");
 
 /// The themes compiled into the binary, in the order the switcher lists them.
-pub const BUILT_IN: [(&str, &str); 5] = [
+pub const BUILT_IN: [(&str, &str); 15] = [
     ("default", include_str!("../themes/default.css")),
+    ("tokyo-night", include_str!("../themes/tokyo-night.css")),
+    ("catppuccin", include_str!("../themes/catppuccin.css")),
+    ("rose-pine", include_str!("../themes/rose-pine.css")),
+    ("gruvbox", include_str!("../themes/gruvbox.css")),
+    ("kanagawa", include_str!("../themes/kanagawa.css")),
+    ("everforest", include_str!("../themes/everforest.css")),
+    ("nord", include_str!("../themes/nord.css")),
+    ("solarized", include_str!("../themes/solarized.css")),
+    ("one", include_str!("../themes/one.css")),
+    ("flexoki", include_str!("../themes/flexoki.css")),
     ("paper", include_str!("../themes/paper.css")),
     ("terminal", include_str!("../themes/terminal.css")),
     ("fjord", include_str!("../themes/fjord.css")),
@@ -594,6 +604,19 @@ mod tests {
                 panic!("{id} is refused: {problems:?}");
             }
         }
+    }
+
+    #[test]
+    fn every_theme_file_is_built_in() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/themes");
+        let mut files: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        files.sort();
+        let mut built_in: Vec<String> = BUILT_IN.iter().map(|(id, _)| format!("{id}.css")).collect();
+        built_in.sort();
+        assert_eq!(files, built_in);
     }
 
     #[test]

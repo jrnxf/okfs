@@ -1,0 +1,56 @@
+/* @name Nord  @author okfs  @version 1
+   From Nord by Arctic Ice Studio and Sven Greb (MIT). Nord is dark-first; the light scheme uses its Snow Storm colors. Palette: https://github.com/nordtheme/nord */
+:root {
+  --bg: #e5e9f0;
+  --surface: #eceff4;
+  --sunken: #d8dee9;
+  --fg: #2e3440;
+  --muted: #4c566a;
+  --faint: #616e88;
+  --line: #d8dee9;
+  --line-strong: #c2cad8;
+  --accent: #5e81ac;
+  --accent-fg: #eceff4;
+  --accent-soft: #d5dde8;
+  --hover: #dfe4ec;
+  --scrim: rgb(46 52 64 / 0.36);
+  --kind-folder: #5e81ac;
+  --kind-image: #9a6f94;
+  --kind-media: #c0694e;
+  --kind-doc: #4c566a;
+  --kind-code: #6a8a52;
+  --kind-data: #b08a3a;
+  --kind-archive: #4f8a89;
+  --syn-comment: #7b88a1;
+  --syn-keyword: #5e81ac;
+  --syn-string: #6a8a52;
+  --syn-number: #9a6f94;
+  --syn-title: #4f8a89;
+}
+:root[data-scheme="dark"] {
+  --bg: #2a2f3a;
+  --surface: #2e3440;
+  --sunken: #262a33;
+  --fg: #d8dee9;
+  --muted: #aeb7c6;
+  --faint: #7b88a1;
+  --line: #3b4252;
+  --line-strong: #434c5e;
+  --accent: #88c0d0;
+  --accent-fg: #2e3440;
+  --accent-soft: #434c5e;
+  --hover: #3b4252;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #81a1c1;
+  --kind-image: #b48ead;
+  --kind-media: #d08770;
+  --kind-doc: #aeb7c6;
+  --kind-code: #a3be8c;
+  --kind-data: #ebcb8b;
+  --kind-archive: #8fbcbb;
+  --syn-comment: #616e88;
+  --syn-keyword: #81a1c1;
+  --syn-string: #a3be8c;
+  --syn-number: #b48ead;
+  --syn-title: #88c0d0;
+}

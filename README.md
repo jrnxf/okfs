@@ -79,7 +79,7 @@ okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the key
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette that finds any file in the whole tree at once, from an index kept in memory.
 - Columns that show what is inside the folder under the cursor, and the page follows the folder as files are added, removed or rewritten, with no reload.
-- Five built-in themes, light and dark, each one CSS file.
+- Fifteen built-in themes, light and dark, each one CSS file, among them Tokyo Night, Catppuccin, Rosé Pine, Gruvbox and Nord.
 - Read only unless you turn writes on. Uploading, editing and deleting are each behind a flag of their own: `--allow-upload`, `--allow-edit`, `--allow-delete`. A delete goes to a Trash for 30 days, with Undo. There are no accounts.
 - Loopback by default. Beyond it, only a link with a key that okfs prints gets in (see [Letting other machines in](#letting-other-machines-in)).
 
@@ -462,7 +462,27 @@ Deleting works only from the address okfs answers to. If you reach okfs through 
 
 <table>
   <tr>
-    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-default-dark.png"><img src="docs/screenshots/theme-default-light.png" alt="The Default theme showing a Markdown file" width="100%"></picture><br><b><code>default</code></b><br>The contract's own values.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-default-dark.png"><img src="docs/screenshots/theme-default-light.png" alt="The Default theme showing a Markdown file" width="100%"></picture><br><b><code>default</code></b><br>The contract's own values: warm greys and one orange.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-tokyo-night-dark.png"><img src="docs/screenshots/theme-tokyo-night-light.png" alt="The Tokyo Night theme showing a Markdown file" width="100%"></picture><br><b><code>tokyo-night</code></b><br>Tokyo's neon at night, a crisp blue by day.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-catppuccin-dark.png"><img src="docs/screenshots/theme-catppuccin-light.png" alt="The Catppuccin theme showing a Markdown file" width="100%"></picture><br><b><code>catppuccin</code></b><br>Pastels: Latte by day, Mocha by night.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-rose-pine-dark.png"><img src="docs/screenshots/theme-rose-pine-light.png" alt="The Rosé Pine theme showing a Markdown file" width="100%"></picture><br><b><code>rose-pine</code></b><br>Soft rose and pine, Dawn and Main.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-gruvbox-dark.png"><img src="docs/screenshots/theme-gruvbox-light.png" alt="The Gruvbox theme showing a Markdown file" width="100%"></picture><br><b><code>gruvbox</code></b><br>Retro groove: warm, high-contrast browns.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-kanagawa-dark.png"><img src="docs/screenshots/theme-kanagawa-light.png" alt="The Kanagawa theme showing a Markdown file" width="100%"></picture><br><b><code>kanagawa</code></b><br>After Hokusai's Great Wave: ink, gold and indigo.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-everforest-dark.png"><img src="docs/screenshots/theme-everforest-light.png" alt="The Everforest theme showing a Markdown file" width="100%"></picture><br><b><code>everforest</code></b><br>Calm, green and easy on the eyes.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-nord-dark.png"><img src="docs/screenshots/theme-nord-light.png" alt="The Nord theme showing a Markdown file" width="100%"></picture><br><b><code>nord</code></b><br>Arctic blue-greys: Snow Storm and Polar Night.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-solarized-dark.png"><img src="docs/screenshots/theme-solarized-light.png" alt="The Solarized theme showing a Markdown file" width="100%"></picture><br><b><code>solarized</code></b><br>The classic, with one blue accent in both schemes.</td>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-one-dark.png"><img src="docs/screenshots/theme-one-light.png" alt="The One theme showing a Markdown file" width="100%"></picture><br><b><code>one</code></b><br>One Light and One Dark, from the Atom editor.</td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-flexoki-dark.png"><img src="docs/screenshots/theme-flexoki-light.png" alt="The Flexoki theme showing a Markdown file" width="100%"></picture><br><b><code>flexoki</code></b><br>Inky, paper-warm colors for prose and code.</td>
     <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-paper-dark.png"><img src="docs/screenshots/theme-paper-light.png" alt="The Paper theme showing a Markdown file" width="100%"></picture><br><b><code>paper</code></b><br>Warm, bookish, serif. Flat: no shadows, almost no radius.</td>
   </tr>
   <tr>

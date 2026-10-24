@@ -1,0 +1,56 @@
+/* @name Kanagawa  @author okfs  @version 1
+   Lotus and Wave from kanagawa.nvim by Tommaso Laurenzi (MIT), after Hokusai's Great Wave. Palette: https://github.com/rebelot/kanagawa.nvim */
+:root {
+  --bg: #f2ecbc;
+  --surface: #f6f2d0;
+  --sunken: #e7dba0;
+  --fg: #545464;
+  --muted: #5f5d58;
+  --faint: #716e61;
+  --line: #dcd5ac;
+  --line-strong: #c9c0a0;
+  --accent: #b35b00;
+  --accent-fg: #f2ecbc;
+  --accent-soft: #ebdca6;
+  --hover: #ece5b8;
+  --scrim: rgb(84 84 100 / 0.36);
+  --kind-folder: #4d699b;
+  --kind-image: #b35b79;
+  --kind-media: #cc6d00;
+  --kind-doc: #716e61;
+  --kind-code: #6f894e;
+  --kind-data: #836f4a;
+  --kind-archive: #624c83;
+  --syn-comment: #8a8980;
+  --syn-keyword: #624c83;
+  --syn-string: #6f894e;
+  --syn-number: #b35b79;
+  --syn-title: #4d699b;
+}
+:root[data-scheme="dark"] {
+  --bg: #16161d;
+  --surface: #1f1f28;
+  --sunken: #181820;
+  --fg: #dcd7ba;
+  --muted: #c8c093;
+  --faint: #727169;
+  --line: #2a2a37;
+  --line-strong: #363646;
+  --accent: #e6c384;
+  --accent-fg: #16161d;
+  --accent-soft: #2d4f67;
+  --hover: #2a2a37;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #7e9cd8;
+  --kind-image: #d27e99;
+  --kind-media: #ffa066;
+  --kind-doc: #c8c093;
+  --kind-code: #98bb6c;
+  --kind-data: #e6c384;
+  --kind-archive: #957fb8;
+  --syn-comment: #727169;
+  --syn-keyword: #957fb8;
+  --syn-string: #98bb6c;
+  --syn-number: #d27e99;
+  --syn-title: #7e9cd8;
+}

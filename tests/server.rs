@@ -1109,7 +1109,10 @@ async fn the_page_knows_what_its_address_points_at() {
         config(&body)["target"],
         serde_json::json!({ "path": "", "kind": "dir" })
     );
-    assert_eq!(config(&body)["themes"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        config(&body)["themes"].as_array().unwrap().len(),
+        okfs::theme::BUILT_IN.len()
+    );
 
     let (_, body) = browse(&app, "/sub/b.txt").await;
     assert_eq!(

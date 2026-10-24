@@ -1,0 +1,56 @@
+/* @name Everforest  @author okfs  @version 1
+   Light and Dark (medium) from Everforest by sainnhe (MIT). Palette: https://github.com/sainnhe/everforest */
+:root {
+  --bg: #efebd4;
+  --surface: #fdf6e3;
+  --sunken: #f4f0d9;
+  --fg: #5c6a72;
+  --muted: #5c6a72;
+  --faint: #6f7d75;
+  --line: #e6e2cc;
+  --line-strong: #d5d1bb;
+  --accent: #5f8a00;
+  --accent-fg: #fdf6e3;
+  --accent-soft: #e7e7c3;
+  --hover: #f4f0d9;
+  --scrim: rgb(92 106 114 / 0.36);
+  --kind-folder: #8da101;
+  --kind-image: #df69ba;
+  --kind-media: #f57d26;
+  --kind-doc: #829181;
+  --kind-code: #35a77c;
+  --kind-data: #dfa000;
+  --kind-archive: #3a94c5;
+  --syn-comment: #939f91;
+  --syn-keyword: #f85552;
+  --syn-string: #35a77c;
+  --syn-number: #df69ba;
+  --syn-title: #8da101;
+}
+:root[data-scheme="dark"] {
+  --bg: #232a2e;
+  --surface: #2d353b;
+  --sunken: #232a2e;
+  --fg: #d3c6aa;
+  --muted: #9da9a0;
+  --faint: #7a8478;
+  --line: #343f44;
+  --line-strong: #475258;
+  --accent: #a7c080;
+  --accent-fg: #2d353b;
+  --accent-soft: #425047;
+  --hover: #343f44;
+  --scrim: rgb(0 0 0 / 0.6);
+  --kind-folder: #a7c080;
+  --kind-image: #d699b6;
+  --kind-media: #e69875;
+  --kind-doc: #9da9a0;
+  --kind-code: #83c092;
+  --kind-data: #dbbc7f;
+  --kind-archive: #7fbbb3;
+  --syn-comment: #859289;
+  --syn-keyword: #e67e80;
+  --syn-string: #83c092;
+  --syn-number: #d699b6;
+  --syn-title: #a7c080;
+}

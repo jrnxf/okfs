@@ -16,13 +16,13 @@
   --accent-soft: #fdeee8;   /* selected row, active chip */
   --hover: #f1f1ee;         /* pointer hover */
   --scrim: rgb(20 20 18 / 0.36); /* behind overlays */
-  --kind-folder: #5b7fd6;
-  --kind-image: #c05fb0;
-  --kind-media: #d9772b;
-  --kind-doc: #6b6b68;
-  --kind-code: #3f9b6c;
-  --kind-data: #b8922a;
-  --kind-archive: #8a6fd1;
+  --kind-folder: #57524b;
+  --kind-image: #8a7681;
+  --kind-media: #8f7a64;
+  --kind-doc: #7a7670;
+  --kind-code: #6c7b6f;
+  --kind-data: #857c5f;
+  --kind-archive: #767087;
   --syn-comment: #9a9a95;
   --syn-keyword: #c2410c;
   --syn-string: #2f7d4f;
@@ -66,13 +66,13 @@
   --accent-soft: #2a1710;
   --hover: #1b1b1d;
   --scrim: rgb(0 0 0 / 0.6);
-  --kind-folder: #7c9cf0;
-  --kind-image: #d98bcb;
-  --kind-media: #f0975a;
-  --kind-doc: #9a9a96;
-  --kind-code: #63c08f;
-  --kind-data: #d9b44a;
-  --kind-archive: #a892ea;
+  --kind-folder: #cdc7bf;
+  --kind-image: #b9a5af;
+  --kind-media: #bea891;
+  --kind-doc: #9a958e;
+  --kind-code: #a0aea3;
+  --kind-data: #b5ab8a;
+  --kind-archive: #aaa2b8;
   --syn-comment: #6a6a66;
   --syn-keyword: #ff8a5c;
   --syn-string: #7fd1a0;
