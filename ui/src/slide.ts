@@ -4,7 +4,7 @@
 
 import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { type Box, Glide, glideOf, highlightOf, landingOf } from "./glide";
+import { type Box, GLIDE_EASE, GLIDE_MS, Glide, glideOf, highlightOf, landingOf } from "./glide";
 import { type Before, type Edges, type Move, alongOf, beforeOf, moveOf } from "./moves";
 import { keyHeld } from "./preview";
 import { store } from "./store";
@@ -257,6 +257,6 @@ export function useSlide(strip: RefObject<HTMLElement | null>, path: string, ope
     const to = path !== from.path && !open && !from.open ? landingOf(el, index) : null;
     const frames = fromBox && to && glideOf(fromBox, to);
     running.current = new Slide(el, was, along);
-    if (to && frames) gliding.current = new Glide(el, index, to, frames, { duration: SLIDE_MS, easing: EASE_OUT });
+    if (to && frames) gliding.current = new Glide(el, index, to, frames, { duration: GLIDE_MS, easing: GLIDE_EASE });
   }, [path, open, strip]);
 }
