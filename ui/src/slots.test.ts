@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import type { Listing } from "./api";
-import { COLUMN_ROWS, columnsOf, slotsFor, standIn, startingAt, steppedOut } from "./slots";
+import { COLUMN_ROWS, columnsOf, pointedAt, slotsFor, standIn, startingAt, steppedOut } from "./slots";
 
 /** A folder holding one folder under another, `depth` deep, the last one holding `last`. */
 function nest(depth: number, last: Listing["entries"] = [], path = "top"): Listing {
@@ -125,4 +125,57 @@ test("the folder left is cut as the server cuts a column: its first entries, fol
   expect([drawn.total, drawn.hidden, drawn.readme, drawn.under]).toEqual([51, 2, null, undefined]);
   // What the main list had is left as it was.
   expect(shown.entries.length).toBe(51);
+});
+
+/**
+ * An element as the page draws it, as far as `closest` goes. It is found only by an attribute, `[data-level]` or
+ * `[data-i]`: a class, as a column once was found by, goes when the look changes, and is not asked for here.
+ */
+interface Drawn {
+  dataset: Record<string, string>;
+  parent: Drawn | null;
+  closest: (selector: string) => Drawn | null;
+}
+function drawn(dataset: Record<string, string> = {}, parent: Drawn | null = null): Drawn {
+  const el: Drawn = {
+    dataset,
+    parent,
+    closest(selector) {
+      const name = /^\[data-([a-z]+)\]$/.exec(selector)?.[1];
+      if (!name) throw new Error(`a column is found by its attributes, not by ${selector}`);
+      for (let at: Drawn | null = el; at; at = at.parent) if (name in at.dataset) return at;
+      return null;
+    },
+  };
+  return el;
+}
+
+test("the pointer on a row of any column is on that column's entry, not only in the first", () => {
+  const levels = [
+    nest(1, [{ n: "a", d: true, s: 0, m: 0 }, { n: "b", d: true, s: 0, m: 0 }]),
+    nest(1, [{ n: "c", d: true, s: 0, m: 0 }]),
+    nest(1, [{ n: "x.txt", s: 1, m: 0 }, { n: "y.txt", s: 1, m: 0 }]),
+  ];
+  const strip = drawn();
+  // A column, its rows, a row and the name in it, as `Column` draws them.
+  const nameIn = (level: number, i: number) => drawn({}, drawn({ i: String(i) }, drawn({}, drawn({ level: String(level), pane: `p${level}` }, strip))));
+  const on = (target: Drawn) => {
+    const at = pointedAt(target as unknown as Element, levels);
+    return at && [at.level, at.item.n];
+  };
+  expect(on(nameIn(0, 1))).toEqual([0, "b"]);
+  expect(on(nameIn(1, 0))).toEqual([1, "c"]);
+  expect(on(nameIn(2, 1))).toEqual([2, "y.txt"]);
+  // The column it is on is the one whose box the aim is measured from.
+  expect(pointedAt(nameIn(2, 0) as unknown as Element, levels)?.column.dataset.level).toBe("2");
+});
+
+test("the pointer is on no entry on a column's bar, past its rows, or on a column whose answer is on its way", () => {
+  const levels = [undefined, nest(1, [{ n: "c", d: true, s: 0, m: 0 }])];
+  const column = drawn({ level: "1" }, drawn());
+  expect(pointedAt(drawn({}, column) as unknown as Element, levels)).toBeUndefined();
+  expect(pointedAt(drawn({ i: "4" }, column) as unknown as Element, levels)).toBeUndefined();
+  expect(pointedAt(drawn({ i: "0" }, drawn({ level: "0" })) as unknown as Element, levels)).toBeUndefined();
+  // A row of the main list is in no column.
+  expect(pointedAt(drawn({ i: "0" }, drawn()) as unknown as Element, levels)).toBeUndefined();
 });

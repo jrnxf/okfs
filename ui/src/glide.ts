@@ -1,6 +1,15 @@
-// The cursor's highlight travels with the panes when they slide: from the row it was on to the row it lands on, on
-// the slide's own curve and time, so the eye can follow it from one list to the next. The main list is always in the
-// first slot, so on a step it moves up or down there while the rows slide sideways under it. See `useSlide`.
+// The cursor's highlight travels with the panes when they slide: from the row it was on to the row it lands on, so the
+// eye can follow it from one list to the next. The main list is always in the first slot, so on a step it moves up or
+// down there while the rows slide sideways under it. See `useSlide`.
+
+/**
+ * How long the highlight takes to travel. Longer than the slide: on the slide's own time and curve it covered most of
+ * the way in its first three frames, too soon for the eye to find it, let alone follow it. Nothing waits on it: a
+ * key that moves the cursor stops it, and the next step takes it on from where it has got to.
+ */
+export const GLIDE_MS = 260;
+/** Easing in and out, gently, as a thing moving from one place to another on screen does: no frame jumps far. */
+export const GLIDE_EASE = "cubic-bezier(0.37, 0, 0.63, 1)";
 
 /** A box on screen, in px, from the top left corner of the strip. */
 export interface Box {

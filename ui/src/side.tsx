@@ -17,7 +17,7 @@ import { Editor } from "./editor";
 import { DELETE_KEY, deleteLabel } from "./palette";
 import { Preview, columnsUrl, useLoaded } from "./preview";
 import { SLIDE_MS } from "./slide";
-import { type Chain, type Left, columnsOf, focusOf, standIn } from "./slots";
+import { type Chain, type Left, columnsOf, focusOf, pointedAt, standIn } from "./slots";
 import { type Doomed, type Entry, type MenuTarget, store, toEntry } from "./store";
 import { pick, uploads } from "./upload";
 
@@ -298,12 +298,9 @@ function usePicks(root: string | null, drawn: RefObject<Chain>) {
     if (event.clientX === p.at.x && event.clientY === p.at.y) return;
     p.at = { x: event.clientX, y: event.clientY };
     p.aim.track(p.at);
-    const target = event.target as Element;
-    const column = target.closest<HTMLElement>(".col[data-level]");
-    const row = target.closest<HTMLElement>(".col-rows [data-i]");
-    const level = Number(column?.dataset.level);
-    const item: Item | undefined = row ? drawn.current?.levels[level]?.entries[Number(row.dataset.i)] : undefined;
-    if (!column || !item) return;
+    const at = pointedAt(event.target as Element, drawn.current?.levels ?? []);
+    if (!at) return;
+    const { column, level, item } = at;
     const key = `${level}/${item.n}`;
     if (p.held === key) return;
     clearTimeout(p.timer);

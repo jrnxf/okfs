@@ -57,6 +57,20 @@ export interface Chain {
 }
 
 /**
+ * The column, its level and its entry that `target`, the element under the pointer, is on, of the chain's `levels`.
+ * A column is found by its `data-level` and a row by its `data-i`, as `Column` draws them, never by a class: a
+ * class is there for the look, and goes when the look changes. A row of the main list is in no column.
+ */
+export function pointedAt(target: Element, levels: Chain["levels"]): { column: HTMLElement; level: number; item: Item } | undefined {
+  const row = target.closest<HTMLElement>("[data-i]");
+  const column = row?.closest<HTMLElement>("[data-level]");
+  if (!row || !column) return undefined;
+  const level = Number(column.dataset.level);
+  const item = levels[level]?.entries[Number(row.dataset.i)];
+  return item && { column, level, item };
+}
+
+/**
  * Fills the slots beside the main list from the answer for the folder under the cursor: that folder's listing,
  * then the listing of each folder its focused entry leads to, one slot a level while there are folders and slots.
  * A column's focused entry is the one `picks` names for its level, or else the one `left` names for its folder,
