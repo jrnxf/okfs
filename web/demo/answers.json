@@ -20,59 +20,143 @@
     ]
    },
    {
-    "id": "paper",
-    "name": "Paper",
+    "id": "tokyo-night",
+    "name": "Tokyo Night",
     "light": [
-     "#f5f0e6",
-     "#2a2520",
-     "#2d6a4f"
+     "#e1e2e7",
+     "#3760bf",
+     "#2e7de9"
     ],
     "dark": [
-     "#1b1815",
-     "#ebe3d5",
-     "#8fc7a6"
+     "#16161e",
+     "#c0caf5",
+     "#7aa2f7"
     ]
    },
    {
-    "id": "terminal",
-    "name": "Terminal",
+    "id": "catppuccin",
+    "name": "Catppuccin",
     "light": [
-     "#f2f5ec",
-     "#10201a",
-     "#0b7a3e"
+     "#e6e9ef",
+     "#4c4f69",
+     "#8839ef"
     ],
     "dark": [
-     "#070b08",
-     "#b9f2c9",
-     "#3dff8f"
+     "#181825",
+     "#cdd6f4",
+     "#cba6f7"
     ]
    },
    {
-    "id": "fjord",
-    "name": "Fjord",
+    "id": "rose-pine",
+    "name": "Rosé Pine",
     "light": [
-     "#eef2f6",
-     "#1c2733",
-     "#2f6fb5"
+     "#faf4ed",
+     "#575279",
+     "#b4637a"
     ],
     "dark": [
-     "#1b222c",
-     "#e3eaf2",
-     "#88c0f0"
+     "#191724",
+     "#e0def4",
+     "#ebbcba"
     ]
    },
    {
-    "id": "riso",
-    "name": "Riso",
+    "id": "gruvbox",
+    "name": "Gruvbox",
     "light": [
-     "#fff6d6",
-     "#16110d",
-     "#ff2e88"
+     "#fbf1c7",
+     "#3c3836",
+     "#af3a03"
     ],
     "dark": [
-     "#1a0933",
-     "#fff7fd",
-     "#f4f74a"
+     "#1d2021",
+     "#ebdbb2",
+     "#fe8019"
+    ]
+   },
+   {
+    "id": "kanagawa",
+    "name": "Kanagawa",
+    "light": [
+     "#f2ecbc",
+     "#545464",
+     "#b35b00"
+    ],
+    "dark": [
+     "#16161d",
+     "#dcd7ba",
+     "#e6c384"
+    ]
+   },
+   {
+    "id": "everforest",
+    "name": "Everforest",
+    "light": [
+     "#efebd4",
+     "#5c6a72",
+     "#5f8a00"
+    ],
+    "dark": [
+     "#232a2e",
+     "#d3c6aa",
+     "#a7c080"
+    ]
+   },
+   {
+    "id": "nord",
+    "name": "Nord",
+    "light": [
+     "#e5e9f0",
+     "#2e3440",
+     "#5e81ac"
+    ],
+    "dark": [
+     "#2a2f3a",
+     "#d8dee9",
+     "#88c0d0"
+    ]
+   },
+   {
+    "id": "solarized",
+    "name": "Solarized",
+    "light": [
+     "#fdf6e3",
+     "#586e75",
+     "#268bd2"
+    ],
+    "dark": [
+     "#00212b",
+     "#93a1a1",
+     "#268bd2"
+    ]
+   },
+   {
+    "id": "one",
+    "name": "One",
+    "light": [
+     "#f0f0f1",
+     "#383a42",
+     "#4078f2"
+    ],
+    "dark": [
+     "#21252b",
+     "#abb2bf",
+     "#61afef"
+    ]
+   },
+   {
+    "id": "flexoki",
+    "name": "Flexoki",
+    "light": [
+     "#f2f0e5",
+     "#100f0f",
+     "#24837b"
+    ],
+    "dark": [
+     "#100f0f",
+     "#cecdc3",
+     "#3aa99f"
     ]
    }
   ],
@@ -82,6 +166,8 @@
    "kind": "dir"
   },
   "delete": false,
+  "upload": false,
+  "edit": false,
   "pdf": false,
   "hidden": false
  },

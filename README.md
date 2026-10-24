@@ -79,7 +79,7 @@ okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the key
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages.
 - A palette that finds any file in the whole tree at once, from an index kept in memory.
 - Columns that show what is inside the folder under the cursor, and the page follows the folder as files are added, removed or rewritten, with no reload.
-- Fifteen built-in themes, light and dark, each one CSS file, among them Tokyo Night, Catppuccin, Rosé Pine, Gruvbox and Nord.
+- Eleven built-in themes, light and dark, each one CSS file, among them Tokyo Night, Catppuccin, Rosé Pine, Gruvbox and Nord.
 - Read only unless you turn writes on. Uploading, editing and deleting are each behind a flag of their own: `--allow-upload`, `--allow-edit`, `--allow-delete`. A delete goes to a Trash for 30 days, with Undo. There are no accounts.
 - Loopback by default. Beyond it, only a link with a key that okfs prints gets in (see [Letting other machines in](#letting-other-machines-in)).
 
@@ -483,14 +483,6 @@ Deleting works only from the address okfs answers to. If you reach okfs through 
   </tr>
   <tr>
     <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-flexoki-dark.png"><img src="docs/screenshots/theme-flexoki-light.png" alt="The Flexoki theme showing a Markdown file" width="100%"></picture><br><b><code>flexoki</code></b><br>Inky, paper-warm colors for prose and code.</td>
-    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-paper-dark.png"><img src="docs/screenshots/theme-paper-light.png" alt="The Paper theme showing a Markdown file" width="100%"></picture><br><b><code>paper</code></b><br>Warm, bookish, serif. Flat: no shadows, almost no radius.</td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-terminal-dark.png"><img src="docs/screenshots/theme-terminal-light.png" alt="The Terminal theme showing a Markdown file" width="100%"></picture><br><b><code>terminal</code></b><br>Monospace everywhere, square corners, tight rows, no icons.</td>
-    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-fjord-dark.png"><img src="docs/screenshots/theme-fjord-light.png" alt="The Fjord theme showing a Markdown file" width="100%"></picture><br><b><code>fjord</code></b><br>Cool and roomy: blue-grey surfaces, soft corners, solid icons.</td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/theme-riso-dark.png"><img src="docs/screenshots/theme-riso-light.png" alt="The Riso theme showing a Markdown file" width="100%"></picture><br><b><code>riso</code></b><br>Deliberately loud. Two-ink print: thick outlines, hard offset shadows, capitals.</td>
     <td width="50%" align="center"><b>yours</b><br>One CSS file. See <a href="#write-one">Write one</a>.</td>
   </tr>
 </table>
@@ -499,7 +491,7 @@ A theme is one CSS file that sets tokens and nothing else. The contract is [`ui/
 
 ```sh
 okfs theme list              # the built-in themes
-okfs --theme paper           # start in one
+okfs --theme gruvbox         # start in one
 okfs --theme ./mine.css      # start in your own
 okfs theme check ./mine.css  # check a file against the contract
 ```

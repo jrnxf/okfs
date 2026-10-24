@@ -145,8 +145,20 @@ $("#run").addEventListener("click", async () => {
 
 // ---------- Fig. 3: the themes, as finishes ----------
 
-const blurbs = { default: "The plain one.", paper: "Warm, set in a serif.", terminal: "Monospace and square.", fjord: "Cool and roomy.", riso: "Two-ink print." };
-let themeId = "paper";
+const blurbs = {
+  default: "Warm greys, one orange.",
+  "tokyo-night": "Neon at night.",
+  catppuccin: "Pastel Latte and Mocha.",
+  "rose-pine": "Soft rose and pine.",
+  gruvbox: "Retro and warm.",
+  kanagawa: "Ink, gold and indigo.",
+  everforest: "Calm greens.",
+  nord: "Arctic blue-greys.",
+  solarized: "The classic.",
+  one: "From the Atom editor.",
+  flexoki: "Inky, paper-warm.",
+};
+let themeId = "tokyo-night";
 let plate = null;
 function showTheme() {
   $$("#chips button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === themeId)));

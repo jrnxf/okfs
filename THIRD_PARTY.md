@@ -225,7 +225,7 @@ SOFTWARE.
 
 ## Theme palettes
 
-The built-in themes other than `default`, `paper`, `terminal`, `fjord` and `riso` take their colors from the palettes below. Each theme file in `themes/` names its source in its header.
+The built-in themes other than `default` take their colors from the palettes below. Each theme file in `themes/` names its source in its header.
 
 These palettes are under the MIT License. Gruvbox gives its license as MIT/X11 in its README.
 

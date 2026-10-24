@@ -7,7 +7,7 @@ use std::fmt;
 pub const TOKENS_CSS: &str = include_str!("../ui/src/styles/tokens.css");
 
 /// The themes compiled into the binary, in the order the switcher lists them.
-pub const BUILT_IN: [(&str, &str); 15] = [
+pub const BUILT_IN: [(&str, &str); 11] = [
     ("default", include_str!("../themes/default.css")),
     ("tokyo-night", include_str!("../themes/tokyo-night.css")),
     ("catppuccin", include_str!("../themes/catppuccin.css")),
@@ -19,10 +19,6 @@ pub const BUILT_IN: [(&str, &str); 15] = [
     ("solarized", include_str!("../themes/solarized.css")),
     ("one", include_str!("../themes/one.css")),
     ("flexoki", include_str!("../themes/flexoki.css")),
-    ("paper", include_str!("../themes/paper.css")),
-    ("terminal", include_str!("../themes/terminal.css")),
-    ("fjord", include_str!("../themes/fjord.css")),
-    ("riso", include_str!("../themes/riso.css")),
 ];
 
 const COLORS: [&str; 25] = [

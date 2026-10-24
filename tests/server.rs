@@ -916,8 +916,8 @@ async fn a_theme_file_that_fails_the_checker_is_refused_with_the_reason() {
         "{css}"
     );
 
-    let (_, paper) = get(&app, "/assets/themes/paper.css").await;
-    assert!(String::from_utf8(paper).unwrap().contains("--bg: #f5f0e6;"));
+    let (_, gruvbox) = get(&app, "/assets/themes/gruvbox.css").await;
+    assert!(String::from_utf8(gruvbox).unwrap().contains("--bg: #fbf1c7;"));
     assert_eq!(
         get(&app, "/assets/themes/nope.css").await.0.status(),
         StatusCode::NOT_FOUND
@@ -2747,7 +2747,7 @@ async fn a_browser_trades_the_key_in_its_address_for_a_cookie() {
     let app = keyed(&site, Options::default());
     let (response, body) = send(
         &app,
-        on_home("GET", &format!("/sub/?find=b&key={KEY}&theme=paper"), NAVIGATE),
+        on_home("GET", &format!("/sub/?find=b&key={KEY}&theme=gruvbox"), NAVIGATE),
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -2759,13 +2759,17 @@ async fn a_browser_trades_the_key_in_its_address_for_a_cookie() {
     // SameSite=Strict cookie goes with even after a link from another site.
     let body = String::from_utf8_lossy(&body);
     assert!(
-        body.contains(r#"<meta http-equiv="refresh" content="0; url=/sub/?find=b&amp;theme=paper">"#),
+        body.contains(r#"<meta http-equiv="refresh" content="0; url=/sub/?find=b&amp;theme=gruvbox">"#),
         "{body}"
     );
     assert!(!body.contains(KEY), "{body}");
 
     // With the cookie, everything answers, and the page knows the key for the links it hands out.
-    let (response, body) = send(&app, on_home("GET", "/sub/?find=b&theme=paper", &[NAVIGATE[0], COOKIE])).await;
+    let (response, body) = send(
+        &app,
+        on_home("GET", "/sub/?find=b&theme=gruvbox", &[NAVIGATE[0], COOKIE]),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(String::from_utf8_lossy(&body).contains(&format!("\"key\":\"{KEY}\"")));
     for uri in [
@@ -2833,7 +2837,7 @@ async fn a_one_time_code_is_traded_for_the_cookie_once_and_never_again() {
 
     let (response, body) = send(
         &app,
-        on_home("GET", &format!("/sub/?once={code}&theme=paper"), NAVIGATE),
+        on_home("GET", &format!("/sub/?once={code}&theme=gruvbox"), NAVIGATE),
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -2843,7 +2847,7 @@ async fn a_one_time_code_is_traded_for_the_cookie_once_and_never_again() {
     assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
     let body = String::from_utf8_lossy(&body);
     assert!(
-        body.contains(r#"<meta http-equiv="refresh" content="0; url=/sub/?theme=paper">"#),
+        body.contains(r#"<meta http-equiv="refresh" content="0; url=/sub/?theme=gruvbox">"#),
         "{body}"
     );
     assert!(!body.contains(KEY) && !body.contains(&code), "{body}");
