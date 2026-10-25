@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::http::header::{self, HeaderMap};
+use ring::hmac;
+
+use crate::paths;
 
 /// The random bytes in a key: 128 bits, far past what anyone could guess over a network.
 const BYTES: usize = 16;
@@ -99,6 +102,47 @@ impl Once {
 impl fmt::Debug for Once {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Once(..)")
+    }
+}
+
+/// What a page from the served folder brings in place of the key, while a key is on. A page is shown
+/// sandboxed, in an origin of its own, so a browser sends no cookie with its requests: without a pass
+/// it could load none of the images, stylesheets and scripts beside it. The pass is part of the
+/// page's address, `/api/view/<pass>/<path>`, so its relative links carry it. The page's scripts
+/// can read it, so it lets in no more than the page could reach by those links: reading the files
+/// in its own folder and below. No listing, no other route, no write, and nothing above that folder.
+pub struct Passes(hmac::Key);
+
+impl Passes {
+    /// Passes signed with a secret from the operating system's random source, new at every start.
+    pub fn new() -> Result<Self, String> {
+        let mut secret = [0; 32];
+        getrandom::fill(&mut secret).map_err(|error| format!("cannot make a key: {error}"))?;
+        Ok(Self(hmac::Key::new(hmac::HMAC_SHA256, &secret)))
+    }
+
+    /// The pass to the folder `folder` and everything below it.
+    pub fn of(&self, folder: &str) -> String {
+        base64url(&hmac::sign(&self.0, folder.as_bytes()).as_ref()[..BYTES])
+    }
+
+    /// Whether `pass` lets in reading `rel`: whether it is the pass of a folder that holds it.
+    pub fn opens(&self, pass: &str, rel: &str) -> bool {
+        let mut folder = rel;
+        while !folder.is_empty() {
+            folder = paths::parent(folder);
+            if same(self.of(folder).as_bytes(), pass.as_bytes()) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Never printed by accident, in a log or a panic.
+impl fmt::Debug for Passes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Passes(..)")
     }
 }
 
@@ -256,6 +300,28 @@ mod tests {
         assert!(!once.take(once.as_str()));
         let dead = Once::new(Duration::ZERO).unwrap();
         assert!(!dead.take(dead.as_str()));
+    }
+
+    #[test]
+    fn a_pass_opens_its_own_folder_and_below_and_nothing_else() {
+        let passes = Passes::new().unwrap();
+        let reports = passes.of("agents/reports");
+        assert_eq!(reports.len(), 22);
+        assert!(passes.opens(&reports, "agents/reports/x.html"));
+        assert!(passes.opens(&reports, "agents/reports/img/shot.png"));
+        assert!(!passes.opens(&reports, "agents/reports"));
+        assert!(!passes.opens(&reports, "agents/other.png"));
+        assert!(!passes.opens(&reports, "agents/reports-old/x.png"));
+        assert!(!passes.opens(&reports, "secret.txt"));
+        assert!(!passes.opens(&reports, ""));
+        assert!(!passes.opens(&reports[1..], "agents/reports/x.html"));
+        // The top folder's pass opens every file.
+        let top = passes.of("");
+        assert!(passes.opens(&top, "a.txt"));
+        assert!(passes.opens(&top, "agents/reports/x.html"));
+        // Another start's passes open nothing.
+        assert!(!Passes::new().unwrap().opens(&reports, "agents/reports/x.html"));
+        assert_eq!(format!("{passes:?}"), "Passes(..)");
     }
 
     #[test]

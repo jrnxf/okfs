@@ -2674,6 +2674,7 @@ async fn with_a_key_every_route_is_refused_without_it_and_says_nothing_of_the_fo
         ("GET", "/api/archive?path=a.txt"),
         ("GET", "/api/picture?path=a.txt"),
         ("GET", "/api/events"),
+        ("GET", "/api/frame/a.txt"),
         ("GET", "/theme.css"),
         ("GET", "/assets/app.css"),
         ("GET", "/assets/main.js"),
@@ -2739,6 +2740,122 @@ async fn with_a_key_every_route_is_refused_without_it_and_says_nothing_of_the_fo
         .body(Body::empty())
         .unwrap();
     assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn with_a_key_a_page_in_the_preview_reads_its_own_folder_with_a_pass_and_nothing_else() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("reports/img")).unwrap();
+    let page = "<img src=img/shot.png><script>fetch('/api/list?path=')</script>";
+    fs::write(site.served.join("reports/x.html"), page).unwrap();
+    fs::write(site.served.join("reports/img/shot.png"), "png").unwrap();
+    fs::write(site.served.join("reports/y.html"), "next page").unwrap();
+    fs::write(site.served.join("reports/.notes"), SECRET).unwrap();
+    let app = keyed(
+        &site,
+        Options {
+            allow_upload: true,
+            allow_edit: true,
+            allow_delete: true,
+            ..Options::default()
+        },
+    );
+    let before = snapshot(&site.served);
+
+    // The page frames the file with its cookie, and is sent on to the address with its folder's pass.
+    let (frame, _) = send(&app, on_home("GET", "/api/frame/reports/x.html", &[COOKIE])).await;
+    assert_eq!(frame.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(frame.headers()[header::CACHE_CONTROL], "no-store");
+    let to = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(!to.contains(KEY), "{to}");
+    let folder = to.strip_suffix("x.html").unwrap();
+    let top = folder.strip_suffix("reports/").unwrap();
+    assert!(
+        top.starts_with("/api/view/") && top.len() == "/api/view/".len() + 23,
+        "{to}"
+    );
+
+    // A sandboxed page sends no cookie. It loads with the pass, sandboxed in an origin of its own, and so
+    // does what is beside it and below it.
+    for (uri, bytes) in [
+        (to.clone(), page),
+        (format!("{folder}img/shot.png"), "png"),
+        (format!("{folder}y.html"), "next page"),
+    ] {
+        let (response, body) = send(&app, on_home("GET", &uri, &[])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        assert_eq!(body, bytes.as_bytes(), "{uri}");
+        assert!(!response.headers().contains_key(header::SET_COOKIE), "{uri}");
+        assert!(
+            !response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            "{uri}"
+        );
+        if uri.ends_with(".html") {
+            let policy = response.headers()[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+            assert!(
+                policy.starts_with("sandbox") && !policy.contains("allow-same-origin"),
+                "{policy}"
+            );
+        }
+    }
+
+    // The pass reads nothing above its folder or beside it, no dotfile, and no link that leaves.
+    let outside = [
+        format!("{top}a.txt"),
+        format!("{top}sub/b.txt"),
+        format!("{top}link-out.txt"),
+        format!("{top}.hidden"),
+        format!("{folder}.notes"),
+        format!("{folder}../a.txt"),
+        format!("{folder}%2E%2E/a.txt"),
+        format!("{top}reports"),
+        format!("{top}reports/"),
+        "/api/view/AAAAAAAAAAAAAAAAAAAAAA/reports/x.html".to_owned(),
+        format!("/api/view/{KEY}/reports/x.html"),
+    ];
+    for uri in &outside {
+        let (response, body) = send(&app, on_home("GET", uri, &[])).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+        assert!(!String::from_utf8_lossy(&body).contains(SECRET), "{uri}");
+    }
+
+    // It is no key: the API, the page, the files under /raw/ and the frame route still ask for the key.
+    let pass = &top["/api/view/".len()..top.len() - 1];
+    for uri in [
+        "/api/list?path=".to_owned(),
+        format!("/api/list?path=&key={pass}"),
+        "/raw/reports/img/shot.png".to_owned(),
+        "/reports/x.html".to_owned(),
+        "/api/frame/reports/x.html".to_owned(),
+    ] {
+        let (response, _) = send(&app, on_home("GET", &uri, &[])).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+    }
+    // And it writes nothing.
+    let write: Headers = &[("x-okfs", "write"), ("origin", "http://localhost:8080")];
+    for method in ["PUT", "POST", "DELETE"] {
+        let (response, _) = send(&app, on_home(method, &format!("{folder}y.html"), write)).await;
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method}");
+    }
+    assert_eq!(snapshot(&site.served), before);
+}
+
+#[tokio::test]
+async fn without_a_key_a_page_in_the_preview_is_framed_from_raw() {
+    let site = Site::new();
+    fs::write(site.served.join("sub/page.html"), "<p>hi</p>").unwrap();
+    let app = site.router();
+    let (frame, _) = get(&app, "/api/frame/sub/page.html").await;
+    assert_eq!(frame.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(frame.headers()[header::LOCATION], "/raw/sub/page.html");
+    for uri in [
+        "/api/frame/sub/",
+        "/api/frame/nope.html",
+        "/api/frame/link-out.txt",
+        "/api/frame/.hidden",
+    ] {
+        assert_eq!(get(&app, uri).await.0.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
 }
 
 #[tokio::test]
