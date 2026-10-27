@@ -114,7 +114,7 @@ export function FolderBar({
         </>
       )}
       {!missing && (
-        <a class={`btn ${BAR_BTN}`} href={urls.zip(path)} download aria-label="Download as a zip" title="Download as a zip">
+        <a class={`btn ${BAR_BTN}`} href={urls.zip(path)} download="" aria-label="Download as a zip" title="Download as a zip">
           <Icon name="download" />
         </a>
       )}
@@ -222,7 +222,7 @@ function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
               <span class={MORE_NAME}>{store.wraps(file) ? "Stop wrapping lines" : "Wrap long lines"}</span>
             </button>
           )}
-          <a class={`${MORE_ROW} text-fg no-underline`} role="menuitem" href={urls.raw(file.path)} download>
+          <a class={`${MORE_ROW} text-fg no-underline`} role="menuitem" href={urls.raw(file.path)} download="">
             <Icon name="download" />
             <span class={MORE_NAME}>Download</span>
           </a>
@@ -432,7 +432,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
             <Icon name="pen" />
           </button>
         )}
-        <a class={`btn ${BAR_BTN} phone:hidden`} href={urls.raw(file.path)} download aria-label="Download" title="Download">
+        <a class={`btn ${BAR_BTN} phone:hidden`} href={urls.raw(file.path)} download="" aria-label="Download" title="Download">
           <Icon name="download" />
         </a>
         {config.delete && (

@@ -616,7 +616,7 @@ function Card({ entry, line, unreached }: { entry: Entry; line: string; unreache
         <span>{line}</span>
         {/* Nothing downloads while okfs cannot be reached. */}
         {!unreached && (
-          <a class="btn btn-line mt-3 no-underline" href={urls.raw(entry.path)} download>
+          <a class="btn btn-line mt-3 no-underline" href={urls.raw(entry.path)} download="">
             <Icon name="download" />
             Download
           </a>

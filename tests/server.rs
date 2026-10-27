@@ -970,6 +970,39 @@ async fn a_folder_downloads_as_a_zip_of_what_is_shown() {
 }
 
 #[tokio::test]
+async fn a_folders_zip_is_named_after_the_folder() {
+    let site = Site::new();
+    fs::create_dir(site.served.join("fotos día")).unwrap();
+    fs::create_dir(site.served.join("it's; (1)")).unwrap();
+    let app = site.router();
+    let named = async |uri: &str| {
+        let (response, _) = get(&app, uri).await;
+        response.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        named("/zip/sub").await,
+        "attachment; filename=\"sub.zip\"; filename*=UTF-8''sub.zip"
+    );
+    // The served folder itself is named after its own folder on disk.
+    assert_eq!(
+        named("/zip/").await,
+        "attachment; filename=\"served.zip\"; filename*=UTF-8''served.zip"
+    );
+    assert_eq!(
+        named("/zip/fotos%20d%C3%ADa").await,
+        "attachment; filename=\"fotos da.zip\"; filename*=UTF-8''fotos%20d%C3%ADa.zip"
+    );
+    // A `;` or `'` left as it is would end the name early.
+    assert_eq!(
+        named("/zip/it's%3B%20(1)").await,
+        "attachment; filename=\"its 1.zip\"; filename*=UTF-8''it%27s%3B%20%281%29.zip"
+    );
+}
+
+#[tokio::test]
 async fn a_zip_keeps_each_files_and_folders_time() {
     let site = Site::new();
     // 2021-06-15 10:30:43 UTC, and a folder a day earlier.
