@@ -22,7 +22,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::{StreamExt, future, stream};
-use percent_encoding::percent_decode_str;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
@@ -2015,12 +2015,29 @@ async fn raw_root(state: State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Respo
     }
 }
 
+/// What a `filename*` keeps as it is (RFC 8187's attr-char): anything else, `;` and `'` among it, would end or break it.
+const ATTR_CHAR: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'!')
+    .remove(b'#')
+    .remove(b'$')
+    .remove(b'&')
+    .remove(b'+')
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'^')
+    .remove(b'_')
+    .remove(b'`')
+    .remove(b'|')
+    .remove(b'~');
+
 async fn zip_folder(State(app): State<Arc<App>>, path: Option<Path<String>>) -> Response {
     let path = path.map(|Path(path)| path).unwrap_or_default();
     let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_dir()) else {
         return not_found();
     };
     let name = match paths::file_name(&found.rel) {
+        // The disk's own root has no name of its own.
+        "" if app.root.name() == "/" => "folder".to_owned(),
         "" => app.root.name(),
         name => name.to_owned(),
     };
@@ -2041,7 +2058,7 @@ async fn zip_folder(State(app): State<Arc<App>>, path: Option<Path<String>>) -> 
         } else {
             plain.trim()
         },
-        encode_path(&name)
+        utf8_percent_encode(&name, ATTR_CHAR)
     );
     (
         [
