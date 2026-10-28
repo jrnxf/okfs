@@ -483,7 +483,7 @@ export function useLoaded<T>(address: string | null, wait?: number): Loaded<T> {
         ? (take(ask<T>(url)), undefined)
         : setTimeout(() => {
             take(
-              getJson<T>(url, abort.signal).then((data) => {
+              getAnswer<T>(url, abort.signal).then((data) => {
                 remember(url, data);
                 return data;
               }),
