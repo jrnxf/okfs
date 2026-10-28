@@ -26,12 +26,13 @@ entries that the page makes in the visitor's browser.
   messages, so the site works wherever it is put, even where each frame gets an origin of its own (a
   sandbox, okfs serving the file). okfs reads its own address with `location` and `history`; `build.ts`
   points those reads at the frame's virtual address bar. No other change is made to okfs's page.
-- `src/landing.html`, `src/landing.ts`, `src/runtime.ts`: the page around okfs. okfs fills the first screen,
+- `src/landing.html`, `src/landing/`, `src/runtime.ts`: the page around okfs, in React and TypeScript: `landing.html` is
+  its head, `landing/Page.tsx` its body, which `build.ts` renders to markup and `landing/client.tsx` hydrates. okfs fills the first screen,
   with a short tutorial over it on a first visit (a few hints, each done by doing it in okfs, and a Skip) and a
   status line under it that holds the counts and the things to try; the sections below each drive an
   okfs of their own or ask its engine directly. Its two faces, Mona Sans and Fragment Mono, come from the
   `@fontsource` packages in `package.json`, and `build.ts` writes them into the page.
-- `src/site.html`, `src/site.ts`: the front page. It uses `runtime.ts` like the demo, fed the same blocks from
+- `src/site.html`, `src/site/`: the front page, built the same way (`site/Page.tsx`, `site/client.tsx`). It uses `runtime.ts` like the demo, fed the same blocks from
   the data file `build.ts` writes beside it. Its two faces, Fraunces and IBM Plex Mono, come from the
   `@fontsource` packages in `package.json`; `build.ts` copies them to `dist/fonts/`.
 - `public/og.png`: the picture a link to the site shows, okfs's logo and its line at 1200 by 630.
@@ -41,6 +42,9 @@ entries that the page makes in the visitor's browser.
   `typst compile demo/survey.typ`), a 10 s film (two of the page's landscapes, panned and faded with ffmpeg,
   VP9) and a page. `demo/templates/`: one file of each kind whose preview the others borrow.
 - `demo/answers.json`: what a real okfs answered for those files (see below).
+
+The site's pages are React (`tsconfig.json`); okfs's own page, which runs in the frames, is Preact (`ui/`, and
+`tsconfig.frame.json` for the files that bundle it). `npm run check` type-checks both.
 
 ## Build
 

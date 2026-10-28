@@ -1,0 +1,9 @@
+{
+  "extends": "../ui/tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+    "typeRoots": ["../ui/node_modules/@types"]
+  },
+  "include": ["src/demo-boot.ts", "src/demo-main.tsx", "src/frame-address.ts", "src/frame-host.ts", "src/wait-for-host.ts", "../ui/src"]
+}
