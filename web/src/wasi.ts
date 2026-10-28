@@ -1,15 +1,23 @@
 // A WASI preview 1 host for okfs's engine: the sixteen calls it imports, over a folder held in memory.
 // The folder is a tree of Dir and File nodes (see tree.js). A Dir fills itself the first time it is read.
 /* eslint-disable no-bitwise */
+import type { Dir, Node } from "./tree";
 
 const E = { SUCCESS: 0, BADF: 8, INVAL: 28, ISDIR: 31, NOENT: 44, NOSYS: 52, NOTDIR: 54, ROFS: 69 };
 const T = { CHAR: 2, DIR: 3, FILE: 4 };
 const ALL_RIGHTS = 0xffffffffffffffffn;
 
-export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
-  let memory;
-  let view;
-  let bytes;
+/** A node of the served folder, as the host sees it (see tree.ts). */
+export type WasiNode = Node;
+export interface WasiOptions {
+  log?: (line: string) => void;
+  onRead?: (dir: Node, count: number) => void;
+}
+
+export function wasiHost(rootDir: Dir, { log = () => {}, onRead }: WasiOptions = {}) {
+  let memory!: WebAssembly.Memory;
+  let view!: DataView;
+  let bytes!: Uint8Array;
   const fresh = () => {
     if (!view || view.buffer !== memory.buffer) {
       view = new DataView(memory.buffer);
@@ -18,16 +26,16 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
   };
   const enc = new TextEncoder();
   const dec = new TextDecoder();
-  const str = (ptr, len) => dec.decode(bytes.subarray(ptr, ptr + len));
+  const str = (ptr: number, len: number) => dec.decode(bytes.subarray(ptr, ptr + len));
   // fd 3 is the preopen "/", which holds the served folder.
-  const fds = new Map([[3, { node: rootDir, pos: 0 }]]);
+  const fds = new Map<number, { node: Node; pos: number }>([[3, { node: rootDir, pos: 0 }]]);
   let nextFd = 4;
   let ino = 1;
-  const inoOf = (node) => (node.ino ||= ++ino);
+  const inoOf = (node: Node & { ino?: number }) => (node.ino ||= ++ino);
   let out = "";
 
-  function lookup(from, path) {
-    let node = from;
+  function lookup(from: Node, path: string): Node | null {
+    let node: Node | null | undefined = from;
     for (const part of path.split("/")) {
       if (part === "" || part === ".") continue;
       if (!node.isDir) return null;
@@ -37,7 +45,7 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
     return node;
   }
 
-  function filestat(ptr, node) {
+  function filestat(ptr: number, node: Node) {
     view.setBigUint64(ptr, 1n, true);
     view.setBigUint64(ptr + 8, BigInt(inoOf(node)), true);
     view.setUint8(ptr + 16, node.isDir ? T.DIR : T.FILE);
@@ -49,33 +57,33 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
     view.setBigUint64(ptr + 56, ns, true);
   }
 
-  const imports = {
+  const imports: Record<string, (...args: any[]) => number> = {
     args_get: () => E.SUCCESS,
-    args_sizes_get: (argc, size) => {
+    args_sizes_get: (argc: number, size: number) => {
       fresh();
       view.setUint32(argc, 0, true);
       view.setUint32(size, 0, true);
       return E.SUCCESS;
     },
     environ_get: () => E.SUCCESS,
-    environ_sizes_get: (count, size) => {
+    environ_sizes_get: (count: number, size: number) => {
       fresh();
       view.setUint32(count, 0, true);
       view.setUint32(size, 0, true);
       return E.SUCCESS;
     },
-    clock_time_get: (id, _precision, ptr) => {
+    clock_time_get: (id: number, _precision: number, ptr: number) => {
       fresh();
       const ms = id === 0 ? Date.now() : performance.now();
       view.setBigUint64(ptr, BigInt(Math.round(ms * 1e6)), true);
       return E.SUCCESS;
     },
-    random_get: (ptr, len) => {
+    random_get: (ptr: number, len: number) => {
       fresh();
       crypto.getRandomValues(bytes.subarray(ptr, ptr + len));
       return E.SUCCESS;
     },
-    fd_write: (fd, iovs, count, written) => {
+    fd_write: (fd: number, iovs: number, count: number, written: number) => {
       fresh();
       let n = 0;
       for (let i = 0; i < count; i++) {
@@ -85,17 +93,17 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
         n += l;
       }
       view.setUint32(written, n, true);
-      let nl;
+      let nl: number;
       while ((nl = out.indexOf("\n")) >= 0) {
         log(out.slice(0, nl));
         out = out.slice(nl + 1);
       }
       return fd === 1 || fd === 2 ? E.SUCCESS : E.BADF;
     },
-    fd_close: (fd) => (fds.delete(fd) ? E.SUCCESS : E.BADF),
-    fd_fdstat_get: (fd, ptr) => {
+    fd_close: (fd: number) => (fds.delete(fd) ? E.SUCCESS : E.BADF),
+    fd_fdstat_get: (fd: number, ptr: number) => {
       fresh();
-      let type;
+      let type: number;
       if (fd <= 2) type = T.CHAR;
       else {
         const open = fds.get(fd);
@@ -108,27 +116,27 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
       view.setBigUint64(ptr + 16, ALL_RIGHTS, true);
       return E.SUCCESS;
     },
-    fd_filestat_get: (fd, ptr) => {
+    fd_filestat_get: (fd: number, ptr: number) => {
       fresh();
       const open = fds.get(fd);
       if (!open) return E.BADF;
       filestat(ptr, open.node);
       return E.SUCCESS;
     },
-    fd_prestat_get: (fd, ptr) => {
+    fd_prestat_get: (fd: number, ptr: number) => {
       fresh();
       if (fd !== 3) return E.BADF;
       view.setUint8(ptr, 0);
       view.setUint32(ptr + 4, 1, true);
       return E.SUCCESS;
     },
-    fd_prestat_dir_name: (fd, ptr, len) => {
+    fd_prestat_dir_name: (fd: number, ptr: number, len: number) => {
       fresh();
       if (fd !== 3) return E.BADF;
       if (len >= 1) bytes[ptr] = 47; // "/"
       return E.SUCCESS;
     },
-    path_open: (dirfd, _dirflags, path, len, oflags, _rb, _ri, _fdflags, fdOut) => {
+    path_open: (dirfd: number, _dirflags: number, path: number, len: number, oflags: number, _rb: bigint, _ri: bigint, _fdflags: number, fdOut: number) => {
       fresh();
       const at = fds.get(dirfd);
       if (!at) return E.BADF;
@@ -141,7 +149,7 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
       view.setUint32(fdOut, fd, true);
       return E.SUCCESS;
     },
-    path_filestat_get: (dirfd, _flags, path, len, ptr) => {
+    path_filestat_get: (dirfd: number, _flags: number, path: number, len: number, ptr: number) => {
       fresh();
       const at = fds.get(dirfd);
       if (!at) return E.BADF;
@@ -151,7 +159,7 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
       return E.SUCCESS;
     },
     path_readlink: () => E.INVAL,
-    fd_read: (fd, iovs, count, readOut) => {
+    fd_read: (fd: number, iovs: number, count: number, readOut: number) => {
       fresh();
       const open = fds.get(fd);
       if (!open) return E.BADF;
@@ -170,7 +178,7 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
       view.setUint32(readOut, n, true);
       return E.SUCCESS;
     },
-    fd_readdir: (fd, buf, bufLen, cookie, usedOut) => {
+    fd_readdir: (fd: number, buf: number, bufLen: number, cookie: bigint, usedOut: number) => {
       fresh();
       const open = fds.get(fd);
       if (!open) return E.BADF;
@@ -182,7 +190,7 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
       const head = new DataView(new ArrayBuffer(24));
       const headBytes = new Uint8Array(head.buffer);
       for (let i = Number(cookie); i < kids.length; i++) {
-        const kid = kids[i];
+        const kid = kids[i]!;
         const name = enc.encode(kid.name);
         head.setBigUint64(0, BigInt(i + 1), true);
         head.setBigUint64(8, BigInt(inoOf(kid)), true);
@@ -202,16 +210,16 @@ export function wasiHost(rootDir, { log = () => {}, onRead } = {}) {
       view.setUint32(usedOut, off - buf, true);
       return E.SUCCESS;
     },
-    proc_exit: (code) => {
+    proc_exit: (code: number) => {
       throw new Error(`okfs engine exited with ${code}`);
     },
   };
-  const wrapped = {};
+  const wrapped: Record<string, (...args: any[]) => number> = {};
   for (const [name, fn] of Object.entries(imports)) wrapped[name] = fn;
   return {
     imports: { wasi_snapshot_preview1: wrapped },
-    bind(instance) {
-      memory = instance.exports.memory;
+    bind(instance: WebAssembly.Instance) {
+      memory = instance.exports.memory as WebAssembly.Memory;
       fresh();
     },
   };

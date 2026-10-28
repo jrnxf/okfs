@@ -1,14 +1,22 @@
 // The demo folder's pictures and its one sound, drawn in the visitor's browser from a seed: landscapes in the
 // style of the tidewater photos, nautical chart tiles, scanned logbook pages, and a harbor bell. Nothing of them
 // is stored: the same seed draws the same picture.
-import { rng } from "./tree.js";
+import { rng } from "./tree";
 
-const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-const css = ([r, g, b], a = 1) => `rgba(${r},${g},${b},${a})`;
-const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+type RGB = [number, number, number];
+type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+/** One encoded picture. */
+export interface Drawn {
+  type: string;
+  bytes: Uint8Array;
+}
+
+const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) as RGB;
+const css = ([r, g, b]: RGB, a = 1) => `rgba(${r},${g},${b},${a})`;
+const mix = (a: RGB, b: RGB, t: number) => a.map((v, i) => Math.round(v + (b[i]! - v) * t)) as RGB;
 
 // sky top, sky at the horizon, sun, three ranges far to near, water at the top, water at the foot
-const PALETTES = [
+const PALETTES: [string, string, string, string[], string, string][] = [
   ["#26365e", "#e58a6a", "#ffd9b0", ["#8a5a7c", "#5d3f68", "#3a2a4e"], "#e9a27a", "#3b2c52"],
   ["#1b2a4a", "#f3b27a", "#fff1c9", ["#9c6b6a", "#6b4a5e", "#3e2f45"], "#f0b88a", "#2c2742"],
   ["#0b1630", "#3a4f7a", "#e8eefc", ["#2e3d63", "#1f2c4c", "#131c33"], "#43588a", "#0a1226"],
@@ -20,9 +28,9 @@ const PALETTES = [
 ];
 
 /** A landscape, 1200 by 800: sky, sun, three mountain ranges, and their light on the water. */
-export function landscape(ctx, seed, w = 1200, h = 800) {
+export function landscape(ctx: Ctx, seed: number, w = 1200, h = 800) {
   const r = rng(seed);
-  const [skyTop, skyHor, sun, ranges, watTop, watBot] = PALETTES[seed % PALETTES.length].map((c) => (Array.isArray(c) ? c.map(hex) : hex(c)));
+  const [skyTop, skyHor, sun, ranges, watTop, watBot] = PALETTES[seed % PALETTES.length]!.map((c) => (Array.isArray(c) ? c.map(hex) : hex(c))) as [RGB, RGB, RGB, RGB[], RGB, RGB];
   const horizon = Math.round(h * (0.62 + r() * 0.12));
   const sky = ctx.createLinearGradient(0, 0, 0, horizon);
   sky.addColorStop(0, css(skyTop));
@@ -95,12 +103,12 @@ export function landscape(ctx, seed, w = 1200, h = 800) {
 }
 
 /** A tile of the harbor chart, 256 square: depth bands, perhaps a shore, the grid and soundings. */
-export function tile(ctx, seed, size = 256) {
+export function tile(ctx: Ctx, seed: number, size = 256) {
   const r = rng(seed);
   const land = "rgb(241,234,214)";
   ctx.fillStyle = "rgb(200,224,238)";
   ctx.fillRect(0, 0, size, size);
-  const blob = (cx, cy, rad, points) => {
+  const blob = (cx: number, cy: number, rad: number, points: number) => {
     ctx.beginPath();
     for (let i = 0; i <= points; i++) {
       const a = (i / points) * Math.PI * 2;
@@ -109,7 +117,7 @@ export function tile(ctx, seed, size = 256) {
     }
     ctx.closePath();
   };
-  [["rgb(214,232,242)", 0], ["rgb(190,219,236)", 1], ["rgb(168,206,230)", 2]].forEach(([fill, depth]) => {
+  ([["rgb(214,232,242)", 0], ["rgb(190,219,236)", 1], ["rgb(168,206,230)", 2]] as [string, number][]).forEach(([fill, depth]) => {
     for (let k = 0; k < 3; k++) {
       blob(r() * size, r() * size, 40 + r() * 100 - depth * 20, 18);
       ctx.fillStyle = fill;
@@ -119,7 +127,7 @@ export function tile(ctx, seed, size = 256) {
       ctx.stroke();
     }
   });
-  let shore = null;
+  let shore: [number, number] | null = null;
   if (r() < 0.6) {
     const side = Math.floor(r() * 3);
     shore = side === 0 ? [0, r() * size] : side === 1 ? [size, r() * size] : [r() * size, 0];
@@ -149,7 +157,7 @@ export function tile(ctx, seed, size = 256) {
 }
 
 /** A page of the harbor master's tide logbook, 720 by 960, as a scanner sees it. */
-export function scan(ctx, seed, w = 720, h = 960) {
+export function scan(ctx: Ctx, seed: number, w = 720, h = 960) {
   const r = rng(seed);
   const paper = ctx.createRadialGradient(w / 2, h / 2, h * 0.1, w / 2, h / 2, h * 0.75);
   paper.addColorStop(0, "rgb(240,231,207)");
@@ -188,8 +196,8 @@ export function scan(ctx, seed, w = 720, h = 960) {
   for (let i = 1; i < 27; i++) {
     if (r() < 0.08) continue;
     const y = top + i * row + 20;
-    const cells = [String(i).padStart(2, "0"), `${String(Math.floor(r() * 24)).padStart(2, "0")}:${Math.floor(r() * 6)}0`, (0.3 + r() * 3.4).toFixed(2), (0.3 + r() * 3.4).toFixed(2), sea[Math.floor(r() * sea.length)]];
-    cells.forEach((c, k) => ctx.fillText(c, cols[k] + 12 + (r() - 0.5) * 5, y + (r() - 0.5) * 4));
+    const cells = [String(i).padStart(2, "0"), `${String(Math.floor(r() * 24)).padStart(2, "0")}:${Math.floor(r() * 6)}0`, (0.3 + r() * 3.4).toFixed(2), (0.3 + r() * 3.4).toFixed(2), sea[Math.floor(r() * sea.length)]!];
+    cells.forEach((c, k) => ctx.fillText(c, cols[k]! + 12 + (r() - 0.5) * 5, y + (r() - 0.5) * 4));
   }
   ctx.restore();
 }
@@ -199,7 +207,7 @@ export function bell() {
   const rate = 22050;
   const n = rate * 4;
   const out = new DataView(new ArrayBuffer(44 + n * 2));
-  const text = (at, s) => [...s].forEach((c, i) => out.setUint8(at + i, c.charCodeAt(0)));
+  const text = (at: number, s: string) => [...s].forEach((c, i) => out.setUint8(at + i, c.charCodeAt(0)));
   text(0, "RIFF");
   out.setUint32(4, 36 + n * 2, true);
   text(8, "WAVEfmt ");
@@ -213,7 +221,7 @@ export function bell() {
   text(36, "data");
   out.setUint32(40, n * 2, true);
   // A bell's partials sit at these ratios to its hum note, each fading at its own pace.
-  const partials = [[0.5, 0.35, 1.1], [1, 1, 1.6], [1.183, 0.5, 2.2], [1.506, 0.45, 2.8], [2, 0.3, 3.6], [2.514, 0.2, 4.6], [3.011, 0.12, 6]];
+  const partials: [number, number, number][] = [[0.5, 0.35, 1.1], [1, 1, 1.6], [1.183, 0.5, 2.2], [1.506, 0.45, 2.8], [2, 0.3, 3.6], [2.514, 0.2, 4.6], [3.011, 0.12, 6]];
   const base = 392;
   const r = rng(7);
   for (let i = 0; i < n; i++) {
@@ -228,7 +236,7 @@ export function bell() {
 }
 
 /** The real tidewater set's pictures, by path, each with the seed that draws it. */
-export const NAMED = [
+export const NAMED: [string, number][] = [
   ["harbor-at-dawn.jpg", 1000],
   ["ridge-line.jpg", 1004],
   ["photos/01-low-tide.jpg", 1009],
@@ -245,14 +253,17 @@ export const NAMED = [
  * Draws every picture with `canvas(w, h)` (an OffscreenCanvas, or a canvas element) and `encode(canvas, type,
  * quality)` to bytes. Returns { pool: { photo, tile, scan }, named: { path: bytes } }, each as { type, bytes }.
  */
-export async function drawAll(canvas, encode) {
-  const draw = async (fn, seed, w, h, type, quality) => {
+export async function drawAll<C extends OffscreenCanvas | HTMLCanvasElement>(
+  canvas: (w: number, h: number) => C,
+  encode: (canvas: C, type: string, quality?: number) => Promise<Uint8Array>,
+) {
+  const draw = async (fn: (ctx: Ctx, seed: number, w: number, h: number) => void, seed: number, w: number, h: number, type: string, quality?: number): Promise<Drawn> => {
     const c = canvas(w, h);
-    fn(c.getContext("2d"), seed, w, h);
+    fn(c.getContext("2d") as Ctx, seed, w, h);
     return { type, bytes: await encode(c, type, quality) };
   };
-  const pool = { photo: [], tile: [], scan: [] };
-  const named = {};
+  const pool: { photo: Drawn[]; tile: Drawn[]; scan: Drawn[] } = { photo: [], tile: [], scan: [] };
+  const named: Record<string, Drawn> = {};
   for (const [path, seed] of NAMED) named[path] = await draw(landscape, seed, 1200, 800, "image/jpeg", 0.84);
   for (let i = 0; i < 24; i++) pool.photo.push(await draw(landscape, 1100 + i, 1200, 800, "image/jpeg", 0.82));
   for (let i = 0; i < 16; i++) pool.tile.push(await draw(tile, 2000 + i, 256, 256, "image/png"));

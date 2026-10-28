@@ -1,17 +1,24 @@
 // The index's own thread: okfs's first walk of the whole tree, then every search and recent list.
-import { startEngine } from "./engine.js";
-import { makeTree } from "./tree.js";
+import { startEngine } from "./engine";
+import { makeTree } from "./tree";
 
-let engine = null;
-const waiting = [];
+type Engine = Awaited<ReturnType<typeof startEngine>>;
+interface Message {
+  op: string;
+  id?: number;
+  arg?: any;
+}
 
-self.onmessage = async ({ data }) => {
+let engine: Engine | null = null;
+const waiting: Message[] = [];
+
+self.onmessage = async ({ data }: MessageEvent) => {
   if (data.op === "start") {
     const root = makeTree(data.now);
     let seen = 0;
     let last = 0;
     engine = await startEngine(data.module, root, {
-      onRead: (_dir, n) => {
+      onRead: (_dir: unknown, n: number) => {
         seen += n;
         const t = performance.now();
         if (t - last > 40) {
@@ -30,7 +37,7 @@ self.onmessage = async ({ data }) => {
   else answer(data);
 };
 
-function answer({ op, id, arg }) {
-  const text = op === "search" ? engine.search(arg) : op === "recent" ? engine.recent(arg) : op === "write" ? engine.write(arg) : "null";
+function answer({ op, id, arg }: Message) {
+  const text = op === "search" ? engine!.search(arg) : op === "recent" ? engine!.recent(arg) : op === "write" ? engine!.write(arg) : "null";
   self.postMessage({ id, text });
 }

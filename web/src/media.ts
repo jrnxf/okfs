@@ -1,14 +1,21 @@
 // What stands behind a file of the demo folder: its real contents, a picture from the pool, or the template a
 // real okfs drew the preview of. The page around okfs and okfs's own frame both ask here, so they agree.
 import { extension, kindOf } from "../../ui/src/kinds.ts";
-import { hash } from "./tree.js";
+import { hash } from "./tree";
 
-const pascal = (name) => name.replace(/(^|[-_.])([a-z0-9])/g, (_, __, c) => c.toUpperCase());
+/** A template to stand for a text file: `day` marks a day of gauge readings. */
+export interface Template {
+  key: string;
+  subs: Record<string, string>;
+  day?: boolean;
+}
+
+const pascal = (name: string) => name.replace(/(^|[-_.])([a-z0-9])/g, (_: string, __: string, c: string) => c.toUpperCase());
 
 /** The package a path is in, for the names its templates take. */
-export function packageOf(path) {
+export function packageOf(path: string) {
   const parts = path.split("/");
-  if (parts[0] === "harbor" && ["packages", "apps", "crates"].includes(parts[1])) return parts[2] ?? null;
+  if (parts[0] === "harbor" && ["packages", "apps", "crates"].includes(parts[1]!)) return parts[2] ?? null;
   const at = parts.indexOf("node_modules");
   return at >= 0 ? (parts[at + 1] ?? null) : null;
 }
@@ -17,11 +24,11 @@ export function packageOf(path) {
  * The template whose answers stand for a text file: `{ key, subs }`, or `{ day: true }` for a day of gauge readings,
  * or null for a file that has no text to show. `has(key)` says whether a key was recorded.
  */
-export function templateOf(path, has) {
+export function templateOf(path: string, has: (key: string) => boolean): Template | null {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const ext = extension(name);
   const parts = path.split("/");
-  const t = (key, subs = {}) => ({ key, subs });
+  const t = (key: string, subs: Record<string, string> = {}): Template => ({ key, subs });
   if (has(path)) return t(path);
   const pkg = packageOf(path);
   if (/^readme\.md$/i.test(name) && pkg) return t("harbor/packages/PKGNAME/README.md", { PKGNAME: pkg });
@@ -61,7 +68,7 @@ export function templateOf(path, has) {
 }
 
 /** A template's text with its names put in. */
-export function fill(text, template) {
+export function fill(text: string, template: Template) {
   let out = text;
   for (const [from, to] of Object.entries(template.subs)) out = out.split(from).join(to);
   return out;
@@ -71,12 +78,15 @@ export function fill(text, template) {
  * What a file's bytes are, for an address okfs's page loads: `{ file }` for a real file, `{ pool, at }` for a picture
  * of the pool, `{ text }` for a template's text, or `{ empty: true }`.
  */
-export function sourceOf(path, { files, pool, has, texts }) {
+export function sourceOf(
+  path: string,
+  { files, pool, has, texts }: { files: Record<string, unknown>; pool: Record<string, unknown[]>; has: (key: string) => boolean; texts: Record<string, string> },
+) {
   if (files[path]) return { file: path };
   const name = path.slice(path.lastIndexOf("/") + 1);
   const ext = extension(name);
   const kind = kindOf(name, false);
-  const fromPool = (group) => ({ pool: group, at: hash(path) % pool[group].length });
+  const fromPool = (group: string) => ({ pool: group, at: hash(path) % pool[group]!.length });
   if (kind === "image") {
     if (ext === "svg") return { file: "data/station-map.svg" };
     if (path.startsWith("maps/tiles/")) return fromPool("tile");
@@ -89,6 +99,6 @@ export function sourceOf(path, { files, pool, has, texts }) {
   if (kind === "html") return { file: "tide-chart.html" };
   if (kind === "archive") return { file: "survey-2026.zip" };
   const template = templateOf(path, has);
-  if (template && !template.day && texts[template.key] !== undefined) return { text: fill(texts[template.key], template), key: `${template.key}|${JSON.stringify(template.subs)}` };
+  if (template && !template.day && texts[template.key] !== undefined) return { text: fill(texts[template.key]!, template), key: `${template.key}|${JSON.stringify(template.subs)}` };
   return { empty: true };
 }

@@ -9,6 +9,8 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import type { BunPlugin } from "bun";
 import { buildCss, uiSources } from "../ui/css";
 
@@ -43,14 +45,16 @@ const noEditor: BunPlugin = {
   },
 };
 
-async function bundle(entry: string, plugins: BunPlugin[] = [], format: "iife" | "esm" = "iife"): Promise<string> {
+// The site's pages are React, which web/tsconfig.json sets up; okfs's own page, in the frames, is Preact (ui/tsconfig.json).
+async function bundle(entry: string, plugins: BunPlugin[] = [], format: "iife" | "esm" = "iife", tsconfig = join(ui, "tsconfig.json")): Promise<string> {
   const result = await Bun.build({
     entrypoints: [join(web, entry)],
     format,
     target: "browser",
     minify: true,
+    define: { "process.env.NODE_ENV": JSON.stringify("production") },
     plugins,
-    tsconfig: join(ui, "tsconfig.json"),
+    tsconfig,
   });
   if (!result.success) {
     for (const log of result.logs) console.error(log);
@@ -62,10 +66,21 @@ async function bundle(entry: string, plugins: BunPlugin[] = [], format: "iife" |
 const frameBoot = await bundle("src/demo-boot.ts", [virtualAddress]);
 // A module: it waits, at its top level, for the page around the frame to hand over the files (wait-for-host.ts).
 const frameMain = await bundle("src/demo-main.tsx", [virtualAddress, noEditor], "esm");
-const worker = await bundle("src/worker.js");
-const pictures = await bundle("src/pictures-worker.js");
-const landing = await bundle("src/landing.js");
-const site = await bundle("src/site.js");
+const worker = await bundle("src/worker.ts");
+const pictures = await bundle("src/pictures-worker.ts");
+// React's own text holds "<body" and "<head" (what it matches markup against): they are written with an escape, so a
+// host that wraps the page does not find them in the scripts. A string or a regular expression reads \x3c as "<".
+const escapeTags = (js: string) => js.replace(/<(?=(?:body|head)\b|\/(?:body|head)>)/gi, "\\x3c");
+const landing = escapeTags(await bundle("src/landing/client.tsx", [], "iife", join(web, "tsconfig.json")));
+const site = escapeTags(await bundle("src/site/client.tsx", [], "iife", join(web, "tsconfig.json")));
+
+// The pages as the server renders them: the browser hydrates this markup, so the first paint is the page itself.
+const { Page: LandingPage } = await import("./src/landing/Page.tsx");
+const { Page: SitePage } = await import("./src/site/Page.tsx");
+const landingMarkup = renderToString(createElement(LandingPage));
+const siteMarkup = renderToString(createElement(SitePage));
+// A page's stylesheet has the utilities its markup and its components name.
+const componentsOf = (...dirs: string[]) => dirs.flatMap((dir) => readdirSync(join(web, dir)).filter((name) => /\.tsx?$/.test(name)).map((name) => join(web, dir, name)));
 
 // okfs's stylesheet, as ui/build.ts makes it, with the latin fonts only (the demo folder is plain latin).
 const FONTS = ["geist-latin-wght-normal", "geist-mono-latin-wght-normal", "newsreader-latin-opsz-normal", "newsreader-latin-opsz-italic"];
@@ -97,8 +112,8 @@ const TYPES: Record<string, string> = {
 const filesDir = join(web, "demo/files");
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((name) => (statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)]));
-const { SHOWCASE, EXTRAS } = await import("./src/tree.js");
-const sizes = new Map<string, number>([...SHOWCASE, ...EXTRAS].map(([path, size]: [string, number]) => [path, size]));
+const { SHOWCASE, EXTRAS } = await import("./src/tree.ts");
+const sizes = new Map<string, number>(([...SHOWCASE, ...EXTRAS] as [string, number, number][]).map(([path, size]) => [path, size]));
 const files: Record<string, { type: string; data: string }> = {};
 for (const file of walk(filesDir)) {
   const path = relative(filesDir, file);
@@ -128,10 +143,10 @@ const safe = (text: string) => text.replace(/<\/(script)/gi, "<\\/$1").replace(/
 if (/<(body|head)\b|<\/(body|head)>/i.test(landing)) throw new Error("the landing script holds a <body> or <head> tag");
 
 let page = readFileSync(join(web, "src/landing.html"), "utf8");
-for (const marker of ["<!--okfs:data-->", "{{landing-css}}"]) if (!page.includes(marker)) throw new Error(`landing.html has no ${marker}`);
+for (const marker of ["<!--okfs:data-->", "<!--okfs:root-->", "{{landing-css}}"]) if (!page.includes(marker)) throw new Error(`landing.html has no ${marker}`);
 // Its stylesheet, with the utilities its markup and its script use.
-const landingCss = await buildCss(join(web, "src/landing.css"), ["src/landing.html", "src/landing.js"].map((file) => join(web, file)));
-page = page.replace("{{landing-css}}", () => landingCss);
+const landingCss = await buildCss(join(web, "src/landing.css"), [join(web, "src/landing.html"), ...componentsOf("src/landing", "src/shared")]);
+page = page.replace("{{landing-css}}", () => landingCss).replace("<!--okfs:root-->", () => landingMarkup);
 // The page's own two faces, latin only, written into its stylesheet: the site is one file.
 const pageFonts: Record<string, string> = {
   "mona-sans": "@fontsource-variable/mona-sans/files/mona-sans-latin-wdth-normal.woff2",
@@ -163,12 +178,13 @@ if (/<(body|head)\b|<\/(body|head)>/i.test(site)) throw new Error("the site scri
 const dataJson = JSON.stringify(Object.fromEntries(dataBlocks.map(([id, type, text]) => [id, { type, text }])));
 const dataFile = `okfs-demo.${createHash("sha256").update(dataJson).digest("hex").slice(0, 12)}.json`;
 let front = readFileSync(join(web, "src/site.html"), "utf8");
-for (const marker of ["{{okfs-data}}", "<!--okfs:site-->", "{{site-css}}"]) if (!front.includes(marker)) throw new Error(`site.html has no ${marker}`);
+for (const marker of ["{{okfs-data}}", "<!--okfs:site-->", "<!--okfs:root-->", "{{site-css}}"]) if (!front.includes(marker)) throw new Error(`site.html has no ${marker}`);
 // Its stylesheet, with the utilities its markup and its script use.
-const siteCss = await buildCss(join(web, "src/site.css"), ["src/site.html", "src/site.js"].map((file) => join(web, file)));
+const siteCss = await buildCss(join(web, "src/site.css"), [join(web, "src/site.html"), ...componentsOf("src/site", "src/shared")]);
 front = front
   .replaceAll("{{okfs-data}}", `/${dataFile}`)
   .replace("{{site-css}}", () => siteCss)
+  .replace("<!--okfs:root-->", () => siteMarkup)
   .replace("<!--okfs:site-->", () => `<script>${safe(site)}</script>`);
 const siteFonts: Record<string, string> = {
   "fraunces.woff2": "@fontsource-variable/fraunces/files/fraunces-latin-full-normal.woff2",
