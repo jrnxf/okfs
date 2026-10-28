@@ -96,15 +96,20 @@ const before = Object.fromEntries(Object.keys(page).map((key) => [key, (globalTh
 let stores: typeof import("./store");
 let keys: typeof import("./keys");
 let config: typeof import("./config").config;
+/** What the server told the page before this file, put back after it: every test file runs in the one page. */
+let told: Partial<typeof config> = {};
 beforeAll(async () => {
   Object.assign(globalThis, page);
   ({ config } = await import("./config"));
+  told = { ...config };
   Object.assign(config, { root: "files", title: "okfs", themes: [], target: { path: "code", kind: "dir" }, delete: false, header: null });
   stores = await import("./store");
   keys = await import("./keys");
 });
 afterAll(() => {
   Object.assign(globalThis, before);
+  for (const key of Object.keys(config)) delete config[key as keyof typeof config];
+  Object.assign(config, told);
 });
 
 type Store = import("./store").Store;
