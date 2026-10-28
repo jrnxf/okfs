@@ -1,7 +1,7 @@
 // Moving to the Trash and back, renaming in place and moving, as the page asks the server for them, and the Undo of
 // each. A server in the page holds one folder and the Trash, as okfs does on disk.
 
-import { beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 
 /** The entries of the served folder, by path: `true` for a folder. */
 let disk = new Map<string, boolean>();
@@ -76,9 +76,16 @@ Object.assign(globalThis, {
 
 let stores: typeof import("./store");
 let config: typeof import("./config").config;
+/** What the server told the page before this file, put back after it: every test file runs in the one page. */
+let told: Partial<typeof config> = {};
 beforeAll(async () => {
   config = (await import("./config")).config;
+  told = { ...config };
   stores = await import("./store");
+});
+afterAll(() => {
+  for (const key of Object.keys(config)) delete config[key as keyof typeof config];
+  Object.assign(config, told);
 });
 
 beforeEach(() => {

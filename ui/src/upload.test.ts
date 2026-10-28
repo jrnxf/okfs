@@ -1,6 +1,6 @@
 // The queue of uploads: a few at a time, never over a name that is taken, and the visitor's choice when one is.
 
-import { beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 
 /** The files the server holds, by path, with their contents. */
 let disk = new Map<string, string>();
@@ -90,9 +90,16 @@ Object.assign(globalThis, {
 
 let upload: typeof import("./upload");
 let config: typeof import("./config").config;
+/** What the server told the page before this file, put back after it: every test file runs in the one page. */
+let told: Partial<typeof config> = {};
 beforeAll(async () => {
   upload = await import("./upload");
   config = (await import("./config")).config;
+  told = { ...config };
+});
+afterAll(() => {
+  for (const key of Object.keys(config)) delete config[key as keyof typeof config];
+  Object.assign(config, told);
 });
 
 beforeEach(() => {
