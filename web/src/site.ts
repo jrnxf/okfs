@@ -1,21 +1,21 @@
 // The okfs site's front page: a catalogue page with okfs on the screen of a drawn computer, the numbers the
 // page measures as okfs starts, the themes as finishes, and the install coupon. okfs is the real one: the
 // same runtime as the demo, fed the demo's data from one file the build writes beside this page.
-import { boot } from "./runtime.js";
+import { boot } from "./runtime";
 
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const $ = (sel: string, root: ParentNode = document): any => root.querySelector(sel);
+const $$ = (sel: string, root: ParentNode = document): any[] => [...root.querySelectorAll(sel)];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const html = document.documentElement;
-const fmt = (n) => n.toLocaleString("en-US");
-const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const fmt = (n: number) => n.toLocaleString("en-US");
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" } as Record<string, string>)[c]!);
 const scheme = () => (html.dataset.theme === "light" ? "light" : "dark");
 
 // ---------- the scheme, and every okfs with it ----------
 
-const schemeListeners = new Set();
-function setScheme(next) {
+const schemeListeners = new Set<(next: string) => unknown>();
+function setScheme(next: string) {
   html.dataset.theme = next;
   try {
     localStorage.setItem("okfs-site.theme", next);
@@ -27,7 +27,7 @@ function setScheme(next) {
 }
 $("#theme").addEventListener("click", () => setScheme(scheme() === "dark" ? "light" : "dark"));
 
-async function copy(text) {
+async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
@@ -47,7 +47,7 @@ async function copy(text) {
 
 /** The demo's data, from the file the build names in the page: the same blocks the demo page carries inline. */
 async function start() {
-  const blocks = await (await fetch(html.dataset.okfsData)).json();
+  const blocks: Record<string, { type: string; text: string }> = await (await fetch(html.dataset.okfsData!)).json();
   for (const [id, { type, text }] of Object.entries(blocks)) {
     const el = document.createElement("script");
     el.type = type;
@@ -58,11 +58,11 @@ async function start() {
   return boot();
 }
 
-function driver(handle) {
+function driver(handle: any) {
   return {
-    key: (key, opts = {}) => handle.call("key", key, opts),
-    go: (url) => handle.call("go", url),
-    scheme: (value) => handle.call("scheme", value),
+    key: (key: string, opts = {}) => handle.call("key", key, opts),
+    go: (url: string) => handle.call("go", url),
+    scheme: (value: string) => handle.call("scheme", value),
   };
 }
 
@@ -76,13 +76,13 @@ demo.catch((error) => {
 const FADE = "border-0 opacity-0 transition-opacity duration-350 ease-[ease] [&.on]:opacity-100";
 
 /** okfs in `container` at `start`, in the page's scheme. A second mount replaces the first once it is ready. */
-async function mountIn(container, at, title, look) {
+async function mountIn(container: any, at: string, title: string, look: string) {
   const { mount } = await demo;
   const old = $("iframe.okfs-frame", container);
   const sep = at.includes("?") ? "&" : "?";
   const handle = mount(container, { start: `${at}${sep}scheme=${scheme()}`, title, class: `${look} ${FADE}` });
   const drive = driver(handle);
-  const follow = (next) => void drive.scheme(next);
+  const follow = (next: string) => void drive.scheme(next);
   schemeListeners.add(follow);
   void handle.whenReady().then(() => {
     requestAnimationFrame(() => handle.frame.classList.add("on"));
@@ -117,7 +117,7 @@ demo.then(({ backend, stats }) => {
   $("#b-size").textContent = `${fmt(Math.round(stats.wasmBytes / 1024))} KB`;
   $("#b-unpack").textContent = `${stats.unpackMs.toFixed(0)} ms`;
   $("#b-compile").textContent = `${stats.compileMs.toFixed(0)} ms`;
-  backend.onStatus((s) => {
+  backend.onStatus((s: any) => {
     $("#b-count").textContent = fmt(s.ready ? s.indexed : s.seen);
     const boot = $("#boot-sub");
     if (!s.ready) {
@@ -133,7 +133,7 @@ $("#run").addEventListener("click", async () => {
   const list = $("#runs");
   list.innerHTML = "";
   for (const q of ["img_0042", "north pier 2024", "survey pdf", "button.tsx", "kelp flac"]) {
-    const r = await backend.search({ q, limit: 1 });
+    const r: any = await backend.search({ q, limit: 1 });
     const li = document.createElement("li");
     li.className =
       "grid grid-cols-[2.4em_1fr_auto] gap-2 border-b border-b-rule-faint py-1.5 before:text-ink-2 before:content-[counter(r)_'.'] before:[counter-increment:r]";
@@ -145,7 +145,7 @@ $("#run").addEventListener("click", async () => {
 
 // ---------- Fig. 3: the themes, as finishes ----------
 
-const blurbs = {
+const blurbs: Record<string, string> = {
   default: "Warm greys, one orange.",
   "tokyo-night": "Neon at night.",
   catppuccin: "Pastel Latte and Mocha.",
@@ -159,7 +159,7 @@ const blurbs = {
   flexoki: "Inky, paper-warm.",
 };
 let themeId = "tokyo-night";
-let plate = null;
+let plate: any = null;
 function showTheme() {
   $$("#chips button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === themeId)));
   $("#theme-cap").textContent = `Plate: the ${themeId} finish, ${scheme()}.`;
@@ -180,10 +180,10 @@ function showTheme() {
 }
 new IntersectionObserver(
   async ([e], obs) => {
-    if (!e.isIntersecting) return;
+    if (!e!.isIntersecting) return;
     obs.disconnect();
     const { backend } = await demo;
-    const themes = await backend.answer("/").then((r) => JSON.parse(r.body.match(/>(.*)</s)[1]).themes);
+    const themes = await backend.answer("/").then((r) => JSON.parse(r.body.match(/>(.*)</s)![1]!).themes);
     for (const t of themes) {
       const li = document.createElement("li");
       const b = document.createElement("button");
@@ -210,7 +210,7 @@ new IntersectionObserver(
 // ---------- the order coupon ----------
 
 // Every way's commands are in the page, so a reader without scripts sees them too: a tick shows one.
-function showWay(way) {
+function showWay(way: string) {
   for (const el of $$(".way")) el.hidden = el.dataset.way !== way;
 }
 for (const btn of $$(".way button")) {

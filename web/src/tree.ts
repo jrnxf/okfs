@@ -8,44 +8,58 @@ const enc = new TextEncoder();
 const EMPTY = new Uint8Array(0);
 const DAY = 86400;
 
+/** A folder fills itself with this the first time it is read. */
+export type Fill = ((dir: Dir) => void) | null;
+export type Node = File | Dir;
+
 export class File {
-  constructor(name, size, mtime, body) {
+  declare name: string;
+  declare size: number;
+  declare mtime: number;
+  declare body?: string | Uint8Array;
+  constructor(name: string, size: number, mtime: number, body?: string | Uint8Array) {
     this.name = name;
     this.size = size;
     this.mtime = mtime;
     if (body !== undefined) this.body = body;
   }
-  get isDir() {
+  get isDir(): false {
     return false;
   }
-  bytes() {
+  bytes(): Uint8Array {
     if (this.body === undefined) return EMPTY;
     if (typeof this.body === "string") this.body = enc.encode(this.body);
-    return this.body;
+    return this.body as Uint8Array;
   }
 }
 
 export class Dir {
-  constructor(name, mtime, fill) {
+  declare name: string;
+  declare mtime: number;
+  declare fill: Fill;
+  declare kids: Node[] | null;
+  declare map: Map<string, Node> | null;
+  declare hint?: number;
+  constructor(name: string, mtime: number, fill: Fill) {
     this.name = name;
     this.mtime = mtime;
     this.fill = fill;
     this.kids = null;
     this.map = null;
   }
-  get isDir() {
+  get isDir(): true {
     return true;
   }
-  list() {
+  list(): Node[] {
     if (!this.kids) {
       this.kids = [];
       const fill = this.fill;
       this.fill = null;
       fill?.(this);
     }
-    return this.kids;
+    return this.kids!;
   }
-  child(name) {
+  child(name: string): Node | undefined {
     const kids = this.list();
     // The engine asks for each name in the order the folder listed them: try the one after the last first.
     const next = kids[this.hint ?? 0];
@@ -61,29 +75,29 @@ export class Dir {
     }
     return this.map.get(name);
   }
-  add(node) {
+  add<T extends Node>(node: T): T {
     this.list();
-    this.kids.push(node);
+    this.kids!.push(node);
     this.map?.set(node.name, node);
     return node;
   }
-  remove(name) {
+  remove(name: string) {
     this.list();
-    const at = this.kids.findIndex((kid) => kid.name === name);
-    if (at >= 0) this.kids.splice(at, 1);
+    const at = this.kids!.findIndex((kid) => kid.name === name);
+    if (at >= 0) this.kids!.splice(at, 1);
     this.map?.delete(name);
   }
-  dir(name, mtime, fill) {
+  dir(name: string, mtime: number, fill: Fill): Dir {
     return this.add(new Dir(name, mtime, fill));
   }
-  file(name, size, mtime, body) {
+  file(name: string, size: number, mtime: number, body?: string | Uint8Array): File {
     return this.add(new File(name, size, mtime, body));
   }
 }
 
 // ---- seeded randomness: the same path always draws the same numbers ----
 
-export function hash(text) {
+export function hash(text: string) {
   let h = 2166136261;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
@@ -92,7 +106,7 @@ export function hash(text) {
   return h >>> 0;
 }
 
-export function rng(seed) {
+export function rng(seed: number) {
   let a = seed >>> 0;
   const next = () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -101,20 +115,20 @@ export function rng(seed) {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  next.int = (lo, hi) => lo + Math.floor(next() * (hi - lo + 1));
-  next.pick = (list) => list[Math.floor(next() * list.length)];
-  next.chance = (p) => next() < p;
+  next.int = (lo: number, hi: number) => lo + Math.floor(next() * (hi - lo + 1));
+  next.pick = <T>(list: readonly T[]): T => list[Math.floor(next() * list.length)]!;
+  next.chance = (p: number) => next() < p;
   return next;
 }
 
-const pad = (n, w = 2) => String(n).padStart(w, "0");
-const ymd = (t) => {
+const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+const ymd = (t: number) => {
   const d = new Date(t * 1000);
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 };
-const dayStart = (y, m, d) => Date.UTC(y, m - 1, d) / 1000;
-const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
-const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+const dayStart = (y: number, m: number, d: number) => Date.UTC(y, m - 1, d) / 1000;
+const daysIn = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 // ---- the words the tree is made of ----
 
@@ -182,7 +196,7 @@ const MADE = 1791763200;
  * The served folder, named `tidewater`, inside a preopen root. `now` is in seconds: file ages count back
  * from it, so a visit always finds files written today.
  */
-export function makeTree(now) {
+export function makeTree(now: number) {
   const root = new Dir("", now, null);
   root.kids = [];
   root.dir("tidewater", now - 3 * 3600, (top) => fillTop(top, now));
@@ -190,7 +204,7 @@ export function makeTree(now) {
 }
 
 /** The real tidewater files, with their sizes, and their ages counted back from `now`. */
-export const SHOWCASE = [
+export const SHOWCASE: [string, number, number][] = [
   ["README.md", 277, 1779102000],
   ["data/june-raw.csv", 5237, 1782892800],
   ["data/station-map.svg", 4664, 1779290520],
@@ -216,20 +230,20 @@ export const SHOWCASE = [
 ];
 
 /** Files beside the tidewater set, with real contents of their own. Size, age in days. */
-export const EXTRAS = [
+export const EXTRAS: [string, number, number][] = [
   ["harbor-timelapse.webm", 88162, 1.4],
   ["annual-survey-2025.pdf", 29491, 6.2],
   ["tide-chart.html", 3312, 0.6],
   ["season-plan.md", 623, 0.9],
 ];
 
-function fillTop(top, now) {
-  const age = (t) => now - (MADE - t);
-  const folders = new Map();
-  const folder = (path) => {
+function fillTop(top: Dir, now: number) {
+  const age = (t: number) => now - (MADE - t);
+  const folders = new Map<string, Dir>();
+  const folder = (path: string): Dir => {
     if (!path) return top;
-    if (!folders.has(path)) folders.set(path, folder(path.split("/").slice(0, -1).join("/")).dir(path.split("/").pop(), now, null));
-    return folders.get(path);
+    if (!folders.has(path)) folders.set(path, folder(path.split("/").slice(0, -1).join("/")).dir(path.split("/").pop()!, now, null));
+    return folders.get(path)!;
   };
   // The real files first, so the folders they sit in are made by them.
   for (const [path, size, made] of SHOWCASE) {
@@ -238,7 +252,7 @@ function fillTop(top, now) {
     dir.file(path.slice(at + 1), size, age(made));
   }
   for (const [name, size, days] of EXTRAS) top.file(name, size, Math.round(now - days * DAY));
-  for (const dir of folders.values()) dir.mtime = Math.max(...dir.kids.map((kid) => kid.mtime));
+  for (const dir of folders.values()) dir.mtime = Math.max(...dir.kids!.map((kid) => kid.mtime));
   folder("photos").dir("library", now - 9 * DAY, (dir) => fillLibrary(dir, now));
 
   top.file(".gitignore", 31, now - 300 * DAY, "scratch/\n*.tmp\n.DS_Store\n");
@@ -256,7 +270,7 @@ function fillTop(top, now) {
 }
 
 // archive/<station>/<year>/<MM>/<YYYY-MM-DD>.csv: ten-minute readings, one file a day per gauge.
-function fillArchive(dir, now) {
+function fillArchive(dir: Dir, now: number) {
   dir.file("README.md", 612, now - 220 * DAY);
   const today = new Date(now * 1000);
   const thisYear = today.getUTCFullYear();
@@ -288,7 +302,7 @@ function fillArchive(dir, now) {
 }
 
 // maps/tiles/<z>/<x>/<y>.png: a nautical chart cut into the usual web map tiles.
-function fillMaps(dir, now) {
+function fillMaps(dir: Dir, now: number) {
   const made = now - 41 * DAY;
   dir.file("README.md", 540, made - 2 * DAY);
   dir.file("harbor-chart.svg", 48211, made - 3 * DAY);
@@ -311,18 +325,18 @@ function fillMaps(dir, now) {
 }
 
 // photos/library/<year>/<MM-DD place>/IMG_####.jpg, numbered the way a camera numbers them.
-function fillLibrary(dir, now) {
+function fillLibrary(dir: Dir, now: number) {
   const thisYear = new Date(now * 1000).getUTCFullYear();
   let counter = 1;
-  const years = [];
+  const years: number[] = [];
   for (let year = 2016; year <= thisYear; year++) years.push(year);
   // Numbers run on from year to year, so they are worked out for every year up front.
   const plan = years.map((year) => {
     const r = rng(hash(`lib${year}`));
-    const shoots = [];
+    const shoots: { name: string; t: number; frames: number; first: number }[] = [];
     for (let m = 1; m <= 12; m++) {
       const count = r.int(2, 5);
-      const days = [];
+      const days: number[] = [];
       for (let k = 0; k < count; k++) days.push(r.int(1, daysIn(year, m)));
       days.sort((a, b) => a - b);
       for (const d of days) {
@@ -337,7 +351,7 @@ function fillLibrary(dir, now) {
   });
   for (const { year, shoots } of plan) {
     if (!shoots.length) continue;
-    dir.dir(String(year), shoots[shoots.length - 1].t + 2 * DAY, (y) => {
+    dir.dir(String(year), shoots[shoots.length - 1]!.t + 2 * DAY, (y) => {
       for (const shoot of shoots) {
         y.dir(shoot.name, shoot.t + DAY, (s) => {
           const r = rng(hash(`${year}/${shoot.name}`));
@@ -356,9 +370,9 @@ function fillLibrary(dir, now) {
 
 // harbor/: the code that runs the gauges, the site and the charts. Its build output and its
 // dependencies are left out of the search by its .gitignore and by okfs's own list.
-function fillHarbor(dir, now) {
+function fillHarbor(dir: Dir, now: number) {
   const r = rng(hash("harbor"));
-  const recent = (days) => now - Math.floor(r() * days * DAY);
+  const recent = (days: number) => now - Math.floor(r() * days * DAY);
   dir.file(".gitignore", 58, now - 400 * DAY, "target/\ndist/\ncoverage/\n*.log\n.turbo/\n");
   dir.file("README.md", 2210, now - 6 * DAY);
   dir.file("package.json", 1043, now - 3 * DAY);
@@ -416,10 +430,10 @@ function fillHarbor(dir, now) {
   });
 }
 
-function fillPackage(dir, path, now, lang, scale) {
+function fillPackage(dir: Dir, path: string, now: number, lang: string, scale: number) {
   const r = rng(hash(path));
-  const recent = (days) => now - Math.floor(r() * days * DAY) - 600;
-  const name = path.split("/").pop();
+  const recent = (days: number) => now - Math.floor(r() * days * DAY) - 600;
+  const name = path.split("/").pop()!;
   if (lang === "rust") {
     dir.file("Cargo.toml", 400 + r.int(0, 600), recent(90));
     dir.file("README.md", 900 + r.int(0, 3000), recent(200));
@@ -484,14 +498,14 @@ function fillPackage(dir, path, now, lang, scale) {
   }
 }
 
-function fillNodeModules(dir, now) {
+function fillNodeModules(dir: Dir, now: number) {
   const r = rng(hash("node_modules"));
   const seen = new Set();
-  const add = (name) => {
+  const add = (name: string) => {
     if (seen.has(name)) return;
     seen.add(name);
     const scoped = name.startsWith("@");
-    const fillPkg = (p) => {
+    const fillPkg = (p: Dir) => {
       const q = rng(hash(name));
       p.file("package.json", 600 + q.int(0, 3000), now - q.int(30, 900) * DAY);
       p.file("README.md", 1000 + q.int(0, 12000), now - q.int(30, 900) * DAY);
@@ -502,8 +516,8 @@ function fillNodeModules(dir, now) {
       });
     };
     if (scoped) {
-      const [scope, base] = name.split("/");
-      let s = dir.child(scope);
+      const [scope, base] = name.split("/") as [string, string];
+      let s = dir.child(scope) as Dir | undefined;
       if (!s) s = dir.dir(scope, now - 3 * DAY, null);
       s.list();
       s.dir(base, now - 3 * DAY, fillPkg);
@@ -515,7 +529,7 @@ function fillNodeModules(dir, now) {
 }
 
 // recordings/<site>/<YYYY-MM-DD>/<hh-mm>.flac: a hydrophone on each site, a few minutes every few hours.
-function fillRecordings(dir, now) {
+function fillRecordings(dir: Dir, now: number) {
   const sites = ["harbor-mouth", "kelp-bed", "north-pier", "oyster-reef", "pilot-station", "sand-spit", "mill-creek", "south-beacon"];
   dir.file("README.md", 700, now - 160 * DAY);
   for (const site of sites) {
@@ -540,7 +554,7 @@ function fillRecordings(dir, now) {
 }
 
 // notes/<year>/<MM>/<YYYY-MM-DD>.md: a note most days.
-function fillNotes(dir, now) {
+function fillNotes(dir: Dir, now: number) {
   const today = new Date(now * 1000);
   const thisYear = today.getUTCFullYear();
   for (let year = 2019; year <= thisYear; year++) {
@@ -562,7 +576,7 @@ function fillNotes(dir, now) {
   }
 }
 
-function fillPapers(dir, now) {
+function fillPapers(dir: Dir, now: number) {
   for (const topic of TOPICS) {
     dir.dir(topic, now - 18 * DAY, (t) => {
       const r = rng(hash(`papers/${topic}`));
@@ -576,7 +590,7 @@ function fillPapers(dir, now) {
   }
 }
 
-function fillScans(dir, now) {
+function fillScans(dir: Dir, now: number) {
   dir.file("README.md", 420, now - 64 * DAY);
   for (let box = 1; box <= 12; box++) {
     dir.dir(`logbook-${pad(box)}`, now - (64 + box) * DAY, (b) => {

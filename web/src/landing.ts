@@ -1,21 +1,27 @@
 // The page around okfs: okfs itself on the first screen with a short tutorial over it and the status line under
 // it, the sections that drive an okfs of their own or ask its engine directly, and the scheme.
-import { boot } from "./runtime.js";
+import { boot } from "./runtime";
 
-const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+declare global {
+  interface Window {
+    __demo?: unknown;
+  }
+}
+
+const $ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector<T>(sel)!;
+const $$ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = document) => [...root.querySelectorAll<T>(sel)];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const html = document.documentElement;
 const store = {
-  get: (key) => {
+  get: (key: string) => {
     try {
       return localStorage.getItem(`okfs-landing.${key}`);
     } catch {
       return null;
     }
   },
-  set: (key, value) => {
+  set: (key: string, value: string) => {
     try {
       localStorage.setItem(`okfs-landing.${key}`, value);
     } catch {
@@ -23,9 +29,9 @@ const store = {
     }
   },
 };
-const fmt = (n) => n.toLocaleString("en-US");
+const fmt = (n: number) => n.toLocaleString("en-US");
 const scheme = () => (html.dataset.theme === "light" ? "light" : "dark");
-const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }) as Record<string, string>)[c]!);
 
 // The search box's answers, in two columns. landing.html starts the list with the empty one.
 const HIT_BASE = "grid-cols-[18px_minmax(0,1fr)] gap-x-2 break-inside-avoid py-2";
@@ -34,9 +40,9 @@ const HIT_EMPTY = `${HIT_BASE} block cursor-default border-0 text-[15px] text-in
 
 // ---------- the page's own controls ----------
 
-const schemeListeners = new Set();
+const schemeListeners = new Set<(next: string, from?: unknown) => void>();
 /** The page's scheme, and every okfs's with it. `from` is the okfs that changed first, which is not told again. */
-function setScheme(next, from) {
+function setScheme(next: string, from?: unknown) {
   html.dataset.theme = next;
   store.set("theme", next);
   $('meta[name="theme-color"]').setAttribute("content", next === "dark" ? "#0c0c0d" : "#e8e7e2");
@@ -44,8 +50,8 @@ function setScheme(next, from) {
 }
 $("#theme").addEventListener("click", () => setScheme(scheme() === "dark" ? "light" : "dark"));
 
-let toastTimer;
-function toast(text) {
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+function toast(text: string) {
   const el = $("#toast");
   el.textContent = text;
   el.classList.add("on");
@@ -53,7 +59,7 @@ function toast(text) {
   toastTimer = setTimeout(() => el.classList.remove("on"), 2800);
 }
 
-async function copy(text) {
+async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
@@ -70,7 +76,7 @@ async function copy(text) {
 }
 for (const b of $$("[data-copy]")) {
   b.addEventListener("click", async () => {
-    const ok = await copy(b.dataset.copy);
+    const ok = await copy(b.dataset.copy!);
     const was = b.textContent;
     b.textContent = ok ? "Copied" : "Select it";
     setTimeout(() => (b.textContent = was), 1400);
@@ -85,43 +91,53 @@ for (const b of $$("[data-copy]")) {
  * on this browser; after the last, a short note says so and fades by itself. "Show tutorial" in the bar starts it
  * again. `free` hands the keys to okfs once it ends.
  */
-function makeTutorial({ free }) {
+interface TutEvent {
+  key?: string;
+  typing?: boolean;
+  chord?: boolean;
+  idle?: boolean;
+  from?: string;
+  to?: string;
+  search?: boolean;
+  scheme?: unknown;
+}
+function makeTutorial({ free }: { free: () => void }) {
   const box = $("#tut");
   const again = $("#tut-again");
-  const kb = (...keys) => keys.map((k) => `<kbd>${k}</kbd>`).join(" or ");
-  const moved = (e) => ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key) && !e.typing && !e.chord;
+  const kb = (...keys: string[]) => keys.map((k) => `<kbd>${k}</kbd>`).join(" or ");
+  const moved = (e: TutEvent) => ["j", "k", "ArrowDown", "ArrowUp"].includes(e.key!) && !e.typing && !e.chord;
   // Moves between folders, from the address okfs went to: in, back up, or to a file.
-  const into = (e) => e.to?.endsWith("/") && e.to.length > e.from.length && e.to.startsWith(e.from);
-  const out = (e) => e.to?.endsWith("/") && e.to !== e.from && e.from.startsWith(e.to);
-  const file = (e) => e.to !== undefined && !e.to.endsWith("/");
+  const into = (e: TutEvent) => e.to?.endsWith("/") && e.to.length > e.from!.length && e.to.startsWith(e.from!);
+  const out = (e: TutEvent) => e.to?.endsWith("/") && e.to !== e.from && e.from!.startsWith(e.to);
+  const file = (e: TutEvent) => e.to !== undefined && !e.to.endsWith("/");
   const hello = "<b>This is okfs, running in your tab.</b>";
-  const steps = matchMedia("(pointer: coarse)").matches
+  const steps: [string, (e: TutEvent) => unknown][] = matchMedia("(pointer: coarse)").matches
     ? [
         [`${hello} Tap a folder to open it.`, into],
         ["Tap the arrow at the top left to go back up.", out],
         ["Tap a file to open it.", file],
-        ["Tap the magnifier and type any name. It searches the whole folder.", (e) => e.search],
-        ["Tap the sun or moon at the top right to switch between dark and light.", (e) => e.scheme],
+        ["Tap the magnifier and type any name. It searches the whole folder.", (e: TutEvent) => e.search],
+        ["Tap the sun or moon at the top right to switch between dark and light.", (e: TutEvent) => e.scheme],
       ]
     : [
         [`${hello} Press ${kb("j", "↓")} to move down the list.`, moved],
         [`Press ${kb("l", "Enter")} to open the folder under the cursor.`, into],
         [`Press ${kb("h", "←")} to go back up.`, out],
         [`Move down to a file and press ${kb("Enter")} to open it.`, file],
-        [`Press ${kb(/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K")} and type any name. It searches the whole folder.`, (e) => e.search],
-        [`Press ${kb("t")} to switch between dark and light.`, (e) => e.scheme],
+        [`Press ${kb(/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K")} and type any name. It searches the whole folder.`, (e: TutEvent) => e.search],
+        [`Press ${kb("t")} to switch between dark and light.`, (e: TutEvent) => e.scheme],
       ];
   const last = matchMedia("(pointer: coarse)").matches ? "That is all. The folder is yours to look around." : `That is all. Press ${kb("?")} in okfs for every key.`;
   let at = -1;
   let here = "/";
-  let fading;
+  let fading: ReturnType<typeof setTimeout> | undefined;
 
-  function show(i) {
+  function show(i: number) {
     if (i === steps.length) return finish();
     clearTimeout(fading);
     at = i;
     $("#tut-n").textContent = `${i + 1} of ${steps.length}`;
-    $("#tut-say").innerHTML = steps[i][0];
+    $("#tut-say").innerHTML = steps[i]![0];
     $("#tut-do").hidden = false;
     box.classList.remove("fin", "out");
     box.hidden = false;
@@ -155,9 +171,9 @@ function makeTutorial({ free }) {
     }, 3500);
   }
   /** Something happened in okfs: the hint on show is done if it asked for that. */
-  function heard(e) {
+  function heard(e: TutEvent) {
     if (e.key === "Escape" && e.idle && at >= 0) return end();
-    if (at >= 0 && at < steps.length && steps[at][1](e)) show(at + 1);
+    if (at >= 0 && at < steps.length && steps[at]![1](e)) show(at + 1);
   }
 
   $("#tut-next").addEventListener("click", () => show(at + 1));
@@ -172,8 +188,8 @@ function makeTutorial({ free }) {
     on: () => at >= 0,
     end,
     heard,
-    went(path) {
-      const to = path.split("?")[0];
+    went(path: string) {
+      const to = path.split("?")[0]!;
       const from = here;
       here = to;
       if (to !== from) heard({ from, to });
@@ -207,30 +223,34 @@ $("#bones").append(say);
 // ---------- driving okfs from outside its frame ----------
 
 /** Presses, holds and types into okfs's page in a frame, the way a person would, by messages to it. */
-function driver(handle) {
+interface Handle {
+  call(op: string, ...args: unknown[]): Promise<any>;
+}
+function driver(handle: Handle) {
   return {
-    key: (key, opts = {}) => handle.call("key", key, opts),
-    hold: (key, ms, every = 50) => handle.call("hold", key, ms, every),
-    down: (key, repeat) => handle.call("down", key, repeat),
-    up: (key) => handle.call("up", key),
-    type: (text, delay = 90) => handle.call("type", text, delay),
+    key: (key: string, opts: Record<string, unknown> = {}) => handle.call("key", key, opts),
+    hold: (key: string, ms: number, every = 50) => handle.call("hold", key, ms, every),
+    down: (key: string, repeat: boolean) => handle.call("down", key, repeat),
+    up: (key: string) => handle.call("up", key),
+    type: (text: string, delay = 90) => handle.call("type", text, delay),
     /** Goes to an address in okfs's page, as the browser's back and forward do. */
-    go: (url) => handle.call("go", url),
+    go: (url: string) => handle.call("go", url),
     palette: () => handle.call("palette"),
     closeAll: () => handle.call("closeAll"),
-    scheme: (value) => handle.call("scheme", value),
+    scheme: (value: string) => handle.call("scheme", value),
   };
 }
 
-const prettyPath = (url) => {
+const prettyPath = (url: string) => {
   const u = new URL(url, "http://okfs.demo");
   const find = u.searchParams.get("find");
   return decodeURIComponent(u.pathname) + (find !== null ? `?find=${find}` : "");
 };
 
 // The things to try, in the status line. Disabled until okfs is up.
-const chips = [
-  ["j", "photos", "Hold j through the photos", async (d) => {
+type Driver = ReturnType<typeof driver>;
+const chips: [string, string, string, (d: Driver) => unknown][] = [
+  ["j", "photos", "Hold j through the photos", async (d: Driver) => {
     await d.go("/photos/");
     await sleep(700);
     d.key("Home");
@@ -239,26 +259,26 @@ const chips = [
     await sleep(500);
     await d.hold("j", 1400, 60);
   }],
-  ["⌘K", "find", "Find anything", async (d) => {
+  ["⌘K", "find", "Find anything", async (d: Driver) => {
     await d.closeAll();
     await d.palette();
     await sleep(350);
     await d.type("tide", 110);
   }],
-  ["⏎", "list", "Every match in the list", (d) => d.go("/?find=readme")],
-  [".", "hidden", "Show hidden: node_modules", async (d) => {
+  ["⏎", "list", "Every match in the list", (d: Driver) => d.go("/?find=readme")],
+  [".", "hidden", "Show hidden: node_modules", async (d: Driver) => {
     await d.go("/harbor/");
     await sleep(700);
     d.key(".");
   }],
-  ["▶", "film", "Play the timelapse", (d) => d.go("/harbor-timelapse.webm")],
-  ["↗", "pdf", "Open the PDF", (d) => d.go("/annual-survey-2025.pdf")],
-  ["r", "render", "Markdown, rendered", async (d) => {
+  ["▶", "film", "Play the timelapse", (d: Driver) => d.go("/harbor-timelapse.webm")],
+  ["↗", "pdf", "Open the PDF", (d: Driver) => d.go("/annual-survey-2025.pdf")],
+  ["r", "render", "Markdown, rendered", async (d: Driver) => {
     await d.go("/field-notes.md");
     await sleep(600);
     d.key("r");
   }],
-  ["?", "keys", "All the keys", (d) => d.key("?")],
+  ["?", "keys", "All the keys", (d: Driver) => d.key("?")],
 ];
 const chipButtons = chips.map(([k, short, label, run]) => {
   const b = document.createElement("button");
@@ -270,7 +290,7 @@ const chipButtons = chips.map(([k, short, label, run]) => {
     "cursor-pointer border-0 border-l border-l-rule bg-transparent px-3 py-0 text-ink-2 hover:bg-bg-2 hover:text-ink disabled:cursor-default disabled:bg-transparent disabled:opacity-45 [&.running]:bg-bg-2 [&.running]:text-ink under-1100:h-10 under-1100:truncate under-1100:border-r under-1100:border-l-0 under-1100:border-r-rule under-1100:px-1.5 under-1100:last:border-r-0 under-760:nth-[4n]:border-r-0 under-760:nth-[n+5]:border-t under-760:nth-[n+5]:border-t-rule";
   b.innerHTML = `<kbd class="mr-1.5 text-spot">${esc(k)}</kbd>${esc(short)}`;
   $("#keys").append(b);
-  return [b, run];
+  return [b, run] as const;
 });
 
 // ---------- start ----------
@@ -284,10 +304,30 @@ async function main() {
   const { backend } = demo;
 
   $("#term-version").textContent = demo.stats.version;
-  const frames = new Map();
+  interface Msg {
+    url: string;
+    key: string;
+    repeat?: boolean;
+    scheme: string;
+    text: string;
+  }
+  interface MountOpts {
+    pathEl?: HTMLElement;
+    title?: string;
+    onKey?: (key: string, m: Msg) => unknown;
+    onNav?: (path: string) => void;
+    onReq?: (url: string) => void;
+    onScheme?: (value: string) => unknown;
+  }
+  interface Entry {
+    handle: any;
+    drive: Driver;
+    path: () => string;
+  }
+  const frames = new Map<HTMLElement, Entry>();
 
   /** Mounts okfs in a container, opening at `start` with the page's scheme. A second mount replaces the first. */
-  function mountIn(container, start, { pathEl, title, onKey, onNav, onReq, onScheme } = {}) {
+  function mountIn(container: HTMLElement, start: string, { pathEl, title, onKey, onNav, onReq, onScheme }: MountOpts = {}): Entry {
     const old = frames.get(container);
     const sep = start.includes("?") ? "&" : "?";
     const at = start.includes("scheme=") ? start : `${start}${sep}scheme=${scheme()}`;
@@ -297,15 +337,15 @@ async function main() {
       title: title ?? "okfs, running in this page",
       class: "absolute inset-0 block size-full border-0 opacity-0 transition-opacity duration-400 ease-page [&.on]:opacity-100",
       on: {
-        nav: (m) => {
+        nav: (m: string | Msg) => {
           path = prettyPath(typeof m === "string" ? m : m.url);
           if (pathEl) pathEl.textContent = path;
           onNav?.(path);
         },
-        key: (m) => !m.repeat && onKey?.(m.key, m),
-        req: (m) => onReq?.(m.url),
-        scheme: (m) => onScheme?.(m.scheme),
-        toast: (m) => toast(m.text),
+        key: (m: Msg) => !m.repeat && onKey?.(m.key, m),
+        req: (m: Msg) => onReq?.(m.url),
+        scheme: (m: Msg) => onScheme?.(m.scheme),
+        toast: (m: Msg) => toast(m.text),
       },
     });
     void handle.whenReady().then(() => {
@@ -329,7 +369,7 @@ async function main() {
   const hero = mountIn(heroView, "/", {
     pathEl: $("#path"),
     title: "okfs serving the demo folder tidewater",
-    onKey: (key, m) => tutorial.heard({ key, ...m }),
+    onKey: (key, m) => tutorial.heard({ key, ...(m as Partial<typeof m>) }),
     onNav: (path) => tutorial.went(path),
     onReq: (url) => {
       const q = new URL(url, "http://okfs.demo").searchParams.get("q") ?? "";
@@ -345,15 +385,15 @@ async function main() {
   });
 
   let heroVisible = true;
-  new IntersectionObserver(([e]) => (heroVisible = e.intersectionRatio > 0.3), { threshold: [0, 0.3, 0.6, 1] }).observe(heroView);
+  new IntersectionObserver(([e]) => (heroVisible = e!.intersectionRatio > 0.3), { threshold: [0, 0.3, 0.6, 1] }).observe(heroView);
 
   // A key pressed on the page with nothing on it focused goes to okfs while okfs is on screen, so the hints
   // work without a click in first. The focus moves into okfs with it: the keys after go straight there.
   const OKFS_KEYS = new Set(["j", "k", "h", "l", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter", "Home", "End", "/", ".", "t", "?"]);
-  addEventListener("keydown", (e) => {
+  addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.defaultPrevented || !heroVisible) return;
-    if (e.key === "Escape" && tutorial.on() && !e.target.closest?.("input, textarea, select")) return void tutorial.end();
-    const free = e.target === document.body || e.target === html || ($("#tut").contains(e.target) && e.key !== "Enter" && e.key !== " ");
+    if (e.key === "Escape" && tutorial.on() && !(e.target as Element).closest?.("input, textarea, select")) return void tutorial.end();
+    const free = e.target === document.body || e.target === html || ($("#tut").contains(e.target as Node | null) && e.key !== "Enter" && e.key !== " ");
     const find = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k";
     if (!free || !(find || (!e.ctrlKey && !e.metaKey && !e.altKey && OKFS_KEYS.has(e.key)))) return;
     e.preventDefault();
@@ -363,7 +403,7 @@ async function main() {
   });
 
   // The numbers in the status line.
-  backend.onStatus((s) => {
+  backend.onStatus((s: { ready: boolean; indexed: number; seen: number; walkMs: number }) => {
     const n = s.ready ? s.indexed : s.seen;
     $("#st-count").textContent = fmt(n);
     if (!s.ready) {
@@ -403,14 +443,14 @@ async function main() {
   }
 
   // ---- 01: the search box, straight to the engine ----
-  const find = $("#find");
+  const find = $<HTMLInputElement>("#find");
   const hits = $("#hits");
-  const marked = (text, idx, offset) => {
+  const marked = (text: string, idx: number[], offset: number) => {
     const at = new Set(idx.map((i) => i - offset));
     return [...text].map((c, i) => (at.has(i) ? `<mark class="bg-transparent text-spot">${esc(c)}</mark>` : esc(c))).join("");
   };
   let asked = 0;
-  async function search(q) {
+  async function search(q: string) {
     const id = ++asked;
     if (!q.trim()) {
       hits.innerHTML = `<li class="${HIT_EMPTY}">Type a few letters of any name, or pick one above.</li>`;
@@ -418,7 +458,12 @@ async function main() {
       $("#find-total").textContent = "0";
       return;
     }
-    const found = await backend.search({ q, limit: 12 });
+    const found = (await backend.search({ q, limit: 12 })) as {
+      took: number;
+      total: number;
+      indexed: number;
+      hits: { path: string; name?: boolean; dir?: boolean; idx: number[] }[];
+    };
     if (id !== asked) return;
     $("#find-ms").textContent = found.took.toFixed(1);
     $("#f-ms").textContent = `${found.took.toFixed(0)} ms`;
@@ -438,9 +483,9 @@ async function main() {
   }
   find.addEventListener("input", () => void search(find.value));
   hits.addEventListener("click", (e) => {
-    const li = e.target.closest("li[data-path]");
+    const li = (e.target as Element).closest<HTMLElement>("li[data-path]");
     if (!li) return;
-    void heroDrive.go(`/${li.dataset.path.split("/").map(encodeURIComponent).join("/")}${li.dataset.dir === "1" ? "/" : ""}`);
+    void heroDrive.go(`/${li.dataset.path!.split("/").map(encodeURIComponent).join("/")}${li.dataset.dir === "1" ? "/" : ""}`);
     scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
   });
   for (const q of ["tide", "img_0042", "north pier 2024", "button.tsx", "readme", "survey pdf", "kelp flac"]) {
@@ -463,10 +508,10 @@ async function main() {
   void search(find.value);
 
   // ---- sections with an okfs of their own, started when they come into view ----
-  const lazy = (el, fn) =>
+  const lazy = (el: Element, fn: () => void) =>
     new IntersectionObserver(
       ([e], obs) => {
-        if (!e.isIntersecting) return;
+        if (!e!.isIntersecting) return;
         obs.disconnect();
         fn();
       },
@@ -476,36 +521,36 @@ async function main() {
   // 02: keys, with each key shown in the status line as it is pressed.
   const keysView = $("#keys-view");
   const hud = $("#hud");
-  const showHud = (k) => {
-    const label = { ArrowDown: "↓", ArrowUp: "↑", ArrowLeft: "←", ArrowRight: "→", Enter: "⏎", Escape: "esc", " ": "space", Backspace: "⌫" }[k] ?? k;
+  const showHud = (k: string) => {
+    const label = ({ ArrowDown: "↓", ArrowUp: "↑", ArrowLeft: "←", ArrowRight: "→", Enter: "⏎", Escape: "esc", " ": "space", Backspace: "⌫" } as Record<string, string>)[k] ?? k;
     const el = document.createElement("kbd");
     el.className = "animate-[hud_.9s_var(--ease)_forwards] border border-rule px-1.5 py-0.75 [font:12px/1_var(--mono)] text-ink";
     el.textContent = label;
     hud.append(el);
-    while (hud.children.length > 6) hud.firstChild.remove();
+    while (hud.children.length > 6) hud.firstChild!.remove();
     setTimeout(() => el.remove(), 900);
   };
-  let keys;
+  let keys: Entry | undefined;
   lazy(keysView, () => {
-    keys = mountIn(keysView, keysView.dataset.start, { pathEl: $('[data-path-for="keys"]'), onKey: showHud });
-    void keys.handle.whenReady().then(async () => {
+    keys = mountIn(keysView, keysView.dataset.start!, { pathEl: $('[data-path-for="keys"]'), onKey: showHud });
+    void keys!.handle.whenReady().then(async () => {
       await sleep(500);
-      keys.drive.key("Home");
-      keys.drive.key("l");
+      keys!.drive.key("Home");
+      keys!.drive.key("l");
       await sleep(500);
-      keys.drive.key("j");
+      keys!.drive.key("j");
     });
   });
   const hold = $("#hold");
-  let holding = null;
-  const startHold = (e) => {
+  let holding: ReturnType<typeof setInterval> | null = null;
+  const startHold = (e: Event) => {
     e.preventDefault();
     if (!keys || holding) return;
     hold.classList.add("down");
     showHud("j");
     let first = true;
     holding = setInterval(() => {
-      void keys.drive.down("j", !first);
+      void keys!.drive.down("j", !first);
       first = false;
     }, 60);
   };
@@ -518,13 +563,13 @@ async function main() {
   };
   hold.addEventListener("pointerdown", startHold);
   for (const type of ["pointerup", "pointerleave", "pointercancel"]) hold.addEventListener(type, endHold);
-  hold.addEventListener("keydown", (e) => {
+  hold.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === " " || e.key === "Enter") startHold(e);
   });
   hold.addEventListener("keyup", endHold);
 
   // 03: previews of each kind.
-  const kinds = [
+  const kinds: [string, string, string][] = [
     ["Picture", "/photos/05-headland.jpg", "#c05fb0"],
     ["Video", "/harbor-timelapse.webm", "#d9772b"],
     ["Sound", "/harbor-bell.wav", "#d9772b"],
@@ -538,9 +583,9 @@ async function main() {
     ["Zip", "/survey-2026.zip", "#8a6fd1"],
   ];
   const previewsView = $("#previews-view");
-  let previews;
+  let previews: Entry | undefined;
   const kindBox = $("#kinds");
-  const pressKind = (path) => $$("button", kindBox).forEach((k) => k.setAttribute("aria-pressed", String(k.dataset.path === path)));
+  const pressKind = (path: string | undefined) => $$("button", kindBox).forEach((k) => k.setAttribute("aria-pressed", String(k.dataset.path === path)));
   for (const [label, path, color] of kinds) {
     const b = document.createElement("button");
     b.type = "button";
@@ -557,12 +602,12 @@ async function main() {
     kindBox.append(b);
   }
   pressKind(previewsView.dataset.start);
-  lazy(previewsView, () => (previews = mountIn(previewsView, previewsView.dataset.start, { pathEl: $('[data-path-for="previews"]') })));
+  lazy(previewsView, () => (previews = mountIn(previewsView, previewsView.dataset.start!, { pathEl: $('[data-path-for="previews"]') })));
 
   // 04: themes. okfs reads ?theme= when its page starts, so each choice starts it again.
   const themesView = $("#themes-view");
   const themeList = $("#theme-list");
-  const blurbs = {
+  const blurbs: Record<string, string> = {
     default: "Warm greys and one orange.",
     "tokyo-night": "Neon at night, crisp blue by day.",
     catppuccin: "Pastel Latte and Mocha.",
@@ -577,7 +622,7 @@ async function main() {
   };
   let themeId = "tokyo-night";
   let themeScheme = scheme();
-  const themeInfos = await backend.answer("/").then((r) => JSON.parse(r.body.match(/>(.*)</s)[1]).themes);
+  const themeInfos = await backend.answer("/").then((r) => JSON.parse(r.body.match(/>(.*)</s)![1]!).themes);
   const showTheme = () => {
     $$("button", themeList).forEach((t) => t.setAttribute("aria-pressed", String(t.dataset.id === themeId)));
     $$("[data-scheme]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.scheme === themeScheme)));
@@ -614,7 +659,7 @@ async function main() {
   }
   for (const b of $$("[data-scheme]")) {
     b.addEventListener("click", () => {
-      themeScheme = b.dataset.scheme;
+      themeScheme = b.dataset.scheme!;
       showTheme();
     });
   }
@@ -622,12 +667,12 @@ async function main() {
 
   // 05: the folder, followed.
   const liveView = $("#live-view");
-  let live;
+  let live: Entry | undefined;
   const today = new Date();
   const monthDir = `notes/${today.getFullYear()}/${String(today.getMonth() + 1).padStart(2, "0")}`;
   liveView.dataset.start = `/${monthDir}/`;
   $('[data-path-for="live"]').textContent = `/${monthDir}/`;
-  lazy(liveView, () => (live = mountIn(liveView, liveView.dataset.start, { pathEl: $('[data-path-for="live"]') })));
+  lazy(liveView, () => (live = mountIn(liveView, liveView.dataset.start!, { pathEl: $('[data-path-for="live"]') })));
   let written = 0;
   $("#write").addEventListener("click", async () => {
     written += 1;

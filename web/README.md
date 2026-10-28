@@ -16,22 +16,22 @@ entries that the page makes in the visitor's browser.
   `src/every.rs` as they are, for `wasm32-wasip1`, and exports what the page asks: open, build (the first walk),
   search, recent, list, and reread (which returns what the index's feed told, as `/api/events` sends it).
   `list` is server.rs `list_folder` without the readme and links.
-- `src/wasi.js`: the WASI calls the engine imports, over a folder held in memory. `src/tree.js` makes that
+- `src/wasi.ts`: the WASI calls the engine imports, over a folder held in memory. `src/tree.ts` makes that
   folder, "tidewater", from a seed: the same tree in every tab and in the index's worker.
-- `src/backend.js`: okfs's HTTP API as its page sees it: listings and search from the engine, previews from
-  `demo/answers.json`. `src/media.js`: which real file, picture or template stands behind a path.
-  `src/pictures.js`: the pictures and the bell, drawn from a seed.
+- `src/backend.ts`: okfs's HTTP API as its page sees it: listings and search from the engine, previews from
+  `demo/answers.json`. `src/media.ts`: which real file, picture or template stands behind a path.
+  `src/pictures.ts`: the pictures and the bell, drawn from a seed.
 - `src/frame-host.ts`, `src/frame-address.ts`: inside okfs's frame. okfs's page talks to its server with
   `fetch` and `EventSource`, and puts some addresses straight into `src`; here all of it goes to the page by
   messages, so the site works wherever it is put, even where each frame gets an origin of its own (a
   sandbox, okfs serving the file). okfs reads its own address with `location` and `history`; `build.ts`
   points those reads at the frame's virtual address bar. No other change is made to okfs's page.
-- `src/landing.html`, `src/landing.js`, `src/runtime.js`: the page around okfs. okfs fills the first screen,
+- `src/landing.html`, `src/landing.ts`, `src/runtime.ts`: the page around okfs. okfs fills the first screen,
   with a short tutorial over it on a first visit (a few hints, each done by doing it in okfs, and a Skip) and a
   status line under it that holds the counts and the things to try; the sections below each drive an
   okfs of their own or ask its engine directly. Its two faces, Mona Sans and Fragment Mono, come from the
   `@fontsource` packages in `package.json`, and `build.ts` writes them into the page.
-- `src/site.html`, `src/site.js`: the front page. It uses `runtime.js` like the demo, fed the same blocks from
+- `src/site.html`, `src/site.ts`: the front page. It uses `runtime.ts` like the demo, fed the same blocks from
   the data file `build.ts` writes beside it. Its two faces, Fraunces and IBM Plex Mono, come from the
   `@fontsource` packages in `package.json`; `build.ts` copies them to `dist/fonts/`.
 - `public/og.png`: the picture a link to the site shows, okfs's logo and its line at 1200 by 630.
@@ -62,7 +62,7 @@ cargo build --release
 node web/bake.mjs target/release/okfs
 ```
 
-`build.ts` checks that every file in `demo/files/` has the size `src/tree.js` gives it.
+`build.ts` checks that every file in `demo/files/` has the size `src/tree.ts` gives it.
 
 ## Deploy
 

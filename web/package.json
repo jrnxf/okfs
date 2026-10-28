@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "./build.sh",
+    "check": "../ui/node_modules/.bin/tsc -p tsconfig.json",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

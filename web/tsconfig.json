@@ -1,0 +1,5 @@
+{
+  "extends": "../ui/tsconfig.json",
+  "compilerOptions": { "allowImportingTsExtensions": true, "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"], "typeRoots": ["../ui/node_modules/@types"] },
+  "include": ["src", "build.ts", "../ui/src", "../ui/css.ts"]
+}

@@ -3,7 +3,7 @@
 // here both go to the page. What okfs puts straight into `src` (pictures, players, frames) is made here, from the
 // bytes the page handed over when the frame started.
 import { urls } from "../../ui/src/api";
-import { sourceOf } from "./media.js";
+import { sourceOf } from "./media";
 import { address } from "./frame-address";
 import { setScheme } from "../../ui/src/theme";
 
@@ -55,7 +55,7 @@ post({ t: "hello" });
 
 // ---- the server ----
 
-window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+window.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   if (init?.signal?.aborted) throw new DOMException("The request was dropped", "AbortError");
   const id = nextId++;
@@ -65,7 +65,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
   });
   if (init?.signal?.aborted) throw new DOMException("The request was dropped", "AbortError");
   return new Response(answer.status === 204 ? null : answer.body, { status: answer.status, headers: answer.headers });
-};
+}) as typeof fetch;
 
 class DemoEventSource extends EventTarget {
   readyState = 0;
@@ -160,7 +160,7 @@ for (const type of ["pointerdown", "wheel", "touchstart"]) addEventListener(type
 // no file or matches open, no text being typed.
 addEventListener(
   "keydown",
-  (event) => {
+  (event: KeyboardEvent) => {
     if (!event.isTrusted) return;
     const typing = Boolean((event.target as Element | null)?.closest?.("input, textarea, select, [contenteditable]"));
     const { pathname, search } = address.__vloc;

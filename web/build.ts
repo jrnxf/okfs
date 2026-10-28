@@ -62,10 +62,10 @@ async function bundle(entry: string, plugins: BunPlugin[] = [], format: "iife" |
 const frameBoot = await bundle("src/demo-boot.ts", [virtualAddress]);
 // A module: it waits, at its top level, for the page around the frame to hand over the files (wait-for-host.ts).
 const frameMain = await bundle("src/demo-main.tsx", [virtualAddress, noEditor], "esm");
-const worker = await bundle("src/worker.js");
-const pictures = await bundle("src/pictures-worker.js");
-const landing = await bundle("src/landing.js");
-const site = await bundle("src/site.js");
+const worker = await bundle("src/worker.ts");
+const pictures = await bundle("src/pictures-worker.ts");
+const landing = await bundle("src/landing.ts");
+const site = await bundle("src/site.ts");
 
 // okfs's stylesheet, as ui/build.ts makes it, with the latin fonts only (the demo folder is plain latin).
 const FONTS = ["geist-latin-wght-normal", "geist-mono-latin-wght-normal", "newsreader-latin-opsz-normal", "newsreader-latin-opsz-italic"];
@@ -97,8 +97,8 @@ const TYPES: Record<string, string> = {
 const filesDir = join(web, "demo/files");
 const walk = (dir: string): string[] =>
   readdirSync(dir).flatMap((name) => (statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)]));
-const { SHOWCASE, EXTRAS } = await import("./src/tree.js");
-const sizes = new Map<string, number>([...SHOWCASE, ...EXTRAS].map(([path, size]: [string, number]) => [path, size]));
+const { SHOWCASE, EXTRAS } = await import("./src/tree.ts");
+const sizes = new Map<string, number>(([...SHOWCASE, ...EXTRAS] as [string, number, number][]).map(([path, size]) => [path, size]));
 const files: Record<string, { type: string; data: string }> = {};
 for (const file of walk(filesDir)) {
   const path = relative(filesDir, file);
@@ -130,7 +130,7 @@ if (/<(body|head)\b|<\/(body|head)>/i.test(landing)) throw new Error("the landin
 let page = readFileSync(join(web, "src/landing.html"), "utf8");
 for (const marker of ["<!--okfs:data-->", "{{landing-css}}"]) if (!page.includes(marker)) throw new Error(`landing.html has no ${marker}`);
 // Its stylesheet, with the utilities its markup and its script use.
-const landingCss = await buildCss(join(web, "src/landing.css"), ["src/landing.html", "src/landing.js"].map((file) => join(web, file)));
+const landingCss = await buildCss(join(web, "src/landing.css"), ["src/landing.html", "src/landing.ts"].map((file) => join(web, file)));
 page = page.replace("{{landing-css}}", () => landingCss);
 // The page's own two faces, latin only, written into its stylesheet: the site is one file.
 const pageFonts: Record<string, string> = {
@@ -165,7 +165,7 @@ const dataFile = `okfs-demo.${createHash("sha256").update(dataJson).digest("hex"
 let front = readFileSync(join(web, "src/site.html"), "utf8");
 for (const marker of ["{{okfs-data}}", "<!--okfs:site-->", "{{site-css}}"]) if (!front.includes(marker)) throw new Error(`site.html has no ${marker}`);
 // Its stylesheet, with the utilities its markup and its script use.
-const siteCss = await buildCss(join(web, "src/site.css"), ["src/site.html", "src/site.js"].map((file) => join(web, file)));
+const siteCss = await buildCss(join(web, "src/site.css"), ["src/site.html", "src/site.ts"].map((file) => join(web, file)));
 front = front
   .replaceAll("{{okfs-data}}", `/${dataFile}`)
   .replace("{{site-css}}", () => siteCss)
