@@ -131,7 +131,11 @@ fn write(root: &Root, index: &Index, rel: &str, top: &Path, all: bool, pipe: Pip
     while let Some((dir, rules)) = todo.pop() {
         let at = top.join(&dir);
         let mut seen = root.scan(&at)?;
-        let here = if dir.is_empty() { rel.to_owned() } else { paths::join(rel, &dir) };
+        let here = if dir.is_empty() {
+            rel.to_owned()
+        } else {
+            paths::join(rel, &dir)
+        };
         if !all {
             seen.retain(|e| !index.hides(&rules, &here, &e.name, e.dir));
         }
