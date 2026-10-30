@@ -1840,6 +1840,7 @@ dependencies = [
  "tower-http",
  "two-face",
  "webbrowser",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

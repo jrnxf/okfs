@@ -149,8 +149,37 @@ fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
     })
 }
 
+/// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` refuses a taken name in one step, for a file
+/// and a folder alike, and refuses to cross disks. Any other failure of the kind a disk without
+/// that support gives, such as a FAT volume or an SMB share, is `Unsupported`.
+#[cfg(windows)]
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{
+        ERROR_ALREADY_EXISTS, ERROR_CALL_NOT_IMPLEMENTED, ERROR_FILE_EXISTS, ERROR_INVALID_FUNCTION,
+        ERROR_NOT_SAME_DEVICE, ERROR_NOT_SUPPORTED,
+    };
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: both are NUL-terminated and live for the call.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } != 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    Err(match error.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => io::ErrorKind::AlreadyExists.into(),
+        Some(ERROR_NOT_SAME_DEVICE) => io::ErrorKind::CrossesDevices.into(),
+        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION | ERROR_CALL_NOT_IMPLEMENTED) => {
+            io::ErrorKind::Unsupported.into()
+        }
+        _ => error,
+    })
+}
+
 /// No rename here can refuse a name that is taken, so none is tried.
-#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple", windows)))]
 fn rename_exclusive(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::ErrorKind::Unsupported.into())
 }
@@ -410,6 +439,38 @@ mod tests {
         drop(part);
         assert_eq!(fs::read_to_string(dir.join("free.txt")).unwrap(), "new");
         assert_eq!(names(dir), ["free.txt", "taken.txt"]);
+    }
+
+    #[test]
+    fn an_exclusive_rename_never_lands_on_an_entry_and_moves_a_file_or_a_folder_in_one_step() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        fs::create_dir(dir.join("box")).unwrap();
+        fs::write(dir.join("box/a.txt"), "a").unwrap();
+        fs::write(dir.join("from.txt"), "new").unwrap();
+        fs::write(dir.join("taken.txt"), "old").unwrap();
+        fs::create_dir(dir.join("empty")).unwrap();
+
+        for (from, taken) in [
+            ("from.txt", "taken.txt"),
+            ("from.txt", "empty"),
+            ("box", "taken.txt"),
+            ("box", "empty"),
+        ] {
+            match rename_exclusive(&dir.join(from), &dir.join(taken)) {
+                Err(error) if error.kind() == io::ErrorKind::Unsupported => return,
+                Err(error) => assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{from} over {taken}"),
+                Ok(()) => panic!("{from} replaced {taken}"),
+            }
+        }
+        assert_eq!(names(dir), ["box", "empty", "from.txt", "taken.txt"]);
+        assert_eq!(fs::read_to_string(dir.join("taken.txt")).unwrap(), "old");
+
+        rename_exclusive(&dir.join("from.txt"), &dir.join("free.txt")).unwrap();
+        rename_exclusive(&dir.join("box"), &dir.join("moved")).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("free.txt")).unwrap(), "new");
+        assert_eq!(fs::read_to_string(dir.join("moved/a.txt")).unwrap(), "a");
+        assert_eq!(names(dir), ["empty", "free.txt", "moved", "taken.txt"]);
     }
 
     #[test]
