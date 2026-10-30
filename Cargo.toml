@@ -4,10 +4,14 @@ version = "0.1.0-dev.1"
 edition = "2024"
 description = "An open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search."
 readme = "README.md"
+repository = "https://github.com/jrnxf/okfs"
 license = "MIT"
 keywords = ["file-server", "file-browser", "http", "preview"]
 categories = ["command-line-utilities", "web-programming::http-server"]
+# Held back until the first release: a published version can never be deleted, only yanked.
 publish = false
+# What cargo package ships. ui/dist is the built page, so a cargo install needs no bun.
+include = ["/src/**", "/build.rs", "/themes/**", "/ui/dist/**", "/ui/src/styles/tokens.css", "/README.md", "/LICENSE", "/THIRD_PARTY.md", "/about.*"]
 
 [profile.release]
 lto = "thin"
@@ -27,7 +31,7 @@ pdf = ["dep:hayro"]
 ammonia = "4.2.3"
 axum = "0.8.9"
 bytes = "1.12.1"
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
 clap_complete = "4.6.11"
 clap_mangen = "0.2.33"
 csv = "1.4.0"
