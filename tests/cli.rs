@@ -268,27 +268,167 @@ fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
-#[test]
-fn an_option_can_come_from_the_environment_and_a_flag_beats_it() {
+/// A folder to serve, and the cache folder beside it.
+fn folder() -> (TempDir, PathBuf, PathBuf) {
     let tmp = TempDir::new().unwrap();
     let served = tmp.path().join("served");
-    fs::create_dir_all(&served).unwrap();
+    fs::create_dir_all(served.join("docs")).unwrap();
+    fs::write(served.join("docs/note.txt"), "note").unwrap();
     let cache = tmp.path().join("cache");
+    (tmp, served, cache)
+}
 
-    // The environment alone does what the flag does.
+/// okfs on `port 0` with `args` and these environment variables, and no folder given.
+fn from_env(cache: &Path, vars: &[(&str, &str)], args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_okfs"));
+    command
+        .args(["--no-open", "--port", "0"])
+        .args(args)
+        .env("XDG_CACHE_HOME", cache)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for (name, value) in vars {
+        command.env(name, value);
+    }
+    command
+}
+
+/// What okfs says when it refuses to start with these options: its exit code and its error.
+fn refused(served: &Path, cache: &Path, vars: &[(&str, &str)], args: &[&str]) -> (Option<i32>, String) {
+    let mut command = okfs(served, cache, args);
+    command
+        .args(["--port", "0"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    for (name, value) in vars {
+        command.env(name, value);
+    }
+    let output = command.output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn an_option_can_come_from_the_environment() {
+    let (_tmp, served, cache) = folder();
     let port = free_port();
     let mut command = okfs(&served, &cache, &[]);
     command.env("OKFS_PORT", port.to_string()).env("OKFS_ASK_KEY", "true");
-    let from_env = listening(command);
-    assert_eq!(from_env.port, port);
-    assert!(from_env.key.is_some(), "{}", from_env.said);
-    drop(from_env);
+    let running = listening(command);
+    assert_eq!(running.port, port);
+    assert!(running.key.is_some(), "{}", running.said);
+}
 
-    // Both given: the flag wins.
-    let (from_env, from_flag) = (free_port(), free_port());
+#[test]
+fn the_folder_comes_from_the_environment_and_a_folder_given_beats_it() {
+    let (tmp, served, cache) = folder();
+    let other = tmp.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+
+    let running = listening(from_env(&cache, &[("OKFS_PATH", served.to_str().unwrap())], &[]));
+    assert!(running.said.contains("served"), "{}", running.said);
+
+    let running = listening(from_env(
+        &cache,
+        &[("OKFS_PATH", served.to_str().unwrap())],
+        &[other.to_str().unwrap()],
+    ));
+    assert!(running.said.contains("other"), "{}", running.said);
+}
+
+#[test]
+fn a_flag_beats_the_same_option_in_the_environment() {
+    let (_tmp, served, cache) = folder();
+    // Hold the port the variable names. If the variable won, okfs could not bind it and would exit
+    // before it printed an address: the test passes only when the flag won.
+    let held = TcpListener::bind("127.0.0.1:0").unwrap();
+    let from_env = held.local_addr().unwrap().port();
+    let from_flag = free_port();
+    assert_ne!(from_env, from_flag);
+
     let mut command = okfs(&served, &cache, &["--port", &from_flag.to_string()]);
     command.env("OKFS_PORT", from_env.to_string());
     assert_eq!(listening(command).port, from_flag);
+}
+
+#[test]
+fn allow_host_in_the_environment_is_a_list_split_on_commas() {
+    let (_tmp, served, cache) = folder();
+    let mut command = okfs(&served, &cache, &["--bind", "0.0.0.0"]);
+    command
+        .args(["--port", "0"])
+        .env("OKFS_ALLOW_HOST", "a.example.com,b.example.com");
+    let running = listening(command);
+    let key = running.key.clone().expect("a key beyond loopback");
+    let path = format!("/api/list?path=docs&key={key}");
+    for host in ["a.example.com", "b.example.com"] {
+        assert_eq!(ask(running.port, host, &path, "").0, 200, "{host}");
+    }
+    assert_eq!(ask(running.port, "c.example.com", &path, "").0, 403);
+}
+
+#[test]
+fn a_switch_set_to_false_in_the_environment_is_off_and_conflicts_with_nothing() {
+    let (_tmp, served, cache) = folder();
+
+    // --no-key off, --key on.
+    let mut command = okfs(&served, &cache, &["--key"]);
+    command.args(["--port", "0"]).env("OKFS_NO_KEY", "false");
+    assert!(listening(command).key.is_some());
+
+    // Both off: no key on loopback.
+    let mut command = okfs(&served, &cache, &[]);
+    command
+        .args(["--port", "0"])
+        .env("OKFS_NO_KEY", "false")
+        .env("OKFS_ASK_KEY", "false");
+    assert_eq!(listening(command).key, None);
+
+    // --no-trash off, --trash-days given.
+    let mut command = okfs(&served, &cache, &[]);
+    command
+        .args(["--port", "0"])
+        .env("OKFS_NO_TRASH", "false")
+        .env("OKFS_TRASH_DAYS", "7");
+    listening(command);
+
+    // 0 and an empty variable, as an unset ${VAR} in a compose file gives, are off too: no write
+    // is allowed, so no key is asked for on loopback.
+    for value in ["0", "no", ""] {
+        let mut command = okfs(&served, &cache, &[]);
+        command.args(["--port", "0"]).env("OKFS_ALLOW_UPLOAD", value);
+        assert_eq!(listening(command).key, None, "OKFS_ALLOW_UPLOAD={value:?}");
+    }
+    let mut command = okfs(&served, &cache, &[]);
+    command.args(["--port", "0"]).env("OKFS_ALLOW_UPLOAD", "1");
+    assert!(listening(command).key.is_some());
+}
+
+#[test]
+fn options_that_exclude_each_other_are_refused_whether_a_flag_or_a_variable_sets_them() {
+    let (_tmp, served, cache) = folder();
+    for (vars, args, pair) in [
+        (vec![], vec!["--no-key", "--key"], "--no-key"),
+        (vec![("OKFS_NO_KEY", "true")], vec!["--key"], "--no-key"),
+        (
+            vec![("OKFS_NO_KEY", "true"), ("OKFS_ASK_KEY", "true")],
+            vec![],
+            "--no-key",
+        ),
+        (vec![], vec!["--no-trash", "--trash-days", "7"], "--no-trash"),
+        (vec![("OKFS_NO_TRASH", "true")], vec!["--trash-days", "7"], "--no-trash"),
+        (
+            vec![("OKFS_NO_TRASH", "true"), ("OKFS_TRASH_DAYS", "7")],
+            vec![],
+            "--no-trash",
+        ),
+    ] {
+        let (code, error) = refused(&served, &cache, &vars, &args);
+        assert_eq!(code, Some(2), "{vars:?} {args:?}: {error}");
+        assert!(error.contains(&format!("'{pair}' cannot be used with")), "{error}");
+    }
 }
 
 #[test]

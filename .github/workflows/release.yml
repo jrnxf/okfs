@@ -16,9 +16,9 @@ name: release
 # - The crate job packages okfs for crates.io and installs it in a clean container with no bun, so
 #   `cargo install okfs` is proven on every run. Nothing here publishes it: `publish = false` in
 #   Cargo.toml holds until the first release, and `cargo publish` is run by hand.
-# - The image job builds the container image from the binaries the build jobs made. A tag pushes it
-#   to ghcr.io/jrnxf/okfs as <version>, and also as latest on a full release; a pull request builds
-#   it without pushing.
+# - The image job builds the container image from the binaries the build jobs made and runs it. The
+#   image-push job, after the release is published, pushes it to ghcr.io/jrnxf/okfs as <version>, and
+#   also as latest on a full release. A pull request builds the image and pushes nothing.
 #
 # The release's assets, each with a `.sha256`:
 # - okfs-<version>-<target>.tar.gz for x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
@@ -314,8 +314,78 @@ jobs:
           grep -F "okfs $VERSION" install.txt
 
   # Builds the container image from the binaries the build jobs made, so nothing compiles again.
+  # Builds the container image from the binaries the build jobs made, so nothing compiles again, and
+  # runs it. It pushes nothing: image-push does, once the release is out.
   image:
-    needs: assets
+    needs: [assets, crate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: assets
+
+      # The version a tag names, or the one in Cargo.toml for a pull request.
+      - name: Gather the binaries
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+          else
+            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          scripts/image-context.sh assets "$version" context
+
+      - name: Set up buildx
+        run: docker buildx create --name okfs --driver docker-container --use
+
+      # The amd64 image runs here, so a broken image fails before it is pushed. Each run lists the
+      # folder it serves: hello.txt must be at the top, as the container's own root would show okfs
+      # and proc instead.
+      - name: Test the image
+        run: |
+          docker buildx build --platform linux/amd64 -f Dockerfile --tag okfs:test --load context
+          docker run --rm okfs:test --version | tee image.txt
+          grep -F "okfs $VERSION" image.txt
+          mkdir -p srv && echo hello > srv/hello.txt
+
+          # Starts the image with the given docker arguments, then lists the folder it serves on the
+          # given port. Beyond loopback okfs asks for the key, which is in the link it prints.
+          listing() {
+            port=$1; shift
+            id=$(docker run -d "$@")
+            for _ in $(seq 40); do
+              key=$(docker logs "$id" 2>&1 | grep -o 'key=[A-Za-z0-9_-]*' | head -n1 || true)
+              [ -n "$key" ] && break
+              sleep 0.5
+            done
+            curl -fsS "http://127.0.0.1:$port/api/list?path=&$key" > list.json || { docker logs "$id"; exit 1; }
+            docker rm -f "$id" >/dev/null
+            grep -q 'hello.txt' list.json || { cat list.json; echo "hello.txt is not at the top" >&2; exit 1; }
+            if grep -Eq '"(proc|okfs)"' list.json; then
+              cat list.json; echo "the container's own root is served" >&2; exit 1
+            fi
+          }
+          user=(--user "$(id -u):$(id -g)")
+          listing 8080 -p 8080:8080 -v "$PWD/srv:/srv:ro" "${user[@]}" okfs:test
+          # An argument after the image name must not drop the folder.
+          listing 8080 -p 8080:8080 -v "$PWD/srv:/srv:ro" "${user[@]}" okfs:test --allow-upload
+          # A variable replaces the port the image sets.
+          listing 9000 -p 9000:9000 -e OKFS_PORT=9000 -v "$PWD/srv:/srv:ro" "${user[@]}" okfs:test
+
+      - name: Build both platforms
+        run: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile context
+
+  # A tag with a hyphen is a pre-release: it gets its version tag and never latest. Runs only after
+  # the release is published, so a release that fails never moves latest.
+  image-push:
+    if: github.event_name == 'push'
+    needs: [image, publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -333,59 +403,16 @@ jobs:
           name: release
           path: assets
 
-      # The version a tag names, or the one in Cargo.toml for a pull request. The context holds each
-      # platform's binary where the Dockerfile looks for it.
-      - name: Gather the binaries
-        run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            version=${GITHUB_REF_NAME#v}
-          else
-            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
-          fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          mkdir -p context/linux-amd64 context/linux-arm64
-          for pair in amd64:x86_64 arm64:aarch64; do
-            arch=${pair%%:*}
-            target=${pair##*:}-unknown-linux-musl
-            tar -xzf "assets/okfs-$version-$target.tar.gz" -O "okfs-$version-$target/okfs" > "context/linux-$arch/okfs"
-            chmod 0755 "context/linux-$arch/okfs"
-          done
-          ls -l context/*
-
-      - name: Set up buildx
-        run: docker buildx create --name okfs --driver docker-container --use
-
-      # The amd64 image runs here, so a broken image fails before it can be pushed.
-      - name: Test the image
-        run: |
-          docker buildx build --platform linux/amd64 -f Dockerfile --tag okfs:test --load context
-          docker run --rm okfs:test --version | tee image.txt
-          grep -F "okfs $VERSION" image.txt
-          mkdir -p srv && echo hello > srv/hello.txt
-          id=$(docker run -d -p 8080:8080 -v "$PWD/srv:/srv:ro" --user "$(id -u):$(id -g)" okfs:test)
-          for _ in $(seq 20); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || true)
-            case "$code" in 200|401) break ;; esac
-            sleep 0.5
-          done
-          docker logs "$id"
-          docker rm -f "$id" >/dev/null
-          # Beyond loopback okfs asks for the key, so a 401 is it answering.
-          case "$code" in 200|401) ;; *) echo "the container answered $code" >&2; exit 1 ;; esac
-
-      - name: Build both platforms
-        if: github.event_name != 'push'
-        run: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile context
-
-      # A tag with a hyphen is a pre-release: it gets its version tag and never latest.
       - name: Push
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version=${GITHUB_REF_NAME#v}
+          scripts/image-context.sh assets "$version" context
+          docker buildx create --name okfs --driver docker-container --use
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          tags=(--tag "$IMAGE:$VERSION")
-          case "$VERSION" in *-*) ;; *) tags+=(--tag "$IMAGE:latest") ;; esac
+          tags=(--tag "$IMAGE:$version")
+          case "$version" in *-*) ;; *) tags+=(--tag "$IMAGE:latest") ;; esac
           docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile "${tags[@]}" --push context
 
   publish:

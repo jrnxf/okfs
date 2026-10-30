@@ -69,11 +69,11 @@ struct Serve {
     port: Option<u16>,
 
     /// Print a QR code for the address another device can use. Needs a terminal
-    #[arg(env = "OKFS_QR", long)]
+    #[arg(env = "OKFS_QR", value_parser = clap::builder::FalseyValueParser::new(), long)]
     qr: bool,
 
     /// Do not open the browser. It is never opened without a terminal or over SSH
-    #[arg(env = "OKFS_NO_OPEN", long)]
+    #[arg(env = "OKFS_NO_OPEN", value_parser = clap::builder::FalseyValueParser::new(), long)]
     no_open: bool,
 
     /// Open a folder that holds a file of this name as that page: --index index.html
@@ -109,7 +109,7 @@ struct Serve {
     accent: Option<String>,
 
     /// Show and serve dotfiles. Left out by default
-    #[arg(env = "OKFS_HIDDEN", short = 'H', long)]
+    #[arg(env = "OKFS_HIDDEN", value_parser = clap::builder::FalseyValueParser::new(), short = 'H', long)]
     hidden: bool,
 
     /// Also answer to this host name, for a proxy or a tunnel. Repeatable
@@ -118,17 +118,17 @@ struct Serve {
 
     /// Let anyone who can reach the address add files and folders. A file never replaces one that is
     /// there. Off by default
-    #[arg(env = "OKFS_ALLOW_UPLOAD", long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_UPLOAD", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
     allow_upload: bool,
 
     /// Let anyone who can reach the address change the files that are there: edit text files, and
     /// replace a file with an upload of the same name. Off by default
-    #[arg(env = "OKFS_ALLOW_EDIT", long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_EDIT", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
     allow_edit: bool,
 
     /// Let anyone who can reach the address delete files and folders. A delete goes to the Trash
     /// first. Off by default
-    #[arg(env = "OKFS_ALLOW_DELETE", long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_DELETE", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
     allow_delete: bool,
 
     /// How many days the Trash keeps what is deleted before it goes for good [default: 30]
@@ -136,7 +136,7 @@ struct Serve {
     trash_days: Option<u32>,
 
     /// Delete for good at once, with no Trash and no undo
-    #[arg(env = "OKFS_NO_TRASH", long, conflicts_with = "trash_days", help_heading = "Writes")]
+    #[arg(env = "OKFS_NO_TRASH", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
     no_trash: bool,
 
     /// The largest file an upload or a save may be: --max-upload 4G. No limit without it
@@ -145,11 +145,11 @@ struct Serve {
 
     /// Let in anyone who reaches an address beyond loopback, with no key in the link. For a proxy in
     /// front that signs people in itself
-    #[arg(env = "OKFS_NO_KEY", long, conflicts_with = "key")]
+    #[arg(env = "OKFS_NO_KEY", value_parser = clap::builder::FalseyValueParser::new(), long)]
     no_key: bool,
 
     /// Ask for the key on a loopback address too, as behind a tunnel that anyone can reach
-    #[arg(env = "OKFS_ASK_KEY", long)]
+    #[arg(env = "OKFS_ASK_KEY", value_parser = clap::builder::FalseyValueParser::new(), long)]
     key: bool,
 
     /// Serve https with this certificate, in PEM. Needs --tls-key
@@ -233,7 +233,10 @@ pub fn run() -> ExitCode {
                 Err(_) => ExitCode::FAILURE,
             };
         }
-        None => serve(cli.serve),
+        None => {
+            refuse_conflicts(&cli.serve);
+            serve(cli.serve)
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -242,6 +245,24 @@ pub fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Exits as clap does when two options that exclude each other are both on. Checked here, not with
+/// `conflicts_with`, because clap counts a variable that is set to `false` as given.
+fn refuse_conflicts(args: &Serve) {
+    let pair = if args.no_key && args.key {
+        ("--no-key", "--key")
+    } else if args.no_trash && args.trash_days.is_some() {
+        ("--no-trash", "--trash-days")
+    } else {
+        return;
+    };
+    Cli::command()
+        .error(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!("the argument '{}' cannot be used with '{}'", pair.0, pair.1),
+        )
+        .exit()
 }
 
 /// okfs itself, to start again for the work it does in a process of its own.

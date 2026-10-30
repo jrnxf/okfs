@@ -7,6 +7,8 @@
 #
 # The folder to serve is the volume /srv, and the thumbnail cache is the volume /cache. Settings come
 # from OKFS_* environment variables (okfs --help lists them) or from arguments after the image name.
+# The address, port and folder are variables here, not arguments, so a variable of the same name set
+# at run time replaces them, and an argument such as --allow-upload leaves the folder alone.
 
 # Makes the two folders world-writable, so any --user can fill the cache. It runs on the build host
 # whatever the target platform, so building for arm64 needs no emulation.
@@ -19,8 +21,9 @@ COPY linux-${TARGETARCH}/okfs /okfs
 COPY --from=dirs /srv /srv
 COPY --from=dirs /cache /cache
 ENV XDG_CACHE_HOME=/cache
+ENV OKFS_BIND=0.0.0.0 OKFS_PORT=8080 OKFS_NO_OPEN=true OKFS_PATH=/srv
+WORKDIR /srv
 VOLUME ["/srv", "/cache"]
 EXPOSE 8080
 USER 65534:65534
-ENTRYPOINT ["/okfs", "--bind", "0.0.0.0", "--port", "8080", "--no-open"]
-CMD ["/srv"]
+ENTRYPOINT ["/okfs"]
