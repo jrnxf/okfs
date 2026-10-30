@@ -1638,8 +1638,20 @@ async fn a_folder_left_out_of_the_search_still_opens_and_lists_its_files() {
 /// Sets when a file or folder was last written, in seconds since the epoch.
 fn written_at(path: impl AsRef<Path>, seconds: u64) {
     let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
-    let file = fs::File::open(path.as_ref()).unwrap();
-    file.set_modified(time).unwrap();
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    // Windows opens a file read-only without the right to set its time, and opens a folder only with
+    // backup semantics.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    options.open(path.as_ref()).unwrap().set_modified(time).unwrap();
 }
 
 /// The paths in an answer of `/api/recent`, newest first.
