@@ -113,6 +113,59 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+  # The built okfs in a real browser: the keys, the palette, the zip, the key gate, and a held arrow key that must
+  # paint every preview in time. Unit tests cannot see any of it (ui/e2e).
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.bun/install/cache
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ui/bun.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # Chromium is keyed by the Playwright that wants it: bun.lock changes when the version does.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build okfs
+        run: cargo build --release --locked
+
+      - name: Install Chromium
+        run: bun install --frozen-lockfile && bunx playwright install --with-deps chromium
+        working-directory: ui
+
+      - name: Test in the browser
+        run: bun run e2e
+        working-directory: ui
+        env:
+          OKFS_BIN: ${{ github.workspace }}/target/release/okfs
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: e2e-results
+          path: target/e2e-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   # okfs.jrnxf.co builds okfs's page and index from this checkout (web/README.md): a change that
   # breaks only the site fails here, not in its deploy.
   web:
