@@ -263,6 +263,34 @@ fn beyond_loopback_only_a_link_with_the_key_gets_in() {
     );
 }
 
+/// A port nothing listens on right now.
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+#[test]
+fn an_option_can_come_from_the_environment_and_a_flag_beats_it() {
+    let tmp = TempDir::new().unwrap();
+    let served = tmp.path().join("served");
+    fs::create_dir_all(&served).unwrap();
+    let cache = tmp.path().join("cache");
+
+    // The environment alone does what the flag does.
+    let port = free_port();
+    let mut command = okfs(&served, &cache, &[]);
+    command.env("OKFS_PORT", port.to_string()).env("OKFS_ASK_KEY", "true");
+    let from_env = listening(command);
+    assert_eq!(from_env.port, port);
+    assert!(from_env.key.is_some(), "{}", from_env.said);
+    drop(from_env);
+
+    // Both given: the flag wins.
+    let (from_env, from_flag) = (free_port(), free_port());
+    let mut command = okfs(&served, &cache, &["--port", &from_flag.to_string()]);
+    command.env("OKFS_PORT", from_env.to_string());
+    assert_eq!(listening(command).port, from_flag);
+}
+
 #[test]
 fn on_loopback_no_key_is_asked_for_unless_told_to() {
     let (_tmp, okfs) = site(&[]);

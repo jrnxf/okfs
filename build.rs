@@ -22,8 +22,10 @@ fn main() {
     println!("cargo:rerun-if-changed=THIRD_PARTY.md");
     println!("cargo:rerun-if-env-changed=OKFS_SKIP_UI_BUILD");
 
-    // Set OKFS_SKIP_UI_BUILD to embed an existing ui/dist, for machines without bun.
-    if env::var_os("OKFS_SKIP_UI_BUILD").is_none() {
+    // Set OKFS_SKIP_UI_BUILD to embed an existing ui/dist, for machines without bun. A packaged
+    // crate (cargo install okfs) has no ui/package.json and carries the built page instead.
+    let packaged = !ui.join("package.json").exists() && ui.join("dist/index.html").exists();
+    if env::var_os("OKFS_SKIP_UI_BUILD").is_none() && !packaged {
         bun(&ui, &["install", "--frozen-lockfile"]);
         bun(&ui, &["run", "build"]);
     }

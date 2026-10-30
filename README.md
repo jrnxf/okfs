@@ -41,7 +41,17 @@ tar -xzf okfs-*-aarch64-apple-darwin.tar.gz
 ./okfs-*-aarch64-apple-darwin/okfs --version
 ```
 
-Or build it. You need a Rust toolchain and [bun](https://bun.sh): bun builds the page while cargo builds the binary.
+With Docker, mount the folder to serve at `/srv`:
+
+```sh
+docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs
+```
+
+The image is the release's static binary and nothing else, for amd64 and arm64. It listens on every address, so it asks for the key. Inside a container okfs prints the container's own addresses, such as `172.17.0.2`, which a browser on the host cannot open: keep the `?key=...` part of the link and put the host's address in front of it, such as `http://192.168.1.20:8080/?key=...`. A plain IP address needs no `--allow-host`. The image runs as an unprivileged user, so to use a write flag (`--allow-upload` and the others), add `--user "$(id -u):$(id -g)"` and drop `:ro`. Anything after the image name is an okfs argument, and the `OKFS_*` variables below set its options. The tags are the version, such as `0.1.0`, and `latest`, which follows full releases only. The thumbnail cache is the volume `/cache`.
+
+With a Rust toolchain, `cargo install okfs` builds it from crates.io (from v0.1.0; until then use the git command below). The crate carries the built page, so it needs no bun.
+
+Or build it from the repository. You need a Rust toolchain and [bun](https://bun.sh): bun builds the page while cargo builds the binary.
 
 ```sh
 cargo install --git https://github.com/jrnxf/okfs
@@ -127,6 +137,21 @@ okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 ```
 
 A folder's `README.md` is shown under its listing.
+
+### Options from the environment
+
+Every option can also come from an environment variable named for it: `OKFS_PORT` for `--port`, `OKFS_BIND`, `OKFS_THEME`, `OKFS_ALLOW_UPLOAD`, `OKFS_RESCAN`, and the folder itself as `OKFS_PATH`. `okfs --help` shows each one as `[env: OKFS_PORT=]`. That is how a Docker Compose file or a systemd unit configures okfs without a command line to rewrite. A flag on the command line beats the variable. A switch takes `true` or `false`: `OKFS_ALLOW_UPLOAD=true`. `OKFS_ALLOW_HOST` takes names separated by commas. `--key` is the one that is not `OKFS_KEY`, which would read as the key's value: `--key` is `OKFS_ASK_KEY`, and `--no-key` is `OKFS_NO_KEY`.
+
+```yaml
+services:
+  okfs:
+    image: ghcr.io/jrnxf/okfs
+    ports: ["8080:8080"]
+    volumes: ["/srv/photos:/srv:ro"]
+    environment:
+      OKFS_THEME: gruvbox
+      OKFS_TITLE: Photos
+```
 
 The page follows changes through a watcher on the folder. Where okfs cannot set one up, it says so when it starts and reads the whole folder again on a timer: every 30 seconds, or 20 times as long as one read of it takes when that is longer, so a tree that takes minutes to read is not read over and over. The page catches up at that pace. Something reached through a symbolic link is not followed as it changes: it catches up when the page is reloaded or shown again.
 

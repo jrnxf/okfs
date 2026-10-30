@@ -57,100 +57,100 @@ struct Cli {
 #[derive(Args)]
 struct Serve {
     /// The folder to serve
-    #[arg(default_value = ".", value_name = "PATH")]
+    #[arg(env = "OKFS_PATH", default_value = ".", value_name = "PATH")]
     path: PathBuf,
 
     /// Address to listen on. Use 0.0.0.0 to let other machines in
-    #[arg(short, long, default_value = "127.0.0.1", value_name = "ADDR", value_parser = address)]
+    #[arg(env = "OKFS_BIND", short, long, default_value = "127.0.0.1", value_name = "ADDR", value_parser = address)]
     bind: IpAddr,
 
     /// Port to listen on, 0 for any free one. Without it, 8080 or the next free port after it
-    #[arg(short, long)]
+    #[arg(env = "OKFS_PORT", short, long)]
     port: Option<u16>,
 
     /// Print a QR code for the address another device can use. Needs a terminal
-    #[arg(long)]
+    #[arg(env = "OKFS_QR", long)]
     qr: bool,
 
     /// Do not open the browser. It is never opened without a terminal or over SSH
-    #[arg(long)]
+    #[arg(env = "OKFS_NO_OPEN", long)]
     no_open: bool,
 
     /// Open a folder that holds a file of this name as that page: --index index.html
-    #[arg(long, value_name = "FILE")]
+    #[arg(env = "OKFS_INDEX", long, value_name = "FILE")]
     index: Option<String>,
 
     /// Theme a new visitor starts in: a built-in name or a theme file
-    #[arg(long, default_value = "default", value_name = "NAME|FILE", help_heading = "Look")]
+    #[arg(env = "OKFS_THEME", long, default_value = "default", value_name = "NAME|FILE", help_heading = "Look")]
     theme: String,
 
     /// A Markdown note shown above every folder
-    #[arg(long, value_name = "FILE.md", help_heading = "Look")]
+    #[arg(env = "OKFS_HEADER", long, value_name = "FILE.md", help_heading = "Look")]
     header: Option<PathBuf>,
 
     /// Name shown in the corner and the browser tab
-    #[arg(long, default_value = "okfs", value_name = "TEXT", help_heading = "Look")]
+    #[arg(env = "OKFS_TITLE", long, default_value = "okfs", value_name = "TEXT", help_heading = "Look")]
     title: String,
 
     /// Accent color in every theme, as hex: "#2d6a4f"
-    #[arg(long, value_name = "COLOR", help_heading = "Look")]
+    #[arg(env = "OKFS_ACCENT", long, value_name = "COLOR", help_heading = "Look")]
     accent: Option<String>,
 
     /// Show and serve dotfiles. Left out by default
-    #[arg(short = 'H', long)]
+    #[arg(env = "OKFS_HIDDEN", short = 'H', long)]
     hidden: bool,
 
     /// Also answer to this host name, for a proxy or a tunnel. Repeatable
-    #[arg(long, value_name = "NAME")]
+    #[arg(env = "OKFS_ALLOW_HOST", value_delimiter = ',', long, value_name = "NAME")]
     allow_host: Vec<String>,
 
     /// Let anyone who can reach the address add files and folders. A file never replaces one that is
     /// there. Off by default
-    #[arg(long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_UPLOAD", long, help_heading = "Writes")]
     allow_upload: bool,
 
     /// Let anyone who can reach the address change the files that are there: edit text files, and
     /// replace a file with an upload of the same name. Off by default
-    #[arg(long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_EDIT", long, help_heading = "Writes")]
     allow_edit: bool,
 
     /// Let anyone who can reach the address delete files and folders. A delete goes to the Trash
     /// first. Off by default
-    #[arg(long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_DELETE", long, help_heading = "Writes")]
     allow_delete: bool,
 
     /// How many days the Trash keeps what is deleted before it goes for good [default: 30]
-    #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..=36500), help_heading = "Writes")]
+    #[arg(env = "OKFS_TRASH_DAYS", long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..=36500), help_heading = "Writes")]
     trash_days: Option<u32>,
 
     /// Delete for good at once, with no Trash and no undo
-    #[arg(long, conflicts_with = "trash_days", help_heading = "Writes")]
+    #[arg(env = "OKFS_NO_TRASH", long, conflicts_with = "trash_days", help_heading = "Writes")]
     no_trash: bool,
 
     /// The largest file an upload or a save may be: --max-upload 4G. No limit without it
-    #[arg(long, value_name = "SIZE", value_parser = byte_size, help_heading = "Writes")]
+    #[arg(env = "OKFS_MAX_UPLOAD", long, value_name = "SIZE", value_parser = byte_size, help_heading = "Writes")]
     max_upload: Option<u64>,
 
     /// Let in anyone who reaches an address beyond loopback, with no key in the link. For a proxy in
     /// front that signs people in itself
-    #[arg(long, conflicts_with = "key")]
+    #[arg(env = "OKFS_NO_KEY", long, conflicts_with = "key")]
     no_key: bool,
 
     /// Ask for the key on a loopback address too, as behind a tunnel that anyone can reach
-    #[arg(long)]
+    #[arg(env = "OKFS_ASK_KEY", long)]
     key: bool,
 
     /// Serve https with this certificate, in PEM. Needs --tls-key
-    #[arg(long, value_name = "FILE", requires = "tls_key", help_heading = "TLS")]
+    #[arg(env = "OKFS_TLS_CERT", long, value_name = "FILE", requires = "tls_key", help_heading = "TLS")]
     tls_cert: Option<PathBuf>,
 
     /// The private key of the --tls-cert certificate, in PEM
-    #[arg(long, value_name = "FILE", requires = "tls_cert", help_heading = "TLS")]
+    #[arg(env = "OKFS_TLS_KEY", long, value_name = "FILE", requires = "tls_cert", help_heading = "TLS")]
     tls_key: Option<PathBuf>,
 
     /// Read the whole tree again this often instead of watching it for changes: --rescan 6h.
     /// For a tree too big to watch, or a network share that other machines write to
-    #[arg(long, value_name = "EVERY", value_parser = every::parse)]
+    #[arg(env = "OKFS_RESCAN", long, value_name = "EVERY", value_parser = every::parse)]
     rescan: Option<Duration>,
 }
 
