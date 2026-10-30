@@ -73,3 +73,32 @@ test("Markdown opens rendered and r flips it to source", async ({ page, okfs }) 
   await page.keyboard.press("r");
   await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toBeVisible();
 });
+
+const loaded = (img: HTMLImageElement) => img.complete && img.naturalWidth > 0;
+
+test("a PDF previews as its first page", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await page.getByRole("option", { name: /^paper\.pdf/ }).click();
+  await expect(cursor(page)).toHaveText("paper.pdf");
+  const first = page.locator('img[src*="paper.pdf"]');
+  await expect(first).toBeVisible();
+  await expect.poll(() => first.evaluate(loaded)).toBe(true);
+});
+
+test("a CSV previews as a table", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await page.getByRole("option", { name: /^table\.csv/ }).click();
+  await expect(cursor(page)).toHaveText("table.csv");
+  const table = page.locator("table");
+  await expect(table.getByRole("columnheader", { name: "count" })).toBeVisible();
+  await expect(table.getByRole("cell", { name: "apples" })).toBeVisible();
+  await expect(table.getByRole("cell", { name: "pears" })).toBeVisible();
+});
+
+test("a picture at the top of the tree previews", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await page.getByRole("option", { name: /^poster\.png/ }).click();
+  const picture = page.getByRole("img", { name: "poster.png" });
+  await expect(picture).toBeVisible();
+  await expect.poll(() => picture.evaluate(loaded)).toBe(true);
+});

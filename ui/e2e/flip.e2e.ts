@@ -17,10 +17,17 @@ async function watch(page: Page): Promise<void> {
     seen.downs = [];
     seen.painted = {};
     addEventListener("keydown", () => seen.downs.push(performance.now()), true);
-    const paint = (img: HTMLImageElement) =>
-      requestAnimationFrame(() => {
-        if (img.complete && img.naturalWidth > 0) seen.painted[img.alt] ??= performance.now();
-      });
+    // The element is reused from file to file: name the picture by what it showed when it loaded, not by the file the
+    // cursor has moved on to by the next frame. A picture the page still hides (`invisible`) is not shown yet.
+    const paint = (img: HTMLImageElement) => {
+      const name = img.alt;
+      if (!(img.complete && img.naturalWidth > 0)) return;
+      const frame = () => {
+        if (getComputedStyle(img).visibility === "hidden") requestAnimationFrame(frame);
+        else seen.painted[name] ??= performance.now();
+      };
+      requestAnimationFrame(frame);
+    };
     document.addEventListener("load", (event) => event.target instanceof HTMLImageElement && paint(event.target), true);
     new MutationObserver((records) => {
       for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLImageElement) paint(node);
