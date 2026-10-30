@@ -12,7 +12,8 @@ import { Marked } from "./palette";
 import { MATCH_LABEL, type Match, store } from "./store";
 import type { MatchOrder } from "./api";
 import { nameOf, parentOf } from "./api";
-import { type Cell, rowId, rowName } from "./vlist";
+import { rowId, rowName } from "./rows";
+import type { Cell } from "./vlist";
 
 /** The server is asked no oftener than this while the query is typed: see `holdBack`. */
 const SETTLE = 40;

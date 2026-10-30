@@ -350,7 +350,7 @@ export function Palette() {
             name="find"
             role="combobox"
             aria-label="Find anything"
-            aria-expanded="true"
+            aria-expanded={rows.length > 0}
             aria-autocomplete="list"
             aria-controls="palette-list"
             aria-activedescendant={rows.length ? (rows[at] && "all" in rows[at] ? "palette-row-all" : `palette-row-${at}`) : undefined}
@@ -376,7 +376,7 @@ export function Palette() {
             const previous = rows[index - 1];
             // A nested list is named beside the input, so its rows go under no label.
             const label = !menu && (!previous || groupOf(previous) !== group) && (
-              <div class="label px-2 pt-2 pb-1" role="presentation">{group}</div>
+              <div class="label px-2 pt-2 pb-1" aria-hidden="true">{group}</div>
             );
             if ("command" in row) {
               const { command } = row;
