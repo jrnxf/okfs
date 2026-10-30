@@ -122,8 +122,9 @@ impl Drop for Part {
 /// with `AlreadyExists`, and nothing is changed. Across disks the answer is `CrossesDevices`.
 ///
 /// Where the disk can, it is one step that the disk refuses when the name is taken: `renameat2`
-/// with `RENAME_NOREPLACE` on Linux, `renameatx_np` with `RENAME_EXCL` on macOS. A disk that
-/// cannot, such as an NFS or SMB share, gets `rename_in_steps`.
+/// with `RENAME_NOREPLACE` on Linux, `renameatx_np` with `RENAME_EXCL` on macOS, `MoveFileExW`
+/// without `MOVEFILE_REPLACE_EXISTING` on Windows. A disk that cannot, such as an NFS or SMB share
+/// mounted on Linux or macOS, gets `rename_in_steps`.
 pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     match rename_exclusive(from, to) {
         Err(error) if error.kind() == io::ErrorKind::Unsupported => rename_in_steps(from, to),
@@ -150,15 +151,13 @@ fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` refuses a taken name in one step, for a file
-/// and a folder alike, and refuses to cross disks. Any other failure of the kind a disk without
-/// that support gives, such as a FAT volume or an SMB share, is `Unsupported`.
+/// and a folder alike, and refuses to cross disks: std already reads those answers as
+/// `AlreadyExists` and `CrossesDevices`. A disk that answers that it cannot rename at all is
+/// `Unsupported`.
 #[cfg(windows)]
 fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{
-        ERROR_ALREADY_EXISTS, ERROR_CALL_NOT_IMPLEMENTED, ERROR_FILE_EXISTS, ERROR_INVALID_FUNCTION,
-        ERROR_NOT_SAME_DEVICE, ERROR_NOT_SUPPORTED,
-    };
+    use windows_sys::Win32::Foundation::{ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED};
     use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
 
     let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
@@ -169,11 +168,7 @@ fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
     }
     let error = io::Error::last_os_error();
     Err(match error.raw_os_error().map(|code| code as u32) {
-        Some(ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => io::ErrorKind::AlreadyExists.into(),
-        Some(ERROR_NOT_SAME_DEVICE) => io::ErrorKind::CrossesDevices.into(),
-        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION | ERROR_CALL_NOT_IMPLEMENTED) => {
-            io::ErrorKind::Unsupported.into()
-        }
+        Some(ERROR_NOT_SUPPORTED | ERROR_INVALID_FUNCTION) => io::ErrorKind::Unsupported.into(),
         _ => error,
     })
 }
@@ -420,7 +415,7 @@ mod tests {
         assert_eq!(names(dir), ["taken (1).txt", "taken.txt"]);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple", windows))]
     #[test]
     fn a_rename_without_hard_links_never_lands_on_a_name_that_is_taken() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -443,6 +438,12 @@ mod tests {
 
     #[test]
     fn an_exclusive_rename_never_lands_on_an_entry_and_moves_a_file_or_a_folder_in_one_step() {
+        const ONE_STEP: bool = cfg!(any(
+            target_os = "linux",
+            target_os = "android",
+            target_vendor = "apple",
+            windows
+        ));
         let tmp = tempfile::TempDir::new().unwrap();
         let dir = tmp.path();
         fs::create_dir(dir.join("box")).unwrap();
@@ -458,7 +459,8 @@ mod tests {
             ("box", "empty"),
         ] {
             match rename_exclusive(&dir.join(from), &dir.join(taken)) {
-                Err(error) if error.kind() == io::ErrorKind::Unsupported => return,
+                // Only a platform with no one-step rename may skip this.
+                Err(error) if error.kind() == io::ErrorKind::Unsupported && !ONE_STEP => return,
                 Err(error) => assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{from} over {taken}"),
                 Ok(()) => panic!("{from} replaced {taken}"),
             }
