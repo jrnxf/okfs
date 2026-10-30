@@ -164,7 +164,7 @@ fn inside(dir: &Path, served: &Path) -> bool {
 
 /// Decodes, turns upright and shrinks one image to a thumbnail `w` wide on its short side.
 pub fn make(abs: &Path, w: u32, size: u64) -> Result<Made, Refused> {
-    let mut image = decode(abs, size)?;
+    let mut image = decode(abs, size, Some(w))?;
     // Tiles crop to fill, so the short side is what has to reach the asked width.
     let (width, height) = (image.width().max(1), image.height().max(1));
     let short = width.min(height);
@@ -178,7 +178,7 @@ pub fn make(abs: &Path, w: u32, size: u64) -> Result<Made, Refused> {
 
 /// Decodes and turns upright one image, shrunk only when its long side passes `PICTURE_SIDE`.
 pub fn picture(abs: &Path, size: u64) -> Result<Made, Refused> {
-    let image = decode(abs, size)?;
+    let image = decode(abs, size, None)?;
     let image = if image.width().max(image.height()) > PICTURE_SIDE {
         image.thumbnail(PICTURE_SIDE, PICTURE_SIDE)
     } else {
@@ -195,23 +195,26 @@ fn unreadable(error: image::ImageError) -> Refused {
 }
 
 /// Decodes one image within the limits, and turns it upright. A camera RAW file is read through the JPEG
-/// inside it: see `camera`.
-fn decode(abs: &Path, size: u64) -> Result<DynamicImage, Refused> {
+/// inside it: see `camera`. `want` is the width of a thumbnail, and `None` for a whole picture.
+///
+/// The bound on a file is for the pictures that are decoded whole. A RAW file is mostly sensor data that
+/// is never read, so what is bounded there is the preview.
+fn decode(abs: &Path, size: u64, want: Option<u32>) -> Result<DynamicImage, Refused> {
+    let open = || fs::File::open(abs).map_err(|e| Refused::Unreadable(e.to_string()));
+    if camera::is_camera(abs) {
+        return decode_camera(open()?, size, want);
+    }
     if size > MAX_FILE {
         return Err(Refused::TooLarge);
     }
-    let file = fs::File::open(abs).map_err(|e| Refused::Unreadable(e.to_string()))?;
-    if camera::is_camera(abs) {
-        return decode_camera(file, size);
-    }
-    decode_from(BufReader::new(file), None)
+    decode_from(BufReader::new(open()?), None)
 }
 
 /// The largest preview of a RAW file that decodes. A file with none is not a picture.
-fn decode_camera(mut file: fs::File, size: u64) -> Result<DynamicImage, Refused> {
+fn decode_camera(mut file: fs::File, size: u64, want: Option<u32>) -> Result<DynamicImage, Refused> {
     let layout = camera::layout(&mut file, size).map_err(|e| Refused::Unreadable(e.to_string()))?;
     let mut refused = Refused::Unreadable("no preview inside this file".to_owned());
-    for span in layout.spans {
+    for span in camera::choose(&mut file, &layout, want) {
         if span.len > MAX_FILE {
             refused = Refused::TooLarge;
             continue;

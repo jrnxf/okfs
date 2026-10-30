@@ -7,6 +7,7 @@
 //! - CR2, NEF, ARW, DNG, ORF, RW2 and PEF are TIFF containers. Their folders (IFD0, the ones it
 //!   chains to and the SubIFDs) name JPEGs by `JPEGInterchangeFormat`, or by `StripOffsets` with a
 //!   JPEG `Compression`. RW2 keeps one in a tag of its own.
+//! - ORF keeps its preview in the Olympus maker note, which sits in the Exif folder.
 //! - CR3 is an ISO base media file, with the JPEG in a `PRVW` box.
 //! - RAF has the offset and size of its JPEG in the header.
 
@@ -36,6 +37,16 @@ const TAG_JPEG_OFFSET: u16 = 0x201;
 const TAG_JPEG_BYTES: u16 = 0x202;
 /// Panasonic's own tag for the full-size JPEG of an RW2.
 const TAG_RW2_JPEG: u16 = 0x2e;
+const TAG_EXIF_IFD: u16 = 0x8769;
+const TAG_MAKER_NOTE: u16 = 0x927c;
+/// Inside an Olympus maker note: the folder of camera settings, and in it where the preview is.
+const TAG_OLYMPUS_SETTINGS: u16 = 0x2020;
+const TAG_OLYMPUS_PREVIEW_START: u16 = 0x101;
+const TAG_OLYMPUS_PREVIEW_BYTES: u16 = 0x102;
+/// The start of a maker note this reads. Its folders count their offsets from its first byte.
+const OLYMPUS: &[u8] = b"OLYMPUS\0II";
+/// Where the folder of an Olympus maker note begins, after its header.
+const OLYMPUS_HEADER: u64 = 12;
 
 /// A byte range of the file that should hold a JPEG.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +103,70 @@ pub fn read_span<R: Read + Seek>(file: &mut R, span: Span) -> io::Result<Vec<u8>
     }
 }
 
+/// The size of the JPEG at `span`, read from its first marker that names one. Only the kinds a browser
+/// shows are taken: baseline and progressive. The lossless JPEG a RAW file keeps its sensor data in is
+/// refused here, so that tens of megabytes of it are never read to find that out.
+pub fn probe<R: Read + Seek>(file: &mut R, span: Span) -> io::Result<(u32, u32)> {
+    let end = span.offset + span.len;
+    let mut at = span.offset;
+    let soi: [u8; 2] = read_at(file, at)?;
+    if soi != [0xff, 0xd8] {
+        return Err(invalid("not a JPEG"));
+    }
+    at += 2;
+    for _ in 0..64 {
+        if at + 4 > end {
+            break;
+        }
+        let head: [u8; 4] = read_at(file, at)?;
+        if head[0] != 0xff {
+            break;
+        }
+        let marker = head[1];
+        let len = u64::from(u16::from_be_bytes([head[2], head[3]]));
+        match marker {
+            // A fill byte before a marker.
+            0xff => at += 1,
+            // Start of frame: baseline, extended sequential, progressive.
+            0xc0..=0xc2 => {
+                let frame: [u8; 9] = read_at(file, at + 4)?;
+                let height = u32::from(u16::from_be_bytes([frame[1], frame[2]]));
+                let width = u32::from(u16::from_be_bytes([frame[3], frame[4]]));
+                return Ok((width, height));
+            }
+            // Lossless, differential and arithmetic frames, which are not shown.
+            0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf => return Err(invalid("a kind of JPEG that is not shown")),
+            // The data of the picture begins: no frame came before it.
+            0xda | 0xd9 => break,
+            _ if len < 2 => break,
+            _ => at += 2 + len,
+        }
+    }
+    Err(invalid("no frame in this JPEG"))
+}
+
+/// The spans of `layout` worth reading, in the order to try them. Spans that are not JPEGs a browser
+/// shows are dropped. For a picture `want` is `None` and the largest comes first. For a thumbnail `want`
+/// is its width: the smallest preview that is at least as wide on its short side comes first, as it
+/// costs the least to decode, then the larger ones, then the rest.
+pub fn choose<R: Read + Seek>(file: &mut R, layout: &Layout, want: Option<u32>) -> Vec<Span> {
+    let mut sized: Vec<(Span, u64, u32)> = layout
+        .spans
+        .iter()
+        .filter_map(|span| {
+            let (width, height) = probe(file, *span).ok()?;
+            Some((*span, u64::from(width) * u64::from(height), width.min(height)))
+        })
+        .collect();
+    sized.sort_by_key(|(_, area, _)| std::cmp::Reverse(*area));
+    if let Some(want) = want {
+        let (mut enough, short): (Vec<_>, Vec<_>) = sized.into_iter().partition(|(_, _, side)| *side >= want);
+        enough.reverse();
+        sized = enough.into_iter().chain(short).collect();
+    }
+    sized.into_iter().map(|(span, _, _)| span).collect()
+}
+
 fn invalid(why: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, why)
 }
@@ -128,9 +203,9 @@ fn fuji<R: Read + Seek>(file: &mut R) -> io::Result<Layout> {
 // CR3: boxes of a 4-byte size and a 4-byte type. The `PRVW` box sits in a `uuid` box at the top level.
 fn isobmff<R: Read + Seek>(file: &mut R, size: u64) -> io::Result<Layout> {
     let mut spans = Vec::new();
-    let mut at = 0;
+    let mut at: u64 = 0;
     for _ in 0..64 {
-        if at + 8 > size {
+        if at.checked_add(8).is_none_or(|end| end > size) {
             break;
         }
         let head: [u8; 8] = read_at(file, at)?;
@@ -146,10 +221,11 @@ fn isobmff<R: Read + Seek>(file: &mut R, size: u64) -> io::Result<Layout> {
         if len < header {
             break;
         }
+        let Some(end) = at.checked_add(len) else { break };
         if &head[4..8] == b"uuid" {
-            spans.extend(preview_box(file, at + header + 16, (at + len).min(size))?);
+            spans.extend(preview_box(file, at + header + 16, end.min(size))?);
         }
-        at += len;
+        at = end;
     }
     Ok(Layout {
         spans,
@@ -251,8 +327,8 @@ impl<R: Read + Seek> Walk<'_, R> {
         Ok(orientation)
     }
 
-    /// One folder. Returns its orientation and the offset of the next folder.
-    fn folder(&mut self, at: u64, depth: usize) -> io::Result<(Option<Orientation>, u64)> {
+    /// The entries of the folder at `at`, and the offset of the next folder.
+    fn entries(&mut self, at: u64) -> io::Result<(Vec<Entry>, u64)> {
         let raw: [u8; 2] = read_at(self.file, at)?;
         let count = u64::from(self.order.u16(raw));
         if at + 2 + count * 12 + 4 > self.size {
@@ -270,7 +346,12 @@ impl<R: Read + Seek> Walk<'_, R> {
             });
         }
         let next: [u8; 4] = read_at(self.file, at + 2 + count * 12)?;
-        let next = u64::from(self.order.u32(next));
+        Ok((entries, u64::from(self.order.u32(next))))
+    }
+
+    /// One folder. Returns its orientation and the offset of the next folder.
+    fn folder(&mut self, at: u64, depth: usize) -> io::Result<(Option<Orientation>, u64)> {
+        let (entries, next) = self.entries(at)?;
 
         let find = |tag: u16| entries.iter().find(|entry| entry.tag == tag);
         let mut orientation = None;
@@ -310,7 +391,53 @@ impl<R: Read + Seek> Walk<'_, R> {
                 self.chain(sub, depth + 1, false)?;
             }
         }
+        // A file that is damaged past the maker note still has the previews found so far.
+        if let Some(entry) = find(TAG_EXIF_IFD)
+            && let Some(&exif) = self.values(entry)?.first()
+        {
+            let _ = self.exif(exif);
+        }
         Ok((orientation, next))
+    }
+
+    /// The Exif folder, which holds the maker note.
+    fn exif(&mut self, at: u64) -> io::Result<()> {
+        let (entries, _) = self.entries(at)?;
+        if let Some(note) = entries.iter().find(|entry| entry.tag == TAG_MAKER_NOTE) {
+            let offset = u64::from(self.order.u32(read_at(self.file, note.slot)?));
+            // An Olympus maker note is always little-endian, whatever the file is.
+            let saved = std::mem::replace(&mut self.order, Order { big: false });
+            let found = self.olympus(offset);
+            self.order = saved;
+            found?;
+        }
+        Ok(())
+    }
+
+    /// The maker note at `note`: its camera settings say where the full-size preview is.
+    fn olympus(&mut self, note: u64) -> io::Result<()> {
+        let head: [u8; 10] = read_at(self.file, note)?;
+        if head != *OLYMPUS {
+            return Ok(());
+        }
+        let (entries, _) = self.entries(note + OLYMPUS_HEADER)?;
+        let Some(settings) = entries.iter().find(|entry| entry.tag == TAG_OLYMPUS_SETTINGS) else {
+            return Ok(());
+        };
+        let Some(&relative) = self.values(settings)?.first() else {
+            return Ok(());
+        };
+        let (entries, _) = self.entries(note + relative)?;
+        let find = |tag: u16| entries.iter().find(|entry| entry.tag == tag);
+        if let (Some(start), Some(len)) = (find(TAG_OLYMPUS_PREVIEW_START), find(TAG_OLYMPUS_PREVIEW_BYTES))
+            && let (Some(&start), Some(&len)) = (self.values(start)?.first(), self.values(len)?.first())
+        {
+            self.spans.push(Span {
+                offset: note + start,
+                len,
+            });
+        }
+        Ok(())
     }
 
     /// The values of a SHORT or LONG tag. Any other type has none.
@@ -447,5 +574,123 @@ mod tests {
         cr3.extend(uuid);
         let found = layout(&mut Cursor::new(&cr3), cr3.len() as u64).unwrap();
         assert_eq!(read_span(&mut Cursor::new(&cr3), found.spans[0]).unwrap(), pic);
+    }
+
+    /// Counts the bytes read from the file.
+    struct Counting<R> {
+        inner: R,
+        read: usize,
+    }
+
+    impl<R: Read> Read for Counting<R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read += n;
+            Ok(n)
+        }
+    }
+
+    impl<R: Seek> Seek for Counting<R> {
+        fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(to)
+        }
+    }
+
+    /// A JPEG header that opens with a frame of the given kind, and is followed by `body` bytes.
+    fn frame(marker: u8, body: usize) -> Vec<u8> {
+        let mut bytes = vec![0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0, 0xff, marker, 0, 11, 8, 0, 4, 0, 8, 1, 1, 0x11, 0];
+        bytes.resize(bytes.len() + body, 0);
+        bytes
+    }
+
+    #[test]
+    fn a_lossless_span_is_refused_from_its_header_without_reading_its_body() {
+        let body = 4 * 1024 * 1024;
+        let lossless = frame(0xc3, body);
+        let shown = frame(0xc0, 0);
+        let mut file = lossless.clone();
+        file.extend(&shown);
+        let big = Span { offset: 0, len: lossless.len() as u64 };
+        let small = Span { offset: lossless.len() as u64, len: shown.len() as u64 };
+        let mut reader = Counting { inner: Cursor::new(file), read: 0 };
+        assert!(probe(&mut reader, big).is_err());
+        assert_eq!(probe(&mut reader, small).unwrap(), (8, 4));
+        assert!(reader.read < 1024, "read {} bytes", reader.read);
+        let layout = Layout { spans: vec![big, small], orientation: None };
+        assert_eq!(choose(&mut reader, &layout, None), vec![small]);
+        assert!(reader.read < 1024, "read {} bytes", reader.read);
+    }
+
+    #[test]
+    fn a_thumbnail_takes_the_smallest_preview_that_is_wide_enough() {
+        let picture = |width: u16, height: u16| {
+            let mut bytes = frame(0xc0, 0);
+            bytes[13..15].copy_from_slice(&height.to_be_bytes());
+            bytes[15..17].copy_from_slice(&width.to_be_bytes());
+            bytes
+        };
+        let (tiny, mid, large) = (picture(160, 120), picture(1620, 1080), picture(6000, 4000));
+        let mut file = Vec::new();
+        let mut spans = Vec::new();
+        for bytes in [&tiny, &mid, &large] {
+            spans.push(Span { offset: file.len() as u64, len: bytes.len() as u64 });
+            file.extend(bytes);
+        }
+        let layout = Layout { spans: spans.clone(), orientation: None };
+        let mut file = Cursor::new(file);
+        assert_eq!(choose(&mut file, &layout, None), vec![spans[2], spans[1], spans[0]]);
+        assert_eq!(choose(&mut file, &layout, Some(320)), vec![spans[1], spans[2], spans[0]]);
+        assert_eq!(choose(&mut file, &layout, Some(2000)), vec![spans[2], spans[1], spans[0]]);
+    }
+
+    /// An Olympus file in its real layout: IFD0 names the Exif folder, which holds a maker note whose
+    /// camera settings say where the preview is, counted from the start of the maker note.
+    #[test]
+    fn an_olympus_preview_is_found_through_the_maker_note() {
+        let pic = frame(0xc0, 40);
+        let entry = |tag: u16, kind: u16, count: u32, value: u32| {
+            let mut e = Vec::new();
+            e.extend(tag.to_le_bytes());
+            e.extend(kind.to_le_bytes());
+            e.extend(count.to_le_bytes());
+            e.extend(value.to_le_bytes());
+            e
+        };
+        let ifd = |entries: Vec<Vec<u8>>| {
+            let mut out = (entries.len() as u16).to_le_bytes().to_vec();
+            out.extend(entries.concat());
+            out.extend(0u32.to_le_bytes());
+            out
+        };
+        // IFD0 at 8 (one entry), Exif at 26 (one entry), the note at 44.
+        let (exif, note) = (8 + 2 + 12 + 4, 8 + 2 + 12 + 4 + 2 + 12 + 4);
+        let settings = 12 + 2 + 12 + 4;
+        let start = settings + 2 + 2 * 12 + 4;
+        let mut out = vec![b'I', b'I', b'R', b'O', 8, 0, 0, 0];
+        out.extend(ifd(vec![entry(TAG_EXIF_IFD, 4, 1, exif)]));
+        out.extend(ifd(vec![entry(TAG_MAKER_NOTE, 7, start + pic.len() as u32, note)]));
+        assert_eq!(out.len() as u32, note);
+        out.extend(b"OLYMPUS\0II\x03\0");
+        out.extend(ifd(vec![entry(TAG_OLYMPUS_SETTINGS, 13, 1, settings)]));
+        out.extend(ifd(vec![
+            entry(TAG_OLYMPUS_PREVIEW_START, 4, 1, 12 + 2 + 12 + 4 + 2 + 2 * 12 + 4),
+            entry(TAG_OLYMPUS_PREVIEW_BYTES, 4, 1, pic.len() as u32),
+        ]));
+        out.extend(&pic);
+        let found = layout(&mut Cursor::new(&out), out.len() as u64).unwrap();
+        assert_eq!(found.spans.len(), 1);
+        assert_eq!(read_span(&mut Cursor::new(&out), found.spans[0]).unwrap(), pic);
+    }
+
+    #[test]
+    fn a_box_size_near_the_limit_of_the_number_ends_the_walk() {
+        let mut cr3 = Vec::new();
+        cr3.extend(16u32.to_be_bytes());
+        cr3.extend(b"ftypcrx \0\0\0\x01");
+        cr3.extend(1u32.to_be_bytes());
+        cr3.extend(b"uuid");
+        cr3.extend((u64::MAX - 4).to_be_bytes());
+        let found = layout(&mut Cursor::new(&cr3), cr3.len() as u64).unwrap();
+        assert!(found.spans.is_empty());
     }
 }

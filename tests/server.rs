@@ -651,6 +651,41 @@ async fn a_camera_raw_file_is_shown_by_the_preview_inside_it() {
 }
 
 #[tokio::test]
+async fn a_camera_raw_file_over_the_size_bound_is_shown_when_its_preview_is_small() {
+    let site = Site::new();
+    let mut preview = Vec::new();
+    image::DynamicImage::new_rgb8(300, 200)
+        .write_to(&mut Cursor::new(&mut preview), image::ImageFormat::Jpeg)
+        .unwrap();
+    // Mostly sensor data, as a large RAW file is: the preview is at the front and the rest is a hole.
+    let path = site.served.join("big.arw");
+    fs::write(&path, camera_file(&preview)).unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(okfs::thumb::MAX_FILE + 1)
+        .unwrap();
+    // A picture that is itself over the bound is still refused.
+    fs::write(site.served.join("bigger.png"), b"x").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(site.served.join("bigger.png"))
+        .unwrap()
+        .set_len(okfs::thumb::MAX_FILE + 1)
+        .unwrap();
+    let app = site.router();
+
+    for uri in ["/api/picture?path=big.arw", "/api/picture?path=big.arw&w=160"] {
+        assert_eq!(get(&app, uri).await.0.status(), StatusCode::OK, "{uri}");
+    }
+    assert_eq!(
+        get(&app, "/api/picture?path=bigger.png").await.0.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
+
+#[tokio::test]
 async fn thumbnails_are_cached_outside_the_served_folder() {
     let site = Site::new();
     fs::write(site.served.join("wide.png"), png(800, 400)).unwrap();
