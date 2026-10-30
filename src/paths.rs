@@ -379,6 +379,10 @@ impl Root {
     /// What one name in the folder `dir` is, or why it is not shown. `kind` is the
     /// name's own, not that of what a link points at. Listing and deleting both ask here.
     fn seen(&self, dir: &Path, name: &OsStr, kind: FileType) -> Result<Seen, Unshown> {
+        // A dotfile is hidden before its name is read, so a non-text one says nothing of itself either.
+        if !self.hidden && name.as_encoded_bytes().first() == Some(&b'.') {
+            return Err(Unshown::Hidden);
+        }
         let name = name.to_str().ok_or(Unshown::NotText)?;
         if !self.shows(name) {
             return Err(Unshown::Hidden);

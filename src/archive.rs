@@ -131,7 +131,7 @@ fn write(root: &Root, index: &Index, rel: &str, top: &Path, all: bool, pipe: Pip
     while let Some((dir, rules)) = todo.pop() {
         let at = top.join(&dir);
         let mut seen = root.scan(&at)?;
-        let here = paths::join(rel, &dir);
+        let here = if dir.is_empty() { rel.to_owned() } else { paths::join(rel, &dir) };
         if !all {
             seen.retain(|e| !index.hides(&rules, &here, &e.name, e.dir));
         }
@@ -142,7 +142,8 @@ fn write(root: &Root, index: &Index, rel: &str, top: &Path, all: bool, pipe: Pip
                 .map_err(io::Error::other)?;
         }
         for entry in seen.iter().rev().filter(|e| e.dir && !e.link) {
-            let inside = index.enter(&top.join(paths::join(&dir, &entry.name)), &rules);
+            // Rules are read from the path a listing asks about, which a link in `rel` may make differ from `top`.
+            let inside = index.enter(&root.dir().join(paths::join(&here, &entry.name)), &rules);
             todo.push((paths::join(&dir, &entry.name), inside));
         }
         for entry in seen.iter().filter(|e| !e.dir) {
