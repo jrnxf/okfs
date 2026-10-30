@@ -104,15 +104,20 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
   }, [cursor, count, scroller]);
   useLayoutEffect(tell, [tell, listKey, caught]);
   // A click moves the cursor first and focus after: the line said for the first is taken back, and given again when focus leaves.
+  // The listeners are put on once and call the latest `tell`: a focus that lands between a render and the effect that
+  // would swap the listeners must not tell an old cursor.
+  const latest = useRef(tell);
+  latest.current = tell;
   useEffect(() => {
     const outer = scroller.current;
-    outer?.addEventListener("focus", tell);
-    outer?.addEventListener("blur", tell);
+    const told = () => latest.current();
+    outer?.addEventListener("focus", told);
+    outer?.addEventListener("blur", told);
     return () => {
-      outer?.removeEventListener("focus", tell);
-      outer?.removeEventListener("blur", tell);
+      outer?.removeEventListener("focus", told);
+      outer?.removeEventListener("blur", told);
     };
-  }, [tell, scroller]);
+  }, [scroller]);
   const cells: ComponentChildren[] = [];
   for (let index = first; index < last; index++) {
     cells.push(render(index, { top: index * step, left: 0, width: box.width, height: step }));
