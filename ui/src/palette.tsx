@@ -195,7 +195,8 @@ export function Palette() {
   const searching = !menu && !asCommand && query !== "";
   const asked = searching ? query : "";
 
-  useEffect(() => {
+  // Focused as it is drawn, not after the paint: a key typed right after the one that opened the palette is its own.
+  useLayoutEffect(() => {
     input.current?.focus();
     input.current?.select();
   }, []);
