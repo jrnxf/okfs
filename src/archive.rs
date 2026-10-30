@@ -11,6 +11,7 @@ use tokio::sync::mpsc::Sender;
 use zip::write::FullFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
+use crate::index::Index;
 use crate::paths::{self, Root};
 
 /// Entries sent for one archive. The count of all entries is sent beside them.
@@ -83,14 +84,15 @@ impl Write for Pipe {
 }
 
 /// Writes the folder at `abs` as a zip into `out`, one file at a time. Runs on a blocking thread.
-/// Links to folders are left out, so the walk always ends.
-pub fn stream(root: &Root, abs: &Path, out: Sender<io::Result<Bytes>>) {
+/// Links to folders are left out, so the walk always ends. `rel` is where `abs` is in the served folder.
+/// What a listing hides is left out, as it is there, unless `all`: see `Index::hides`.
+pub fn stream(root: &Root, index: &Index, rel: &str, abs: &Path, all: bool, out: Sender<io::Result<Bytes>>) {
     let report = out.clone();
     let pipe = Pipe {
         out,
         held: Vec::with_capacity(CHUNK),
     };
-    if let Err(error) = write(root, abs, pipe)
+    if let Err(error) = write(root, index, rel, abs, all, pipe)
         && error.kind() != io::ErrorKind::BrokenPipe
     {
         let _ = report.blocking_send(Err(error));
@@ -123,12 +125,16 @@ fn dated(modified: Option<SystemTime>) -> FullFileOptions<'static, 'static> {
 
 /// Each folder is an entry of its own, written before what it holds, so that it keeps its time when it
 /// is unpacked too.
-fn write(root: &Root, top: &Path, pipe: Pipe) -> io::Result<()> {
+fn write(root: &Root, index: &Index, rel: &str, top: &Path, all: bool, pipe: Pipe) -> io::Result<()> {
     let mut zip = ZipWriter::new_stream(pipe);
-    let mut todo = vec![String::new()];
-    while let Some(dir) = todo.pop() {
+    let mut todo = vec![(String::new(), index.rules_in(rel))];
+    while let Some((dir, rules)) = todo.pop() {
         let at = top.join(&dir);
         let mut seen = root.scan(&at)?;
+        let here = paths::join(rel, &dir);
+        if !all {
+            seen.retain(|e| !index.hides(&rules, &here, &e.name, e.dir));
+        }
         seen.sort_by(|a, b| paths::natural_cmp(&a.name, &b.name));
         if !dir.is_empty() {
             let modified = std::fs::metadata(&at).and_then(|meta| meta.modified()).ok();
@@ -136,7 +142,8 @@ fn write(root: &Root, top: &Path, pipe: Pipe) -> io::Result<()> {
                 .map_err(io::Error::other)?;
         }
         for entry in seen.iter().rev().filter(|e| e.dir && !e.link) {
-            todo.push(paths::join(&dir, &entry.name));
+            let inside = index.enter(&top.join(paths::join(&dir, &entry.name)), &rules);
+            todo.push((paths::join(&dir, &entry.name), inside));
         }
         for entry in seen.iter().filter(|e| !e.dir) {
             let name = paths::join(&dir, &entry.name);

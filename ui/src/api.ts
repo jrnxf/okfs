@@ -34,6 +34,8 @@ export interface Listing {
   total: number;
   /** The entries hidden from it: see `showsHidden`. */
   hidden?: number;
+  /** How many names in it are not text, so okfs cannot show them. */
+  unreadable?: number;
   readme: Readme | null;
   /** The listing of the entry followed, the first unless another was named, when levels were asked for and it is a folder. */
   under?: Listing;
@@ -153,7 +155,7 @@ export const urls = {
   raw: (path: string) => `/raw/${encode(path)}`,
   /** A page to show in a frame. The server sends it on to an address its own images and scripts load from. */
   frame: (path: string) => `/api/frame/${encode(path)}`,
-  zip: (path: string) => `/zip/${encode(path)}`,
+  zip: (path: string) => `/zip/${encode(path)}${showsHidden() ? "?all=1" : ""}`,
   /** The shareable address of a folder or of an open file. */
   view(path: string, dir: boolean): string {
     if (!path) return "/";

@@ -101,9 +101,10 @@ pub enum NoEntry {
 pub enum Unshown {
     /// It starts with a dot, and dotfiles are not served.
     Hidden,
-    /// It cannot be served: a link that leads nowhere or out of what is served, or a
-    /// name that is not text.
+    /// It cannot be served: a link that leads nowhere or out of what is served.
     Unserved,
+    /// Its name is not text, so it has no address a request could carry.
+    NotText,
 }
 
 /// Why `Root::remove` left an entry where it was.
@@ -378,7 +379,7 @@ impl Root {
     /// What one name in the folder `dir` is, or why it is not shown. `kind` is the
     /// name's own, not that of what a link points at. Listing and deleting both ask here.
     fn seen(&self, dir: &Path, name: &OsStr, kind: FileType) -> Result<Seen, Unshown> {
-        let name = name.to_str().ok_or(Unshown::Unserved)?;
+        let name = name.to_str().ok_or(Unshown::NotText)?;
         if !self.shows(name) {
             return Err(Unshown::Hidden);
         }
@@ -421,15 +422,26 @@ impl Root {
 
     /// The names in one folder that may be shown. `abs` must come from `resolve`.
     pub fn scan(&self, abs: &Path) -> io::Result<Vec<Seen>> {
+        self.scan_counting(abs).map(|(out, _)| out)
+    }
+
+    /// The names that may be shown, and how many names are left out only because they are not
+    /// text. Such a name cannot be shown as it is, and a changed one would not lead back to it.
+    pub fn scan_counting(&self, abs: &Path) -> io::Result<(Vec<Seen>, usize)> {
         let mut out = Vec::new();
+        let mut not_text = 0;
         for entry in fs::read_dir(abs)? {
             let Ok(entry) = entry else { continue };
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
-            out.extend(self.seen(abs, &entry.file_name(), kind).ok());
+            match self.seen(abs, &entry.file_name(), kind) {
+                Ok(seen) => out.push(seen),
+                Err(Unshown::NotText) => not_text += 1,
+                Err(_) => {}
+            }
         }
-        Ok(out)
+        Ok((out, not_text))
     }
 }
 

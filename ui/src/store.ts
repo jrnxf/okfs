@@ -198,6 +198,8 @@ export interface State {
   bytes: number;
   /** Entries of this folder left out of `all` while hidden entries are not shown. */
   unlisted: number;
+  /** Names in this folder that are not text, so okfs cannot show them. */
+  unreadable: number;
   palette: boolean;
   help: boolean;
   /** The matches are on screen in place of the folder's list. */
@@ -331,6 +333,7 @@ export class Store {
     readme: null,
     bytes: 0,
     unlisted: 0,
+    unreadable: 0,
     palette: false,
     help: false,
     finding: false,
@@ -584,6 +587,7 @@ export class Store {
     s.all = listing.entries.map((item, rank) => toEntry(item, listing.path, rank));
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.unlisted = listing.hidden ?? 0;
+    s.unreadable = listing.unreadable ?? 0;
     s.readme = listing.readme;
     s.picked = stillIn(s.picked, s.all.map((entry) => entry.path));
   }
@@ -591,7 +595,7 @@ export class Store {
   /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
-    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, filter: "" });
+    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, filter: "" });
   }
 
   /**

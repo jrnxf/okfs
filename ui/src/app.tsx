@@ -723,6 +723,7 @@ export function App() {
   const info =
     (s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
     (s.unlisted ? ` · ${fmt.count(s.unlisted)} hidden` : "") +
+    (s.unreadable ? ` · ${fmt.count(s.unreadable)} ${s.unreadable === 1 ? "name" : "names"} okfs cannot show` : "") +
     // The size is of the files right here; a folder of folders has none to add up.
     `${s.all.some((entry) => !entry.dir) ? ` · ${fmt.size(s.bytes)}` : ""} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
 
