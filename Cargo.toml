@@ -69,6 +69,9 @@ zip = { version = "9.0.2", default-features = false, features = ["deflate", "jif
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs", "process"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 # musl's allocator serializes every thread on one lock, which the parallel walk and the previews hit hard:
 # the static Linux builds allocate with mimalloc instead.
 [target.'cfg(target_env = "musl")'.dependencies]
