@@ -352,7 +352,7 @@ export function Palette() {
             aria-label="Find anything"
             aria-expanded={rows.length > 0}
             aria-autocomplete="list"
-            aria-controls="palette-list"
+            aria-controls={rows.length ? "palette-list" : undefined}
             aria-activedescendant={rows.length ? (rows[at] && "all" in rows[at] ? "palette-row-all" : `palette-row-${at}`) : undefined}
             value={value}
             placeholder={menu ? menu.placeholder : `Find a file or folder anywhere in ${config.root}`}
@@ -367,7 +367,7 @@ export function Palette() {
           {/* there is no Escape key on a phone, and the chip sits over the end of the placeholder */}
           <kbd class="pointer-coarse:hidden">esc</kbd>
         </div>
-        <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list} id="palette-list" role="listbox" aria-label={menu ? menu.title : "Results"} aria-owns={allAt >= 0 ? "palette-row-all" : undefined}>
+        <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list} id="palette-list" role={rows.length ? "listbox" : undefined} aria-label={rows.length ? (menu ? menu.title : "Results") : undefined} aria-owns={allAt >= 0 ? "palette-row-all" : undefined}>
           {rows.length === 0 && !pending && <div class="px-3 py-7 text-center text-faint">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
             if ("all" in row) return null;

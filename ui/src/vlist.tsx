@@ -2,7 +2,7 @@
 // Only the rows on screen are in the page, so a folder of 50,000 scrolls like one of 50.
 
 import { Fragment, type ComponentChildren, type RefObject } from "preact";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 
 /** Rows kept above and below what is visible, so a fast scroll does not show a gap. */
 const OVERSCAN = 6;
@@ -93,7 +93,7 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
   // The keys are read by the page and the list never has focus, so a screen reader is told where the cursor is:
   // by the listbox's active row for a reader that does have focus on it, and by a live region for the rest.
   // Only an attribute and a line of text change; nothing renders again.
-  useLayoutEffect(() => {
+  const tell = useCallback(() => {
     const [outer, status] = [scroller.current, live.current];
     if (!outer || !status) return;
     const row = count > 0 ? outer.querySelector(`[data-i="${cursor}"]`) : null;
@@ -101,7 +101,18 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
     else outer.removeAttribute("aria-activedescendant");
     // With focus on the listbox the reader follows the active row itself: saying it here too would be heard twice.
     status.textContent = row && document.activeElement !== outer ? (row.getAttribute("aria-label") ?? "") : "";
-  }, [cursor, count, listKey, caught, scroller]);
+  }, [cursor, count, scroller]);
+  useLayoutEffect(tell, [tell, listKey, caught]);
+  // A click moves the cursor first and focus after: the line said for the first is taken back, and given again when focus leaves.
+  useEffect(() => {
+    const outer = scroller.current;
+    outer?.addEventListener("focus", tell);
+    outer?.addEventListener("blur", tell);
+    return () => {
+      outer?.removeEventListener("focus", tell);
+      outer?.removeEventListener("blur", tell);
+    };
+  }, [tell, scroller]);
   const cells: ComponentChildren[] = [];
   for (let index = first; index < last; index++) {
     cells.push(render(index, { top: index * step, left: 0, width: box.width, height: step }));
