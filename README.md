@@ -31,7 +31,7 @@ nix profile install github:jrnxf/okfs   # or install it
 
 Without nix, download a release. okfs has none yet: the first is `v0.1.0-pre.1`. Until v0.1.0, releases are pre-releases, tagged `v0.1.0-pre.N`, and `gh release download` with no tag takes only a full release, so ask for the newest one by name.
 
-Each release has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, with a `.sha256` beside it. The targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin` and `x86_64-apple-darwin`. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
+Each release has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, and a zip for Windows (x86-64), `okfs-<version>-x86_64-pc-windows-msvc.zip`, each with a `.sha256` beside it. The targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
 
 ```sh
 tag=$(gh release list --repo jrnxf/okfs --limit 1 --json tagName --jq '.[0].tagName')
@@ -68,10 +68,11 @@ The engine that draws the first page of a PDF is about 6 MB of the binary. `carg
 
 Platform notes:
 
-- There is no Windows build yet. The code has not been run there.
+- On Windows, download `okfs-<version>-x86_64-pc-windows-msvc.zip` from the [releases](https://github.com/jrnxf/okfs/releases); it holds `okfs.exe`. The drawing of a PDF's first page runs there without the memory and processor caps it has on Linux and a Mac, so only its time limit ends a PDF that will not draw.
 - On a Mac, a binary downloaded with a browser is quarantined, and Gatekeeper refuses to open it because okfs is not signed. Download it with `gh` or `curl` as above, which leaves no quarantine mark, or clear the mark with `xattr -d com.apple.quarantine okfs`.
+- On Windows, a `okfs.exe` downloaded with a browser is blocked by SmartScreen because okfs is not signed. Choose "More info", then "Run anyway", or run `Unblock-File okfs.exe` in PowerShell.
 - Watching a folder for changes uses inotify on Linux and FSEvents on a Mac. On a network share, where a watcher does not see what other machines change, use `--rescan` (see [A big folder](#a-big-folder)).
-- Shell completions: `okfs completions zsh` (or `bash`, `fish`) prints them. The release archive has them as files, and `okfs.1` is the manual page.
+- Shell completions: `okfs completions zsh` (or `bash`, `fish`, `powershell`) prints them. The release archive has them as files, and `okfs.1` is the manual page.
 
 ## Quick start
 

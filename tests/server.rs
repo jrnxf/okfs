@@ -1638,8 +1638,20 @@ async fn a_folder_left_out_of_the_search_still_opens_and_lists_its_files() {
 /// Sets when a file or folder was last written, in seconds since the epoch.
 fn written_at(path: impl AsRef<Path>, seconds: u64) {
     let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
-    let file = fs::File::open(path.as_ref()).unwrap();
-    file.set_modified(time).unwrap();
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    // Windows opens a file read-only without the right to set its time, and opens a folder only with
+    // backup semantics.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        options
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    options.open(path.as_ref()).unwrap().set_modified(time).unwrap();
 }
 
 /// The paths in an answer of `/api/recent`, newest first.
@@ -4281,6 +4293,32 @@ async fn a_moved_link_stays_a_link() {
             .is_symlink()
     );
     assert_eq!(fs::read_to_string(site.served.join("sub/b.txt")).unwrap(), "inside");
+}
+
+/// Makes a link to a file, or says why it cannot: Windows allows it only with the right to.
+fn link_file(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_file(target, link);
+}
+
+#[tokio::test]
+async fn a_link_moved_onto_what_it_points_at_is_refused_and_the_file_keeps_its_bytes() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    if link_file(&site.served.join("sub/b.txt"), &site.served.join("pointer.txt")).is_err() {
+        return;
+    }
+    let (response, _) = send(&app, page_move("pointer.txt", "sub/b.txt")).await;
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(fs::symlink_metadata(site.served.join("sub/b.txt")).unwrap().is_file());
+    assert_eq!(fs::read_to_string(site.served.join("sub/b.txt")).unwrap(), "inside");
+    assert!(
+        fs::symlink_metadata(site.served.join("pointer.txt"))
+            .unwrap()
+            .is_symlink()
+    );
 }
 
 #[tokio::test]

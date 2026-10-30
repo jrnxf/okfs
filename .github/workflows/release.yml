@@ -1,6 +1,6 @@
 name: release
 
-# Builds okfs for Linux and macOS and publishes the binaries as a release, so a machine without nix
+# Builds okfs for Linux, macOS and Windows and publishes the binaries as a release, so a machine without nix
 # or a Rust toolchain can download okfs and run it. The version the binaries report comes from the
 # tag: the build writes it into Cargo.toml, so a release needs no version-bump commit.
 #
@@ -26,6 +26,8 @@ name: release
 #   Linux, whatever its C library. Each archive holds one folder, okfs-<version>-<target>/, with the
 #   executable okfs, completions/okfs.bash, completions/_okfs (zsh), completions/okfs.fish, the
 #   manual page okfs.1, README.md and LICENSE, so a package manager installs them as they are.
+# - okfs-<version>-x86_64-pc-windows-msvc.zip: one folder of the same name with okfs.exe,
+#   completions/_okfs.ps1 (PowerShell), README.md and LICENSE. It has no manual page.
 # - okfs-x86_64-unknown-linux-gnu: the x86-64 musl binary on its own, under the name the first
 #   releases used, so a machine that downloads that name keeps getting the newest okfs.
 # - okfs-third-party-notices.md: THIRD_PARTY.md, then the licenses of every Rust crate and syntax
@@ -69,8 +71,14 @@ jobs:
           # Built on Apple silicon, as GitHub's Intel Macs are going away, and run under Rosetta.
           - target: x86_64-apple-darwin
             os: macos-15
+          - target: x86_64-pc-windows-msvc
+            os: windows-2025
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
+    # Git's bash on Windows, so the steps below read the same on every system.
+    defaults:
+      run:
+        shell: bash
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -118,6 +126,7 @@ jobs:
       - name: Run
         run: |
           bin=target/$TARGET/release/okfs
+          [ "$RUNNER_OS" = Windows ] && bin=$bin.exe
           if [ "$TARGET" = x86_64-apple-darwin ]; then
             run() { arch -x86_64 "$bin" "$@"; }
           else
@@ -137,22 +146,34 @@ jobs:
 
           # The binary writes its own completions and manual page, so they match its options.
           mkdir -p "$ASSET/completions"
-          run completions bash > "$ASSET/completions/okfs.bash"
-          run completions zsh > "$ASSET/completions/_okfs"
-          run completions fish > "$ASSET/completions/okfs.fish"
-          run manpage > "$ASSET/okfs.1"
+          if [ "$RUNNER_OS" = Windows ]; then
+            run completions powershell > "$ASSET/completions/_okfs.ps1"
+          else
+            run completions bash > "$ASSET/completions/okfs.bash"
+            run completions zsh > "$ASSET/completions/_okfs"
+            run completions fish > "$ASSET/completions/okfs.fish"
+            run manpage > "$ASSET/okfs.1"
+          fi
 
       # COPYFILE_DISABLE keeps macOS's tar from adding ._ files for extended attributes.
       - name: Package
         env:
           COPYFILE_DISABLE: 1
         run: |
-          install -m 0755 "target/$TARGET/release/okfs" "$ASSET/okfs"
           cp README.md LICENSE "$ASSET/"
-          tar -czf "$ASSET.tar.gz" "$ASSET"
-          shasum -a 256 "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
-          cat "$ASSET.tar.gz.sha256"
-          tar -tvzf "$ASSET.tar.gz"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "target/$TARGET/release/okfs.exe" "$ASSET/okfs.exe"
+            7z a -tzip "$ASSET.zip" "$ASSET"
+            sha256sum "$ASSET.zip" > "$ASSET.zip.sha256"
+            cat "$ASSET.zip.sha256"
+            7z l "$ASSET.zip"
+          else
+            install -m 0755 "target/$TARGET/release/okfs" "$ASSET/okfs"
+            tar -czf "$ASSET.tar.gz" "$ASSET"
+            shasum -a 256 "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
+            cat "$ASSET.tar.gz.sha256"
+            tar -tvzf "$ASSET.tar.gz"
+          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -160,6 +181,8 @@ jobs:
           path: |
             ${{ env.ASSET }}.tar.gz
             ${{ env.ASSET }}.tar.gz.sha256
+            ${{ env.ASSET }}.zip
+            ${{ env.ASSET }}.zip.sha256
           if-no-files-found: error
 
   notices:
@@ -238,6 +261,19 @@ jobs:
             fi
             if ! tar -tvzf "$archive" "$dir/okfs" | grep -q '^-rwxr-xr-x'; then
               echo "$archive: okfs is not mode 0755" >&2
+              exit 1
+            fi
+          done
+          # The Windows archive holds okfs.exe and the PowerShell completions.
+          for archive in okfs-*.zip; do
+            dir=${archive%.zip}
+            echo "$archive"
+            unzip -l "$archive"
+            listed=$(unzip -Z1 "$archive" | sed 's|/$||' | sort)
+            expected=$(printf '%s\n' "$dir" "$dir/LICENSE" "$dir/README.md" "$dir/completions" \
+              "$dir/completions/_okfs.ps1" "$dir/okfs.exe" | sort)
+            if [ "$listed" != "$expected" ]; then
+              echo "$archive does not hold the expected files" >&2
               exit 1
             fi
           done

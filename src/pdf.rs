@@ -138,7 +138,8 @@ pub fn page(w: u32) -> Result<(), String> {
 }
 
 /// Holds this process to a share of memory and of processor time, so it ends on its own
-/// even when nothing is left to stop it.
+/// even when nothing is left to stop it. Windows has no such cap here: the drawing process runs
+/// without a memory or processor limit there, and only the server's time limit (`LIMIT`) ends it.
 fn confine() {
     #[cfg(all(feature = "pdf", unix))]
     {

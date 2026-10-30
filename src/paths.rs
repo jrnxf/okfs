@@ -181,7 +181,7 @@ impl Root {
     /// True for a name that may be shown. A write's file in progress never is, and neither is the
     /// Trash, even with `--hidden`.
     pub fn shows(&self, name: &str) -> bool {
-        (self.hidden || !name.starts_with('.')) && !is_part(name) && name != TRASH
+        (self.hidden || !name.starts_with('.')) && !is_part(name) && !name.eq_ignore_ascii_case(TRASH)
     }
 
     /// Splits a request path into segments, refusing anything that is not a plain name.
@@ -459,7 +459,11 @@ pub const TRASH: &str = ".okfs-trash";
 /// True for the name of a file that a write is still putting together. It is never shown.
 pub fn is_part(name: &str) -> bool {
     let (start, end) = PART;
-    name.len() > start.len() + end.len() && name.starts_with(start) && name.ends_with(end)
+    // Case is ignored: on a disk that ignores it, `.OKFS-x.PART` is the file `.okfs-x.part` too.
+    let (name, start, end) = (name.as_bytes(), start.as_bytes(), end.as_bytes());
+    name.len() > start.len() + end.len()
+        && name[..start.len()].eq_ignore_ascii_case(start)
+        && name[name.len() - end.len()..].eq_ignore_ascii_case(end)
 }
 
 /// Joins a folder path and a name, both relative to the served folder.

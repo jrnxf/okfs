@@ -203,6 +203,15 @@ enum ThemeAction {
     List,
 }
 
+/// A folder as the banner names it. Windows spells a canonical path `\\?\C:\...`, which no one types.
+fn shown(path: &std::path::Path) -> String {
+    let text = path.display().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(plain) if !plain.starts_with("UNC\\") => plain.to_owned(),
+        _ => text,
+    }
+}
+
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
@@ -493,7 +502,7 @@ fn serve(args: Serve) -> Result<(), String> {
                 can.trim_start_matches("read, ").trim_start_matches("read and ")
             ),
         };
-        println!("  serving  {} ({writes})", root.dir().display());
+        println!("  serving  {} ({writes})", shown(root.dir()));
         if let Some(trash) = app.trash() {
             println!(
                 "  trash    a delete is kept {} days in {}, then goes for good",
