@@ -855,6 +855,11 @@ impl Index {
         self.skip.rules_in(self.root.dir(), dir)
     }
 
+    /// The rules inside the folder `abs`, which is in a folder with the rules `up`.
+    pub fn enter(&self, abs: &Path, up: &Rules) -> Rules {
+        self.skip.enter(abs, false, up)
+    }
+
     /// Whether a listing of the folder `dir` hides its entry `name` until hidden entries
     /// are asked for: a dotfile, which is there at all only with `--hidden`, or a folder
     /// that is left out, such as `node_modules`. `rules` are those inside `dir`.

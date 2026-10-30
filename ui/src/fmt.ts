@@ -42,3 +42,6 @@ export function duration(seconds: number): string {
   const rest = `${hours ? two(Math.floor((whole % 3600) / 60)) : Math.floor(whole / 60)}:${two(whole % 60)}`;
   return hours ? `${hours}:${rest}` : rest;
 }
+
+/** What the status line says of names that are not text, so okfs cannot show them. */
+export const unreadable = (n: number): string => `${count(n)} ${n === 1 ? "name" : "names"} okfs cannot show`;

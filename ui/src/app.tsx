@@ -723,6 +723,7 @@ export function App() {
   const info =
     (s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
     (s.unlisted ? ` · ${fmt.count(s.unlisted)} hidden` : "") +
+    (s.unreadable ? ` · ${fmt.unreadable(s.unreadable)}` : "") +
     // The size is of the files right here; a folder of folders has none to add up.
     `${s.all.some((entry) => !entry.dir) ? ` · ${fmt.size(s.bytes)}` : ""} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
 

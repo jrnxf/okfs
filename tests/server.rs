@@ -4236,3 +4236,167 @@ async fn a_copy_is_refused_into_itself_past_max_upload_and_without_its_flag() {
     assert!(!site.served.join("big.txt").exists() && !site.served.join("c.txt").exists());
     assert!(!site.served.join("sub/deep/sub").exists());
 }
+
+fn zip_names(body: Vec<u8>) -> Vec<String> {
+    let archive = zip::ZipArchive::new(Cursor::new(body)).unwrap();
+    let mut names: Vec<String> = archive.file_names().map(|name| name.unwrap().into_owned()).collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn a_zip_leaves_out_what_the_listing_leaves_out_unless_all_is_asked_for() {
+    let site = Site::new();
+    let proj = site.served.join("proj");
+    fs::create_dir_all(proj.join("src")).unwrap();
+    fs::create_dir_all(proj.join("dist")).unwrap();
+    fs::create_dir_all(proj.join("node_modules/left-pad")).unwrap();
+    fs::write(proj.join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(proj.join("dist/out.js"), "1").unwrap();
+    fs::write(proj.join("node_modules/left-pad/big.bin"), "0").unwrap();
+    fs::write(proj.join(".gitignore"), "dist\n").unwrap();
+    let app = site.router();
+
+    let listed = json(&app, "/api/list?path=proj").await;
+    assert_eq!(listed["hidden"], 2);
+
+    let (_, body) = get(&app, "/zip/proj").await;
+    assert_eq!(zip_names(body), ["src/", "src/main.rs"]);
+
+    let (_, body) = get(&app, "/zip/proj?all=1").await;
+    assert_eq!(
+        zip_names(body),
+        [
+            "dist/",
+            "dist/out.js",
+            "node_modules/",
+            "node_modules/left-pad/",
+            "node_modules/left-pad/big.bin",
+            "src/",
+            "src/main.rs"
+        ]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_name_that_is_not_text_is_counted_in_its_folders_listing_and_not_shown() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let site = Site::new();
+    let photos = site.served.join("photos");
+    fs::create_dir_all(&photos).unwrap();
+    fs::write(photos.join("ok.txt"), "ok").unwrap();
+    fs::write(photos.join(OsStr::from_bytes(b"caf\xe9.txt")), "latin").unwrap();
+    let app = site.router();
+
+    for uri in ["/api/list?path=photos", "/api/list?path=photos&all=1"] {
+        let listed = json(&app, uri).await;
+        assert_eq!(names(&listed), ["ok.txt"]);
+        assert_eq!(listed["unreadable"], 1);
+    }
+    // A folder with none says nothing.
+    assert!(json(&app, "/api/list?path=sub").await.get("unreadable").is_none());
+    let (_, body) = get(&app, "/zip/photos").await;
+    assert_eq!(zip_names(body), ["ok.txt"]);
+}
+
+#[tokio::test]
+async fn a_zip_applies_the_rules_of_each_folder_it_walks_into() {
+    let site = Site::new();
+    let proj = site.served.join("proj");
+    fs::create_dir_all(proj.join("sub/out")).unwrap();
+    fs::create_dir_all(proj.join("sub/keep")).unwrap();
+    fs::write(proj.join("sub/out/x.txt"), "x").unwrap();
+    fs::write(proj.join("sub/keep/y.txt"), "y").unwrap();
+    // Anchored to the folder the file is in.
+    fs::write(proj.join("sub/.gitignore"), "/out\n").unwrap();
+    let app = site.router();
+
+    let listed = json(&app, "/api/list?path=proj/sub").await;
+    assert_eq!(names(&listed), ["keep"]);
+    let (_, body) = get(&app, "/zip/proj").await;
+    assert_eq!(zip_names(body), ["sub/", "sub/keep/", "sub/keep/y.txt"]);
+    let (_, body) = get(&app, "/zip/proj?all=1").await;
+    assert_eq!(
+        zip_names(body),
+        ["sub/", "sub/keep/", "sub/keep/y.txt", "sub/out/", "sub/out/x.txt"]
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_zip_through_a_link_to_a_folder_leaves_out_what_the_listing_of_it_does() {
+    let site = Site::new();
+    let real = site.served.join("real");
+    fs::create_dir_all(real.join("sub/out")).unwrap();
+    fs::create_dir_all(real.join("sub/keep")).unwrap();
+    fs::write(real.join("sub/out/x.txt"), "x").unwrap();
+    fs::write(real.join("sub/keep/y.txt"), "y").unwrap();
+    fs::write(real.join("sub/.gitignore"), "/out\n").unwrap();
+    std::os::unix::fs::symlink(&real, site.served.join("alias")).unwrap();
+    let app = site.router();
+
+    let listed = json(&app, "/api/list?path=alias/sub").await;
+    assert_eq!(names(&listed), ["keep"]);
+    for folder in ["real", "alias"] {
+        let (_, body) = get(&app, &format!("/zip/{folder}")).await;
+        assert_eq!(zip_names(body), ["sub/", "sub/keep/", "sub/keep/y.txt"], "{folder}");
+    }
+}
+
+#[tokio::test]
+async fn the_zip_of_the_served_folder_follows_its_okfsignore_and_top_level_rules() {
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("scratch")).unwrap();
+    fs::create_dir_all(site.served.join("sub/scratch")).unwrap();
+    fs::write(site.served.join("scratch/s.txt"), "s").unwrap();
+    fs::write(site.served.join("sub/scratch/t.txt"), "t").unwrap();
+    // Anchored to the served folder: only the top `scratch` is left out.
+    fs::write(site.served.join(".okfsignore"), "/scratch\n").unwrap();
+    let app = site.router();
+
+    let (_, body) = get(&app, "/zip/").await;
+    let names = zip_names(body);
+    assert!(!names.iter().any(|name| name.starts_with("scratch/")), "{names:?}");
+    assert!(names.contains(&"sub/scratch/t.txt".to_owned()), "{names:?}");
+    let (_, body) = get(&app, "/zip/?all=1").await;
+    assert!(zip_names(body).contains(&"scratch/s.txt".to_owned()));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_dotfile_with_a_name_that_is_not_text_is_hidden_and_not_counted_unless_dotfiles_are_served() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let site = Site::new();
+    let folder = site.served.join("photos");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("ok.txt"), "ok").unwrap();
+    fs::write(folder.join(OsStr::from_bytes(b".caf\xe9")), "latin").unwrap();
+
+    let listed = json(&site.router(), "/api/list?path=photos").await;
+    assert!(listed.get("unreadable").is_none());
+    assert!(listed.get("hidden").is_none());
+    // With dotfiles served, it is a name okfs cannot show like any other.
+    let listed = json(&site.serving(true, Options::default()), "/api/list?path=photos").await;
+    assert_eq!(listed["unreadable"], 1);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_folder_holding_a_name_that_is_not_text_is_not_deleted_and_says_why() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let site = Site::new();
+    let folder = site.served.join("photos");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(OsStr::from_bytes(b"caf\xe9.txt")), "latin").unwrap();
+    let (status, why) = refusal(&site.deleting(), page_delete("photos").unwrap()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(why.contains("a name that is not text"), "{why}");
+    assert!(folder.join(OsStr::from_bytes(b"caf\xe9.txt")).exists());
+}

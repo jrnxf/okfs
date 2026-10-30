@@ -644,6 +644,9 @@ struct Listing {
     /// The entries hidden from this listing: see `Index::hides`.
     #[serde(skip_serializing_if = "is_zero")]
     hidden: usize,
+    /// How many names in the folder are not text. They are not shown, and there is no address for them.
+    #[serde(skip_serializing_if = "is_zero")]
+    unreadable: usize,
     readme: Option<Readme>,
     /// The listing of the first entry, when it is a folder and levels were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -681,7 +684,7 @@ fn list_folder(
     all: bool,
 ) -> Option<Listing> {
     let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
-    let mut seen = app.root.scan(&found.abs).ok()?;
+    let (mut seen, unreadable) = app.root.scan_counting(&found.abs).ok()?;
     let rules = app.index.rules_in(&found.rel);
     let before = seen.len();
     if !all {
@@ -758,6 +761,7 @@ fn list_folder(
         entries,
         total,
         hidden,
+        unreadable,
         readme,
         under,
     })
@@ -1091,10 +1095,10 @@ fn holds(why: Unshown) -> Response {
             "somewhere inside, this folder holds a dotfile, which okfs is not showing and so does not delete: \
              start okfs with --hidden, or remove the dotfile yourself",
         ),
-        Unshown::Unserved => fail(
+        Unshown::Unserved | Unshown::NotText => fail(
             StatusCode::CONFLICT,
             "somewhere inside, this folder holds something okfs cannot show, such as a link that leads out of \
-             the served folder, and so does not delete: remove it yourself",
+             the served folder or a name that is not text, and so does not delete: remove it yourself",
         ),
     }
 }
@@ -2030,7 +2034,18 @@ const ATTR_CHAR: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'|')
     .remove(b'~');
 
-async fn zip_folder(State(app): State<Arc<App>>, path: Option<Path<String>>) -> Response {
+/// With `all`, the zip holds what a listing shows with hidden entries: see `Index::hides`.
+#[derive(Deserialize)]
+struct ZipQuery {
+    #[serde(default, deserialize_with = "query_flag")]
+    all: bool,
+}
+
+async fn zip_folder(
+    State(app): State<Arc<App>>,
+    path: Option<Path<String>>,
+    Query(query): Query<ZipQuery>,
+) -> Response {
     let path = path.map(|Path(path)| path).unwrap_or_default();
     let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_dir()) else {
         return not_found();
@@ -2042,8 +2057,10 @@ async fn zip_folder(State(app): State<Arc<App>>, path: Option<Path<String>>) -> 
         name => name.to_owned(),
     };
     let (send, receive) = tokio::sync::mpsc::channel(4);
-    let root = app.root.clone();
-    tokio::task::spawn_blocking(move || archive::stream(&root, &found.abs, send));
+    let worker = Arc::clone(&app);
+    tokio::task::spawn_blocking(move || {
+        archive::stream(&worker.root, &worker.index, &found.rel, &found.abs, query.all, send);
+    });
     let pieces = futures_util::stream::unfold(receive, |mut receive| async {
         receive.recv().await.map(|piece| (piece, receive))
     });
