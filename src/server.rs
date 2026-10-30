@@ -1363,9 +1363,24 @@ fn same_entry(a: &std::path::Path, b: &std::path::Path) -> bool {
             _ => false,
         }
     }
+    // Not `canonicalize` alone: it follows a link, which would make a link and its target one entry, and
+    // a move of the one onto the other would replace the target. Only two spellings of one name in one
+    // folder count, and neither may be a link.
     #[cfg(not(unix))]
     {
-        a.canonicalize().ok().is_some_and(|a| b.canonicalize().ok() == Some(a))
+        let plain = |path: &std::path::Path| fs::symlink_metadata(path).is_ok_and(|meta| !meta.is_symlink());
+        let (Some(a_name), Some(b_name)) = (a.file_name(), b.file_name()) else {
+            return false;
+        };
+        let same_folder = match (a.parent().map(fs::canonicalize), b.parent().map(fs::canonicalize)) {
+            (Some(Ok(a)), Some(Ok(b))) => a == b,
+            _ => false,
+        };
+        same_folder
+            && a_name.eq_ignore_ascii_case(b_name)
+            && plain(a)
+            && plain(b)
+            && a.canonicalize().ok().is_some_and(|a| b.canonicalize().ok() == Some(a))
     }
 }
 

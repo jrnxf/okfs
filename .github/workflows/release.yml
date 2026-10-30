@@ -22,12 +22,12 @@ name: release
 #
 # The release's assets, each with a `.sha256`:
 # - okfs-<version>-<target>.tar.gz for x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
-#   aarch64-apple-darwin and x86_64-apple-darwin, and okfs-<version>-x86_64-pc-windows-msvc.zip for
-#   Windows, which holds okfs.exe and completions/_okfs.ps1 (PowerShell) in place of the
-#   executable okfs and the shell completions, and no manual page. The Linux binaries are static, so they run on any
+#   aarch64-apple-darwin and x86_64-apple-darwin. The Linux binaries are static, so they run on any
 #   Linux, whatever its C library. Each archive holds one folder, okfs-<version>-<target>/, with the
 #   executable okfs, completions/okfs.bash, completions/_okfs (zsh), completions/okfs.fish, the
 #   manual page okfs.1, README.md and LICENSE, so a package manager installs them as they are.
+# - okfs-<version>-x86_64-pc-windows-msvc.zip: one folder of the same name with okfs.exe,
+#   completions/_okfs.ps1 (PowerShell), README.md and LICENSE. It has no manual page.
 # - okfs-x86_64-unknown-linux-gnu: the x86-64 musl binary on its own, under the name the first
 #   releases used, so a machine that downloads that name keeps getting the newest okfs.
 # - okfs-third-party-notices.md: THIRD_PARTY.md, then the licenses of every Rust crate and syntax
@@ -146,13 +146,13 @@ jobs:
 
           # The binary writes its own completions and manual page, so they match its options.
           mkdir -p "$ASSET/completions"
-          run completions bash > "$ASSET/completions/okfs.bash"
-          run completions zsh > "$ASSET/completions/_okfs"
-          run completions fish > "$ASSET/completions/okfs.fish"
-          run manpage > "$ASSET/okfs.1"
           if [ "$RUNNER_OS" = Windows ]; then
-            rm "$ASSET"/completions/*
             run completions powershell > "$ASSET/completions/_okfs.ps1"
+          else
+            run completions bash > "$ASSET/completions/okfs.bash"
+            run completions zsh > "$ASSET/completions/_okfs"
+            run completions fish > "$ASSET/completions/okfs.fish"
+            run manpage > "$ASSET/okfs.1"
           fi
 
       # COPYFILE_DISABLE keeps macOS's tar from adding ._ files for extended attributes.
@@ -163,7 +163,6 @@ jobs:
           cp README.md LICENSE "$ASSET/"
           if [ "$RUNNER_OS" = Windows ]; then
             cp "target/$TARGET/release/okfs.exe" "$ASSET/okfs.exe"
-            rm "$ASSET/okfs.1"
             7z a -tzip "$ASSET.zip" "$ASSET"
             sha256sum "$ASSET.zip" > "$ASSET.zip.sha256"
             cat "$ASSET.zip.sha256"

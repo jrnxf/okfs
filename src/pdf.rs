@@ -138,7 +138,8 @@ pub fn page(w: u32) -> Result<(), String> {
 }
 
 /// Holds this process to a share of memory and of processor time, so it ends on its own
-/// even when nothing is left to stop it.
+/// even when nothing is left to stop it. Windows has no such cap here: the drawing process runs
+/// without a memory or processor limit there, and only the server's time limit (`LIMIT`) ends it.
 fn confine() {
     #[cfg(all(feature = "pdf", unix))]
     {
@@ -148,8 +149,6 @@ fn confine() {
             maximum: Some(most),
         };
         // Not every system holds a process to these: the time limit of the server is what is relied on.
-        // Windows is one: there the drawing process runs without a memory or processor cap, and only that
-        // time limit ends it.
         let _ = setrlimit(Resource::As, cap(MAX_MEMORY));
         let _ = setrlimit(Resource::Cpu, cap(LIMIT.as_secs() * 2));
     }

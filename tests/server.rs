@@ -4295,6 +4295,32 @@ async fn a_moved_link_stays_a_link() {
     assert_eq!(fs::read_to_string(site.served.join("sub/b.txt")).unwrap(), "inside");
 }
 
+/// Makes a link to a file, or says why it cannot: Windows allows it only with the right to.
+fn link_file(target: &Path, link: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    return std::os::windows::fs::symlink_file(target, link);
+}
+
+#[tokio::test]
+async fn a_link_moved_onto_what_it_points_at_is_refused_and_the_file_keeps_its_bytes() {
+    let site = Site::new();
+    let app = site.all_writes(false);
+    if link_file(&site.served.join("sub/b.txt"), &site.served.join("pointer.txt")).is_err() {
+        return;
+    }
+    let (response, _) = send(&app, page_move("pointer.txt", "sub/b.txt")).await;
+    assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+    assert!(fs::symlink_metadata(site.served.join("sub/b.txt")).unwrap().is_file());
+    assert_eq!(fs::read_to_string(site.served.join("sub/b.txt")).unwrap(), "inside");
+    assert!(
+        fs::symlink_metadata(site.served.join("pointer.txt"))
+            .unwrap()
+            .is_symlink()
+    );
+}
+
 #[tokio::test]
 async fn a_copy_lands_whole_beside_or_in_another_folder() {
     let site = Site::new();
