@@ -34,3 +34,20 @@ test("the keys typed right after Ctrl K are the palette's, when frames come late
   await expect(palette.getByRole("combobox")).toHaveValue("needle");
   await expect(palette.getByText("needle-in-haystack.txt")).toBeVisible();
 });
+
+test("Enter before the search answers opens the best match for what was typed", async ({ page, okfs }) => {
+  // The answer for the whole word is held back: the rows on screen are an earlier, shorter query's.
+  let answer!: () => void;
+  const held = new Promise<void>((done) => (answer = done));
+  await page.route(/\/api\/search\?q=needle(&|$)/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto(`${okfs.origin}/`);
+  await expect(page.getByRole("option", { name: /^deep/ })).toBeVisible();
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("needle");
+  await page.keyboard.press("Enter");
+  answer();
+  await expect(page).toHaveURL(`${okfs.origin}/deep/deeper/needle-in-haystack.txt`);
+});
