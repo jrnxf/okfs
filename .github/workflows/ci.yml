@@ -4,11 +4,15 @@ on:
   pull_request:
   push:
     branches: [main]
+  # A new advisory shows up without a push.
+  schedule:
+    - cron: "17 6 * * 1"
 
-# A newer push to the same PR makes the older run pointless.
+# A newer push to the same PR makes the older run pointless. A push to main is never cancelled:
+# every merge keeps its own run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -47,10 +51,16 @@ jobs:
         working-directory: ui
 
       - name: Test
-        run: nix develop -c cargo test
+        run: nix develop -c cargo test --locked
+
+      - name: Test without the PDF preview
+        run: nix develop -c cargo test --locked --no-default-features
 
       - name: Clippy
-        run: nix develop -c cargo clippy --all-targets -- -D warnings
+        run: nix develop -c cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Clippy without the PDF preview
+        run: nix develop -c cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
       - name: Format
         run: nix develop -c cargo fmt --check
@@ -58,6 +68,26 @@ jobs:
       - name: Type check the page
         run: nix develop -c bun run check
         working-directory: ui
+
+  # RustSec advisories for both lockfiles. A vulnerability fails the job; warnings (unmaintained,
+  # unsound) are listed and do not.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-audit
+
+      - name: Audit okfs
+        run: cargo audit --file Cargo.lock
+
+      - name: Audit the site's engine
+        run: cargo audit --file web/engine/Cargo.lock
 
   # The nix package builds and runs.
   package:
@@ -191,3 +221,14 @@ jobs:
       - name: Build the site
         run: npm ci && npm run build
         working-directory: web
+
+      # build.sh installed ui/'s dependencies, which the site's type check reads.
+      - name: Type check the site
+        run: npm run check
+        working-directory: web
+
+      - name: Clippy the engine
+        run: |
+          rustup target add wasm32-wasip1
+          rustup component add clippy
+          cargo clippy --locked --manifest-path web/engine/Cargo.toml --target wasm32-wasip1 -- -D warnings
