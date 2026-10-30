@@ -3,6 +3,7 @@
 
 pub mod archive;
 pub mod assets;
+pub mod camera;
 pub mod cli;
 pub mod every;
 pub mod index;

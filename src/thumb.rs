@@ -1,14 +1,17 @@
-//! Small versions of images, whole images in a format any browser shows, and first pages of PDFs.
+//! Small versions of images (camera RAW files too, by the JPEG inside them), whole images in a format any browser shows, and first pages of PDFs.
 //! Inputs are bounded, and the cache lives outside the served folder. The first pages of PDFs are
 //! kept in it too: see `pdf`.
 
 use std::fs;
-use std::io::{BufReader, Cursor};
+use std::io::{BufRead, BufReader, Cursor, Seek};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use image::codecs::jpeg::JpegEncoder;
+use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
+
+use crate::camera;
 
 /// The widths a thumbnail can be asked for. Any other request is rounded up to one of these.
 pub const WIDTHS: [u32; 3] = [160, 320, 640];
@@ -191,13 +194,40 @@ fn unreadable(error: image::ImageError) -> Refused {
     }
 }
 
-/// Decodes one image within the limits, and turns it upright.
+/// Decodes one image within the limits, and turns it upright. A camera RAW file is read through the JPEG
+/// inside it: see `camera`.
 fn decode(abs: &Path, size: u64) -> Result<DynamicImage, Refused> {
     if size > MAX_FILE {
         return Err(Refused::TooLarge);
     }
     let file = fs::File::open(abs).map_err(|e| Refused::Unreadable(e.to_string()))?;
-    let mut reader = ImageReader::new(BufReader::new(file))
+    if camera::is_camera(abs) {
+        return decode_camera(file, size);
+    }
+    decode_from(BufReader::new(file), None)
+}
+
+/// The largest preview of a RAW file that decodes. A file with none is not a picture.
+fn decode_camera(mut file: fs::File, size: u64) -> Result<DynamicImage, Refused> {
+    let layout = camera::layout(&mut file, size).map_err(|e| Refused::Unreadable(e.to_string()))?;
+    let mut refused = Refused::Unreadable("no preview inside this file".to_owned());
+    for span in layout.spans {
+        if span.len > MAX_FILE {
+            refused = Refused::TooLarge;
+            continue;
+        }
+        let Ok(bytes) = camera::read_span(&mut file, span) else { continue };
+        match decode_from(Cursor::new(bytes), layout.orientation) {
+            Ok(image) => return Ok(image),
+            Err(error) => refused = error,
+        }
+    }
+    Err(refused)
+}
+
+/// `fallback` turns a picture that says nothing of how it was held, as a RAW file's preview often does.
+fn decode_from<R: BufRead + Seek>(reader: R, fallback: Option<Orientation>) -> Result<DynamicImage, Refused> {
+    let mut reader = ImageReader::new(reader)
         .with_guessed_format()
         .map_err(|e| Refused::Unreadable(e.to_string()))?;
     let mut limits = Limits::default();
@@ -207,7 +237,10 @@ fn decode(abs: &Path, size: u64) -> Result<DynamicImage, Refused> {
     reader.limits(limits);
 
     let mut decoder = reader.into_decoder().map_err(unreadable)?;
-    let orientation = decoder.orientation().map_err(unreadable)?;
+    let mut orientation = decoder.orientation().map_err(unreadable)?;
+    if orientation == Orientation::NoTransforms {
+        orientation = fallback.unwrap_or(orientation);
+    }
     let mut image = DynamicImage::from_decoder(decoder).map_err(unreadable)?;
     image.apply_orientation(orientation);
     Ok(image)

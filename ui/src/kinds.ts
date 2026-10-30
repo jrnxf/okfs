@@ -19,7 +19,7 @@ export type Kind =
 export type Group = "folder" | "image" | "media" | "doc" | "code" | "data" | "archive" | "file";
 
 const EXTENSIONS: Record<Exclude<Kind, "folder" | "file">, string> = {
-  image: "jpg jpeg png gif webp svg avif bmp ico tif tiff",
+  image: "jpg jpeg png gif webp svg avif bmp ico tif tiff cr2 cr3 nef arw dng orf rw2 raf pef",
   video: "mp4 webm mov mkv m4v ogv",
   audio: "mp3 wav flac ogg m4a opus aac",
   pdf: "pdf",
@@ -112,9 +112,14 @@ export function isProse(file: { kind: Kind }): boolean {
   return file.kind === "md" || file.kind === "html" || file.kind === "text";
 }
 
-/** True for a picture no browser is counted on to show as it is. The server sends it as a PNG or a JPEG. */
+const CAMERA = new Set(["cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "raf", "pef"]);
+
+/**
+ * True for a picture no browser is counted on to show as it is: a TIFF, or a camera RAW file, whose picture is the
+ * JPEG inside it. The server sends it as a PNG or a JPEG.
+ */
 export function decodedByServer(file: { ext: string }): boolean {
-  return file.ext === "tif" || file.ext === "tiff";
+  return file.ext === "tif" || file.ext === "tiff" || CAMERA.has(file.ext);
 }
 
 export function extension(name: string): string {
