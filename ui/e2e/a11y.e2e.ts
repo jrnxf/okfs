@@ -48,6 +48,8 @@ test("a click puts focus on the list and the live region stands down", async ({ 
 
 test("the active row survives a sort and a filter", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/photos/`);
+  // A key has rows to move over only once the listing is in.
+  await expect(cursorName(page)).toHaveText("photo-00.png");
   await page.keyboard.press("j");
   await expect(cursorName(page)).toHaveText("photo-01.png");
 

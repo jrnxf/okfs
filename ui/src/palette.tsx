@@ -195,7 +195,8 @@ export function Palette() {
   const searching = !menu && !asCommand && query !== "";
   const asked = searching ? query : "";
 
-  useEffect(() => {
+  // Focused as it is drawn, not after the paint: a key typed right after the one that opened the palette is its own.
+  useLayoutEffect(() => {
     input.current?.focus();
     input.current?.select();
   }, []);
@@ -311,11 +312,21 @@ export function Palette() {
     else store.leave(() => void store.go(row.hit.path, row.hit.dir));
   };
 
+  // Enter while the answer for the query typed is on its way is kept for that answer: the rows on screen are the last
+  // query's, and the first of them need not match what was typed.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    if (!entered || waiting(asked, answer)) return;
+    setEntered(false);
+    pick(at);
+  });
+
   const onKey = (event: KeyboardEvent) => {
     const { key, ctrlKey } = event;
     if (key === "ArrowDown" || (ctrlKey && key === "n")) setSelected(Math.min(at + 1, rows.length - 1));
     else if (key === "ArrowUp" || (ctrlKey && key === "p")) setSelected(Math.max(at - 1, 0));
     else if (key === "Enter" && (ctrlKey || event.metaKey) && searching) store.leave(() => store.find(query));
+    else if (key === "Enter" && searching && waiting(asked, answer)) setEntered(true);
     else if (key === "Enter") pick(at);
     else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);

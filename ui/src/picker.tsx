@@ -2,7 +2,7 @@
 // and a field that finds any folder by name. A folder cannot go inside itself, so for a move that one and all under it
 // are greyed, and the folder the entries are in already says so.
 
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Found, type Listing, getJson, joinPath, makeFolder, nameOf, parentOf, urls } from "./api";
 import { config } from "./config";
 import { Icon, KindIcon } from "./icons";
@@ -47,7 +47,8 @@ export function Picker() {
   useEffect(() => {
     for (const path of open) if (!kids.has(path)) void load(path);
   }, [open]);
-  useEffect(() => field.current?.focus(), []);
+  // Focused as it is drawn, not after the paint: a name typed right after the key that opened the picker is not lost.
+  useLayoutEffect(() => field.current?.focus(), []);
   // A name typed finds folders anywhere, from the index.
   useEffect(() => {
     const q = query.trim();

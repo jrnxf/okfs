@@ -353,8 +353,12 @@ export function App() {
       return;
     }
     setFiltering(true);
-    requestAnimationFrame(() => filterInput.current?.focus());
   }, []);
+  // The field takes the focus as it is drawn, in the task of the key that asked for it: a key typed right after the /
+  // is the filter's, where a frame later the list would have taken it as a move.
+  useLayoutEffect(() => {
+    if (filtering) filterInput.current?.focus();
+  }, [filtering]);
   const finding = s.finding && s.matches !== null;
   const list = store.list();
   const at = store.at();
@@ -404,7 +408,8 @@ export function App() {
     document.title = name ? `${name} - ${config.title}` : config.title;
   }, [s.open, s.path]);
 
-  useEffect(() => {
+  // Listening from the first render, not after the first paint: a key pressed as the page appears is not lost.
+  useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const { s } = store;
       const { key } = event;
