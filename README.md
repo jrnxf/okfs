@@ -68,7 +68,7 @@ The engine that draws the first page of a PDF is about 6 MB of the binary. `carg
 
 Platform notes:
 
-- There is no Windows build yet. The code has not been run there.
+- On Windows, download `okfs-<version>-x86_64-pc-windows-msvc.zip` from the [releases](https://github.com/jrnxf/okfs/releases); it holds `okfs.exe`. The drawing of a PDF's first page runs there without the memory and processor caps it has on Linux and a Mac, so only its time limit ends a PDF that will not draw.
 - On a Mac, a binary downloaded with a browser is quarantined, and Gatekeeper refuses to open it because okfs is not signed. Download it with `gh` or `curl` as above, which leaves no quarantine mark, or clear the mark with `xattr -d com.apple.quarantine okfs`.
 - Watching a folder for changes uses inotify on Linux and FSEvents on a Mac. On a network share, where a watcher does not see what other machines change, use `--rescan` (see [A big folder](#a-big-folder)).
 - Shell completions: `okfs completions zsh` (or `bash`, `fish`) prints them. The release archive has them as files, and `okfs.1` is the manual page.

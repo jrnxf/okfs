@@ -148,6 +148,8 @@ fn confine() {
             maximum: Some(most),
         };
         // Not every system holds a process to these: the time limit of the server is what is relied on.
+        // Windows is one: there the drawing process runs without a memory or processor cap, and only that
+        // time limit ends it.
         let _ = setrlimit(Resource::As, cap(MAX_MEMORY));
         let _ = setrlimit(Resource::Cpu, cap(LIMIT.as_secs() * 2));
     }
