@@ -573,6 +573,124 @@ async fn a_picture_is_made_whole_for_a_format_a_browser_cannot_show() {
     );
 }
 
+/// A little-endian TIFF container, as a CR2, NEF or DNG is: IFD0 says the camera was held sideways and
+/// points at a SubIFD, which names the JPEG that follows.
+fn camera_file(preview: &[u8]) -> Vec<u8> {
+    let entry = |tag: u16, kind: u16, value: u32| {
+        let mut e = Vec::new();
+        e.extend(tag.to_le_bytes());
+        e.extend(kind.to_le_bytes());
+        e.extend(1u32.to_le_bytes());
+        e.extend(value.to_le_bytes());
+        e
+    };
+    let sub = 8 + 2 + 2 * 12 + 4;
+    let data = sub + 2 + 2 * 12 + 4;
+    let mut out = vec![b'I', b'I', 42, 0, 8, 0, 0, 0];
+    out.extend(2u16.to_le_bytes());
+    out.extend(entry(0x112, 3, 6));
+    out.extend(entry(0x14a, 4, sub as u32));
+    out.extend(0u32.to_le_bytes());
+    out.extend(2u16.to_le_bytes());
+    out.extend(entry(0x201, 4, data as u32));
+    out.extend(entry(0x202, 4, preview.len() as u32));
+    out.extend(0u32.to_le_bytes());
+    out.extend(preview);
+    out
+}
+
+#[tokio::test]
+async fn a_camera_raw_file_is_shown_by_the_preview_inside_it() {
+    let site = Site::new();
+    let mut preview = Vec::new();
+    image::DynamicImage::new_rgb8(300, 200)
+        .write_to(&mut Cursor::new(&mut preview), image::ImageFormat::Jpeg)
+        .unwrap();
+    for name in ["a.cr2", "b.NEF", "c.dng"] {
+        fs::write(site.served.join(name), camera_file(&preview)).unwrap();
+    }
+    fs::write(site.served.join("plain.jpg"), &preview).unwrap();
+    // A container with no preview, and a name that is not one.
+    let mut bare = camera_file(&preview);
+    bare.truncate(8 + 2 + 2 * 12 + 4);
+    fs::write(site.served.join("bare.arw"), bare).unwrap();
+    fs::write(site.served.join("text.raf"), "not a photo").unwrap();
+    let app = site.router();
+
+    for name in ["a.cr2", "b.NEF", "c.dng"] {
+        // The camera was held sideways: the picture comes upright, so 200 wide and 300 high.
+        let (response, body) = get(&app, &format!("/api/picture?path={name}")).await;
+        assert_eq!(response.status(), StatusCode::OK, "{name}");
+        let whole = image::load_from_memory(&body).unwrap();
+        assert_eq!((whole.width(), whole.height()), (200, 300), "{name}");
+        let (response, body) = get(&app, &format!("/api/picture?path={name}&w=160")).await;
+        assert_eq!(response.status(), StatusCode::OK, "{name}");
+        assert_eq!(image::load_from_memory(&body).unwrap().width(), 160, "{name}");
+    }
+    for name in ["bare.arw", "text.raf"] {
+        assert_eq!(
+            get(&app, &format!("/api/picture?path={name}")).await.0.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "{name}"
+        );
+    }
+
+    // A RAW picture answers in the order of a JPEG one, not of a decode of the sensor data.
+    let time = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let start = std::time::Instant::now();
+            for _ in 0..20 {
+                assert_eq!(get(&app, path).await.0.status(), StatusCode::OK);
+            }
+            start.elapsed()
+        }
+    };
+    let (jpeg, raw) = (
+        time("/api/picture?path=plain.jpg&w=160").await,
+        time("/api/picture?path=a.cr2&w=160").await,
+    );
+    assert!(
+        raw < jpeg * 10 + std::time::Duration::from_millis(500),
+        "raw {raw:?} against jpeg {jpeg:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_camera_raw_file_over_the_size_bound_is_shown_when_its_preview_is_small() {
+    let site = Site::new();
+    let mut preview = Vec::new();
+    image::DynamicImage::new_rgb8(300, 200)
+        .write_to(&mut Cursor::new(&mut preview), image::ImageFormat::Jpeg)
+        .unwrap();
+    // Mostly sensor data, as a large RAW file is: the preview is at the front and the rest is a hole.
+    let path = site.served.join("big.arw");
+    fs::write(&path, camera_file(&preview)).unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(okfs::thumb::MAX_FILE + 1)
+        .unwrap();
+    // A picture that is itself over the bound is still refused.
+    fs::write(site.served.join("bigger.png"), b"x").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(site.served.join("bigger.png"))
+        .unwrap()
+        .set_len(okfs::thumb::MAX_FILE + 1)
+        .unwrap();
+    let app = site.router();
+
+    for uri in ["/api/picture?path=big.arw", "/api/picture?path=big.arw&w=160"] {
+        assert_eq!(get(&app, uri).await.0.status(), StatusCode::OK, "{uri}");
+    }
+    assert_eq!(
+        get(&app, "/api/picture?path=bigger.png").await.0.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
+
 #[tokio::test]
 async fn thumbnails_are_cached_outside_the_served_folder() {
     let site = Site::new();
