@@ -348,6 +348,12 @@ export function Palette() {
             class="min-w-0 flex-1 border-0 bg-transparent text-[length:calc(var(--text)*1.1)] text-fg placeholder:text-faint pointer-coarse:text-[16px]"
             type="text"
             name="find"
+            role="combobox"
+            aria-label="Find anything"
+            aria-expanded="true"
+            aria-autocomplete="list"
+            aria-controls="palette-list"
+            aria-activedescendant={rows.length ? (rows[at] && "all" in rows[at] ? "palette-row-all" : `palette-row-${at}`) : undefined}
             value={value}
             placeholder={menu ? menu.placeholder : `Find a file or folder anywhere in ${config.root}`}
             spellcheck={false}
@@ -361,16 +367,16 @@ export function Palette() {
           {/* there is no Escape key on a phone, and the chip sits over the end of the placeholder */}
           <kbd class="pointer-coarse:hidden">esc</kbd>
         </div>
-        <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list}>
+        <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list} id="palette-list" role="listbox" aria-label={menu ? menu.title : "Results"} aria-owns={allAt >= 0 ? "palette-row-all" : undefined}>
           {rows.length === 0 && !pending && <div class="px-3 py-7 text-center text-faint">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
             if ("all" in row) return null;
-            const common = { class: PICK, "aria-selected": index === at, onClick: () => pick(index) };
+            const common = { id: `palette-row-${index}`, role: "option" as const, class: PICK, "aria-selected": index === at, onClick: () => pick(index) };
             const group = groupOf(row);
             const previous = rows[index - 1];
             // A nested list is named beside the input, so its rows go under no label.
             const label = !menu && (!previous || groupOf(previous) !== group) && (
-              <div class="label px-2 pt-2 pb-1">{group}</div>
+              <div class="label px-2 pt-2 pb-1" role="presentation">{group}</div>
             );
             if ("command" in row) {
               const { command } = row;
@@ -430,7 +436,7 @@ export function Palette() {
         {allAt >= 0 && (
           // The way to every match, held under the list: it does not scroll away with the best ones.
           <div class="flex-none border-t border-t-line p-1.5">
-            <div class={`${PICK} text-fg phone:h-11`} role="option" aria-selected={allAt === at} onClick={() => pick(allAt)}>
+            <div class={`${PICK} text-fg phone:h-11`} id="palette-row-all" role="option" aria-selected={allAt === at} onClick={() => pick(allAt)}>
               <Icon name="list" class={allAt === at ? "text-accent" : "text-faint"} />
               <span class="min-w-0 flex-1 truncate">Show all {matches} in the list</span>
               <span class="inline-flex flex-none gap-0.75 phone:hidden">

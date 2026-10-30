@@ -405,7 +405,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           <Icon name="left" />
         </button>
         <KindIcon kind={file.kind} />
-        <span class={BAR_NAME}>{file.name}</span>
+        <span class={BAR_NAME} aria-live="polite" aria-atomic="true">{file.name}</span>
         <span class={BAR_FACTS}>{[...learned, fmt.size(file.size), fmt.abs(file.mtime)].join(" · ")}</span>
         <span class={`num px-1 text-xs whitespace-nowrap text-faint ${OPEN_ONLY} phone:viewing:hidden`}>
           {files.indexOf(file) + 1} / {files.length}

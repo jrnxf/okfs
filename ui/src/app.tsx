@@ -22,7 +22,7 @@ import { slots } from "./slots";
 import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, refusedName, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { drop, pick, uploads } from "./upload";
-import { type Cell, VList } from "./vlist";
+import { type Cell, VList, rowId, rowName } from "./vlist";
 import { ClashDialog, NameDialog, Tray } from "./write-ui";
 import { ContextMenu, Toast } from "./menu";
 import { Picker } from "./picker";
@@ -682,7 +682,9 @@ export function App() {
     return (
       <div
         class={`${ROW} ${ROW_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}${entry.dir && uploads.target === entry.path ? ` ${DROP_ROW}` : ""}${marks}`}
+        id={rowId(index)}
         role="option"
+        aria-label={rowName(entry)}
         aria-selected={on && !picking}
         data-i={index}
         data-cursor={on ? "" : undefined}
