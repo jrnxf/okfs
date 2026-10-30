@@ -71,9 +71,12 @@ pub extern "C" fn okfs_alloc(len: usize) -> *mut u8 {
     ptr
 }
 
+/// # Safety
+///
+/// `ptr` must come from `okfs_alloc(len)` and not be freed twice.
 #[unsafe(no_mangle)]
-pub extern "C" fn okfs_free(ptr: *mut u8, len: usize) {
-    // SAFETY: `ptr` came from `okfs_alloc(len)`.
+pub unsafe extern "C" fn okfs_free(ptr: *mut u8, len: usize) {
+    // SAFETY: the caller passes a `ptr` that came from `okfs_alloc(len)`, and frees it once.
     unsafe { drop(Vec::from_raw_parts(ptr, 0, len.max(1))) }
 }
 

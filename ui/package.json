@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "build": "bun run build.ts",
-    "check": "tsc --noEmit && tsc --noEmit -p e2e && bun test",
+    "check": "tsc --noEmit && tsc --noEmit -p e2e && bun test --isolate",
     "e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-css": "^6.3.1",
