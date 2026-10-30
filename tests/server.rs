@@ -646,8 +646,14 @@ async fn a_camera_raw_file_is_shown_by_the_preview_inside_it() {
             start.elapsed()
         }
     };
-    let (jpeg, raw) = (time("/api/picture?path=plain.jpg&w=160").await, time("/api/picture?path=a.cr2&w=160").await);
-    assert!(raw < jpeg * 10 + std::time::Duration::from_millis(500), "raw {raw:?} against jpeg {jpeg:?}");
+    let (jpeg, raw) = (
+        time("/api/picture?path=plain.jpg&w=160").await,
+        time("/api/picture?path=a.cr2&w=160").await,
+    );
+    assert!(
+        raw < jpeg * 10 + std::time::Duration::from_millis(500),
+        "raw {raw:?} against jpeg {jpeg:?}"
+    );
 }
 
 #[tokio::test]

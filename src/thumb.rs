@@ -219,7 +219,9 @@ fn decode_camera(mut file: fs::File, size: u64, want: Option<u32>) -> Result<Dyn
             refused = Refused::TooLarge;
             continue;
         }
-        let Ok(bytes) = camera::read_span(&mut file, span) else { continue };
+        let Ok(bytes) = camera::read_span(&mut file, span) else {
+            continue;
+        };
         match decode_from(Cursor::new(bytes), layout.orientation) {
             Ok(image) => return Ok(image),
             Err(error) => refused = error,

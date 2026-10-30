@@ -85,7 +85,9 @@ pub fn layout<R: Read + Seek>(file: &mut R, size: u64) -> io::Result<Layout> {
     } else {
         return Err(invalid("not a camera RAW file"));
     };
-    found.spans.retain(|span| span.len >= 4 && span.offset.checked_add(span.len).is_some_and(|end| end <= size));
+    found
+        .spans
+        .retain(|span| span.len >= 4 && span.offset.checked_add(span.len).is_some_and(|end| end <= size));
     found.spans.sort_by_key(|span| std::cmp::Reverse(span.len));
     found.spans.dedup();
     Ok(found)
@@ -248,10 +250,7 @@ fn preview_box<R: Read + Seek>(file: &mut R, from: u64, end: u64) -> io::Result<
     let at = from + tag as u64 + 4;
     let raw: [u8; 16] = read_at(file, at)?;
     let len = u64::from(u32::from_be_bytes([raw[12], raw[13], raw[14], raw[15]]));
-    Ok(Some(Span {
-        offset: at + 16,
-        len,
-    }))
+    Ok(Some(Span { offset: at + 16, len }))
 }
 
 #[derive(Clone, Copy)]
@@ -261,11 +260,19 @@ struct Order {
 
 impl Order {
     fn u16(self, b: [u8; 2]) -> u16 {
-        if self.big { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) }
+        if self.big {
+            u16::from_be_bytes(b)
+        } else {
+            u16::from_le_bytes(b)
+        }
     }
 
     fn u32(self, b: [u8; 4]) -> u32 {
-        if self.big { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) }
+        if self.big {
+            u32::from_be_bytes(b)
+        } else {
+            u32::from_le_bytes(b)
+        }
     }
 }
 
@@ -357,10 +364,15 @@ impl<R: Read + Seek> Walk<'_, R> {
         let mut orientation = None;
         if let Some(entry) = find(TAG_ORIENTATION) {
             let value = self.values(entry)?.first().copied();
-            orientation = value.and_then(|v| u8::try_from(v).ok()).and_then(Orientation::from_exif);
+            orientation = value
+                .and_then(|v| u8::try_from(v).ok())
+                .and_then(Orientation::from_exif);
         }
         if let (Some(offset), Some(len)) = (find(TAG_JPEG_OFFSET), find(TAG_JPEG_BYTES))
-            && let (Some(offset), Some(len)) = (self.values(offset)?.first().copied(), self.values(len)?.first().copied())
+            && let (Some(offset), Some(len)) = (
+                self.values(offset)?.first().copied(),
+                self.values(len)?.first().copied(),
+            )
         {
             self.spans.push(Span { offset, len });
         }
@@ -373,7 +385,10 @@ impl<R: Read + Seek> Walk<'_, R> {
         if let (true, Some(offsets), Some(lens)) = (jpeg, find(TAG_STRIP_OFFSETS), find(TAG_STRIP_BYTES)) {
             let (offsets, lens) = (self.values(offsets)?, self.values(lens)?);
             if let ([offset], [len]) = (offsets.as_slice(), lens.as_slice()) {
-                self.spans.push(Span { offset: *offset, len: *len });
+                self.spans.push(Span {
+                    offset: *offset,
+                    len: *len,
+                });
             }
         }
         if let Some(entry) = find(TAG_RW2_JPEG) {
@@ -541,7 +556,12 @@ mod tests {
         // A loop of folders ends.
         let mut looped = vec![b'I', b'I', 42, 0, 8, 0, 0, 0, 0, 0];
         looped.extend(8u32.to_le_bytes());
-        assert!(layout(&mut Cursor::new(&looped), looped.len() as u64).unwrap().spans.is_empty());
+        assert!(
+            layout(&mut Cursor::new(&looped), looped.len() as u64)
+                .unwrap()
+                .spans
+                .is_empty()
+        );
     }
 
     #[test]
@@ -598,7 +618,9 @@ mod tests {
 
     /// A JPEG header that opens with a frame of the given kind, and is followed by `body` bytes.
     fn frame(marker: u8, body: usize) -> Vec<u8> {
-        let mut bytes = vec![0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0, 0xff, marker, 0, 11, 8, 0, 4, 0, 8, 1, 1, 0x11, 0];
+        let mut bytes = vec![
+            0xff, 0xd8, 0xff, 0xdb, 0, 4, 0, 0, 0xff, marker, 0, 11, 8, 0, 4, 0, 8, 1, 1, 0x11, 0,
+        ];
         bytes.resize(bytes.len() + body, 0);
         bytes
     }
@@ -610,13 +632,25 @@ mod tests {
         let shown = frame(0xc0, 0);
         let mut file = lossless.clone();
         file.extend(&shown);
-        let big = Span { offset: 0, len: lossless.len() as u64 };
-        let small = Span { offset: lossless.len() as u64, len: shown.len() as u64 };
-        let mut reader = Counting { inner: Cursor::new(file), read: 0 };
+        let big = Span {
+            offset: 0,
+            len: lossless.len() as u64,
+        };
+        let small = Span {
+            offset: lossless.len() as u64,
+            len: shown.len() as u64,
+        };
+        let mut reader = Counting {
+            inner: Cursor::new(file),
+            read: 0,
+        };
         assert!(probe(&mut reader, big).is_err());
         assert_eq!(probe(&mut reader, small).unwrap(), (8, 4));
         assert!(reader.read < 1024, "read {} bytes", reader.read);
-        let layout = Layout { spans: vec![big, small], orientation: None };
+        let layout = Layout {
+            spans: vec![big, small],
+            orientation: None,
+        };
         assert_eq!(choose(&mut reader, &layout, None), vec![small]);
         assert!(reader.read < 1024, "read {} bytes", reader.read);
     }
@@ -633,14 +667,26 @@ mod tests {
         let mut file = Vec::new();
         let mut spans = Vec::new();
         for bytes in [&tiny, &mid, &large] {
-            spans.push(Span { offset: file.len() as u64, len: bytes.len() as u64 });
+            spans.push(Span {
+                offset: file.len() as u64,
+                len: bytes.len() as u64,
+            });
             file.extend(bytes);
         }
-        let layout = Layout { spans: spans.clone(), orientation: None };
+        let layout = Layout {
+            spans: spans.clone(),
+            orientation: None,
+        };
         let mut file = Cursor::new(file);
         assert_eq!(choose(&mut file, &layout, None), vec![spans[2], spans[1], spans[0]]);
-        assert_eq!(choose(&mut file, &layout, Some(320)), vec![spans[1], spans[2], spans[0]]);
-        assert_eq!(choose(&mut file, &layout, Some(2000)), vec![spans[2], spans[1], spans[0]]);
+        assert_eq!(
+            choose(&mut file, &layout, Some(320)),
+            vec![spans[1], spans[2], spans[0]]
+        );
+        assert_eq!(
+            choose(&mut file, &layout, Some(2000)),
+            vec![spans[2], spans[1], spans[0]]
+        );
     }
 
     /// An Olympus file in its real layout: IFD0 names the Exif folder, which holds a maker note whose
