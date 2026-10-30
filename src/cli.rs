@@ -81,7 +81,13 @@ struct Serve {
     index: Option<String>,
 
     /// Theme a new visitor starts in: a built-in name or a theme file
-    #[arg(env = "OKFS_THEME", long, default_value = "default", value_name = "NAME|FILE", help_heading = "Look")]
+    #[arg(
+        env = "OKFS_THEME",
+        long,
+        default_value = "default",
+        value_name = "NAME|FILE",
+        help_heading = "Look"
+    )]
     theme: String,
 
     /// A Markdown note shown above every folder
@@ -89,7 +95,13 @@ struct Serve {
     header: Option<PathBuf>,
 
     /// Name shown in the corner and the browser tab
-    #[arg(env = "OKFS_TITLE", long, default_value = "okfs", value_name = "TEXT", help_heading = "Look")]
+    #[arg(
+        env = "OKFS_TITLE",
+        long,
+        default_value = "okfs",
+        value_name = "TEXT",
+        help_heading = "Look"
+    )]
     title: String,
 
     /// Accent color in every theme, as hex: "#2d6a4f"
@@ -141,11 +153,23 @@ struct Serve {
     key: bool,
 
     /// Serve https with this certificate, in PEM. Needs --tls-key
-    #[arg(env = "OKFS_TLS_CERT", long, value_name = "FILE", requires = "tls_key", help_heading = "TLS")]
+    #[arg(
+        env = "OKFS_TLS_CERT",
+        long,
+        value_name = "FILE",
+        requires = "tls_key",
+        help_heading = "TLS"
+    )]
     tls_cert: Option<PathBuf>,
 
     /// The private key of the --tls-cert certificate, in PEM
-    #[arg(env = "OKFS_TLS_KEY", long, value_name = "FILE", requires = "tls_cert", help_heading = "TLS")]
+    #[arg(
+        env = "OKFS_TLS_KEY",
+        long,
+        value_name = "FILE",
+        requires = "tls_cert",
+        help_heading = "TLS"
+    )]
     tls_key: Option<PathBuf>,
 
     /// Read the whole tree again this often instead of watching it for changes: --rescan 6h.
