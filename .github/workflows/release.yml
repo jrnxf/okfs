@@ -90,10 +90,7 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             version=${GITHUB_REF_NAME#v}
-            # perl, not sed: the same edit on Linux and macOS. Cargo.toml's first version line is the
-            # package's; in Cargo.lock it is the one after okfs's name.
-            perl -0pi -e "s/^version = \".*?\"/version = \"$version\"/m" Cargo.toml
-            perl -0pi -e "s/(\nname = \"okfs\"\nversion = )\".*?\"/\$1\"$version\"/" Cargo.lock
+            scripts/stamp-version.sh "$version"
           else
             version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
           fi
@@ -305,8 +302,7 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             version=${GITHUB_REF_NAME#v}
-            perl -0pi -e "s/^version = \".*?\"/version = \"$version\"/m" Cargo.toml
-            perl -0pi -e "s/(\nname = \"okfs\"\nversion = )\".*?\"/\$1\"$version\"/" Cargo.lock
+            scripts/stamp-version.sh "$version"
           else
             version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
           fi

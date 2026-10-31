@@ -168,6 +168,17 @@ jobs:
       - name: Install the Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
+      # The release stamps a tag's version into Cargo.toml and Cargo.lock, then builds with --locked.
+      # Here the same stamp runs on this runner's own checkout (CRLF line endings included): a lock
+      # the stamp cannot edit fails the build, as it did when a release first ran on Windows.
+      - name: Stamp a release version
+        shell: bash
+        run: |
+          scripts/stamp-version.sh 9.9.9-ci.1
+          cargo metadata --locked --format-version 1 > /dev/null
+          grep -A1 '^name = "okfs"' Cargo.lock | grep -q 'version = "9.9.9-ci.1"'
+          git checkout -- Cargo.toml Cargo.lock
+
       - name: Test
         run: cargo test --locked
 
