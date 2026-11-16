@@ -648,6 +648,15 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
             text.contains("okfs") && text.contains("allow-delete") && text.contains("allow-upload"),
             "{shell}: {text}"
         );
+        // The subcommands that the help shows are offered. The ones okfs runs itself are not.
+        assert!(
+            text.contains("theme") && text.contains("completions"),
+            "{shell}: {text}"
+        );
+        assert!(
+            !text.contains("pdf-page") && !text.contains("manpage"),
+            "{shell}: {text}"
+        );
     }
     let output = Command::new(env!("CARGO_BIN_EXE_okfs"))
         .arg("manpage")
@@ -656,6 +665,7 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
     assert!(output.status.success());
     let page = String::from_utf8_lossy(&output.stdout);
     assert!(page.starts_with(".ie") || page.contains(".TH okfs 1"), "{page}");
+    assert!(!page.contains("pdf\\-page"), "{page}");
     assert!(
         page.contains("allow\\-delete") && page.contains("allow\\-edit"),
         "{page}"

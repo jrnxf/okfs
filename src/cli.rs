@@ -225,7 +225,7 @@ pub fn run() -> ExitCode {
             Ok(())
         }
         Some(Command::Completions { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut io::stdout());
+            clap_complete::generate(shell, &mut completed(), "okfs", &mut io::stdout());
             Ok(())
         }
         Some(Command::Manpage) => match clap_mangen::Man::new(Cli::command()).render(&mut io::stdout()) {
@@ -254,6 +254,23 @@ pub fn run() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The command that the completions are made from: every option, and the subcommands that the help
+/// shows. clap leaves a hidden subcommand out of the help and the manual page, but its completions
+/// list every subcommand, so the ones okfs runs itself are left out here.
+fn completed() -> clap::Command {
+    let whole = Cli::command();
+    clap::Command::new("okfs")
+        .version(env!("CARGO_PKG_VERSION"))
+        .args_conflicts_with_subcommands(true)
+        .args(whole.get_arguments().cloned())
+        .subcommands(
+            whole
+                .get_subcommands()
+                .filter(|command| !command.is_hide_set())
+                .cloned(),
+        )
 }
 
 /// Exits as clap does when two options that exclude each other are both on. Checked here, not with
