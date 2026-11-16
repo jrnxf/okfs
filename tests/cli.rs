@@ -1155,3 +1155,21 @@ fn on_a_disk_with_no_exclusive_rename_moves_copies_and_the_trash_still_never_rep
     hidden.retain(|name| name != ".okfs-trash");
     assert!(hidden.is_empty(), "{hidden:?}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_folder_okfs_may_not_read_is_refused_at_the_start_and_says_why() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let locked = tmp.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads any folder: there is nothing to refuse then.
+    if std::fs::read_dir(&locked).is_ok() {
+        return;
+    }
+    let (ended, error) = run(&["--no-open", "--port", "0", locked.to_str().unwrap()]);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!ended.success());
+    assert!(error.contains("okfs has no permission to read this folder"), "{error}");
+}

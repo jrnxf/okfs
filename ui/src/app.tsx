@@ -16,7 +16,7 @@ import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIS
 import { Prose, lookAhead, pagesAhead } from "./preview";
 import { NEEDS_KEY, NOT_ANSWERING, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
-import { EMPTY_FOLDER, FolderBar, Side } from "./side";
+import { DENIED_FOLDER, EMPTY_FOLDER, FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
 import { slots } from "./slots";
 import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, refusedName, store } from "./store";
@@ -301,6 +301,14 @@ function Empty() {
         <a class="btn btn-line mt-2.5" href="/" onClick={inPlace(() => void store.showDir(""))}>
           Go to the top folder
         </a>
+      </>
+    );
+  } else if (s.denied) {
+    body = (
+      <>
+        <b class={EMPTY_HEAD}>{DENIED_FOLDER}</b>
+        <span class="num">/{s.path}</span>
+        <span>okfs has no permission to list it.</span>
       </>
     );
   } else if (s.filter) {
@@ -726,7 +734,8 @@ export function App() {
 
   const total = s.all.length;
   const info =
-    (s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
+    // A folder that could not be read is not said to hold nothing.
+    (s.denied ? "not readable" : s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
     (s.unlisted ? ` · ${fmt.count(s.unlisted)} hidden` : "") +
     (s.unreadable ? ` · ${fmt.unreadable(s.unreadable)}` : "") +
     // The size is of the files right here; a folder of folders has none to add up.
@@ -894,7 +903,7 @@ export function App() {
               inList
               name={s.path ? nameOf(s.path) : config.root}
               path={s.path}
-              count={s.status === "ready" ? s.all.length : undefined}
+              count={s.status === "ready" && !s.denied ? s.all.length : undefined}
               mtime={s.status === "ready" ? s.mtime : undefined}
               doomed={here}
               adds={adds !== null}

@@ -202,6 +202,8 @@ export interface State {
   unlisted: number;
   /** Names in this folder that are not text, so okfs cannot show them. */
   unreadable: number;
+  /** The folder is there, but okfs has no permission to read what is in it. */
+  denied: boolean;
   palette: boolean;
   help: boolean;
   /** The matches are on screen in place of the folder's list. */
@@ -336,6 +338,7 @@ export class Store {
     bytes: 0,
     unlisted: 0,
     unreadable: 0,
+    denied: false,
     palette: false,
     help: false,
     finding: false,
@@ -590,6 +593,7 @@ export class Store {
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.unlisted = listing.hidden ?? 0;
     s.unreadable = listing.unreadable ?? 0;
+    s.denied = listing.denied === true;
     s.readme = listing.readme;
     s.picked = stillIn(s.picked, s.all.map((entry) => entry.path));
   }
@@ -597,7 +601,7 @@ export class Store {
   /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
-    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, filter: "" });
+    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, denied: false, filter: "" });
   }
 
   /**

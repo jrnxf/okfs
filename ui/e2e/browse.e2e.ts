@@ -1,4 +1,6 @@
 // Moving through a folder and opening what is in it, as a visitor does with the keyboard.
+import { chmodSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./test";
 
@@ -101,4 +103,30 @@ test("a picture at the top of the tree previews", async ({ page, okfs }) => {
   const picture = page.getByRole("img", { name: "poster.png" });
   await expect(picture).toBeVisible();
   await expect.poll(() => picture.evaluate(loaded)).toBe(true);
+});
+
+test("a folder okfs may not read says so, and is not called missing or empty", async ({ page, okfs }) => {
+  const locked = join(okfs.root, "locked");
+  mkdirSync(locked);
+  chmodSync(locked, 0o000);
+  try {
+    // Root reads any folder, and Windows has no such mode: there is nothing to see then.
+    const readable = (() => {
+      try {
+        readdirSync(locked);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    test.skip(readable, "this user can read a folder with no permissions");
+    await page.goto(`${okfs.origin}/locked/`);
+    const list = page.getByRole("listbox", { name: "Files" });
+    await expect(list.getByText("This folder could not be read")).toBeVisible();
+    await expect(list.getByText("Nothing at this address")).toHaveCount(0);
+    await expect(page.getByText("0 items")).toHaveCount(0);
+  } finally {
+    chmodSync(locked, 0o755);
+    rmSync(locked, { recursive: true });
+  }
 });

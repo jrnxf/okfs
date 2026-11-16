@@ -50,6 +50,9 @@ function menuOf(listing: Listing | undefined, folder: Entry) {
 /** What an empty folder says, in the main list and in a column. */
 export const EMPTY_FOLDER = "This folder is empty";
 
+/** What a folder okfs has no permission to read says, in the main list and in a column. */
+export const DENIED_FOLDER = "This folder could not be read";
+
 /** A click on a button of a header leaves the focus where it was, so the keys go on working on the list. */
 const keepFocus = (event: MouseEvent) => event.preventDefault();
 
@@ -148,7 +151,7 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
       data-pane={folder.path}
       data-level={level}
     >
-      <FolderBar name={folder.name} path={folder.path} count={own?.total ?? folder.count} mtime={folder.mtime} doomed={config.delete ? folder : null} />
+      <FolderBar name={folder.name} path={folder.path} count={own?.denied ? undefined : (own?.total ?? folder.count)} mtime={folder.mtime} doomed={config.delete ? folder : null} />
       <div class={`${HEADS} ${ROW_GRID}`}>
         <span />
         <span class={HEAD}>
@@ -183,7 +186,7 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
           );
         })}
         {more > 0 && <div class={COL_NOTE}>and {fmt.count(more)} more</div>}
-        {listing?.total === 0 && <div class={COL_NOTE}>{EMPTY_FOLDER}</div>}
+        {listing?.total === 0 && <div class={COL_NOTE}>{listing.denied ? DENIED_FOLDER : EMPTY_FOLDER}</div>}
       </div>
     </section>
   );
