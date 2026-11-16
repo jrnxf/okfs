@@ -381,10 +381,27 @@ async fn listen(bind: IpAddr, asked: Option<u16>) -> Result<tokio::net::TcpListe
                     "cannot listen on {bind}: ports {first} to {last} are all busy. Pass --port 0 for any free one"
                 ));
             }
-            Err(error) => return Err(format!("cannot listen on {address}: {error}")),
+            Err(error) => return Err(cannot_listen(address, &error)),
         }
     }
     unreachable!("a range of ports is never empty")
+}
+
+/// What to say when the system refuses `address` for a reason other than a busy port. The system's
+/// own text ("Permission denied", "Can't assign requested address") names no flag, so the two
+/// causes a person can act on get the next step.
+fn cannot_listen(address: SocketAddr, error: &io::Error) -> String {
+    let next = match error.kind() {
+        io::ErrorKind::PermissionDenied if address.port() < 1024 => {
+            ". Ports below 1024 often need administrator rights. Pass a --port of 1024 or more, or --port 0 for any free one"
+        }
+        io::ErrorKind::PermissionDenied => ". Pass another --port, or --port 0 for any free one",
+        io::ErrorKind::AddrNotAvailable => {
+            ". This machine has no such address. Pass one of its own addresses to --bind: 127.0.0.1 for this machine only, or 0.0.0.0 for every address"
+        }
+        _ => "",
+    };
+    format!("cannot listen on {address}: {error}{next}")
 }
 
 /// Ends when okfs is asked to stop: Ctrl-C in a terminal, or SIGTERM from a service manager such as
@@ -613,7 +630,17 @@ fn serve(args: Serve) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{abilities, byte_size, should_open};
+    use super::{abilities, byte_size, cannot_listen, should_open};
+
+    #[test]
+    fn a_refused_port_or_address_names_the_flag_to_change() {
+        use std::io::{Error, ErrorKind};
+        let said = |address: &str, kind| cannot_listen(address.parse().unwrap(), &Error::from(kind));
+        assert!(said("127.0.0.1:80", ErrorKind::PermissionDenied).contains("--port of 1024 or more"));
+        assert!(said("127.0.0.1:8080", ErrorKind::PermissionDenied).contains("another --port"));
+        assert!(said("192.0.2.1:8080", ErrorKind::AddrNotAvailable).contains("--bind"));
+        assert!(!said("127.0.0.1:8080", ErrorKind::OutOfMemory).contains("--"));
+    }
 
     #[test]
     fn a_size_reads_with_or_without_its_unit() {

@@ -599,6 +599,23 @@ fn a_busy_port_is_passed_over_only_when_no_port_was_given() {
 }
 
 #[test]
+fn an_address_the_machine_does_not_have_is_refused_with_the_flag_to_change() {
+    let tmp = TempDir::new().unwrap();
+    // 192.0.2.1 is a documentation address: no machine has it.
+    let (ended, error) = run(&[
+        "--no-open",
+        "--bind",
+        "192.0.2.1",
+        "--port",
+        "0",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(!ended.success());
+    assert!(error.contains("cannot listen on 192.0.2.1:0"), "{error}");
+    assert!(error.contains("--bind"), "{error}");
+}
+
+#[test]
 fn a_busy_port_that_was_asked_for_is_never_traded_for_another() {
     let held = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = held.local_addr().unwrap().port().to_string();
