@@ -124,7 +124,8 @@ test("a folder okfs may not read says so, and is not called missing or empty", a
     })();
     test.skip(readable, "this user can read a folder with no permissions");
     await page.goto(`${okfs.origin}/locked/`);
-    const list = page.getByRole("listbox", { name: "Files" });
+    // The words are beside the listbox, which holds rows only.
+    const list = page.locator(".list");
     await expect(list.getByText("This folder could not be read")).toBeVisible();
     await expect(list.getByText("Nothing at this address")).toHaveCount(0);
     await expect(page.getByText("0 items")).toHaveCount(0);

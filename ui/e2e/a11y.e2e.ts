@@ -1,4 +1,6 @@
 // What a screen reader is told: where the cursor is in the list and the palette, and an axe pass over both.
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./test";
@@ -138,6 +140,34 @@ test("axe finds nothing on the main view", async ({ page, okfs }) => {
   expect(violations.map(brief)).toEqual([]);
 });
 
+test("the list holds rows only: a README, an empty folder, a missing address and a filter with no match pass axe", async ({ page, okfs }) => {
+  const scratch = join(okfs.root, "listed");
+  mkdirSync(join(scratch, "empty"), { recursive: true });
+  writeFileSync(join(scratch, "README.md"), "# About\n\nA [link](https://example.com).\n");
+  try {
+    const clean = async () => {
+      const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
+      expect(violations.map(brief)).toEqual([]);
+    };
+    await page.goto(`${okfs.origin}/listed/`);
+    await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
+    await expect(list(page).locator(":scope > :not([role=option])")).toHaveCount(0);
+    await clean();
+    await page.keyboard.press("/");
+    await page.keyboard.type("zzqq");
+    await expect(page.getByText("No name contains")).toBeVisible();
+    await clean();
+    await page.goto(`${okfs.origin}/listed/empty/`);
+    await expect(page.locator(".list").getByText("This folder is empty")).toBeVisible();
+    await clean();
+    await page.goto(`${okfs.origin}/listed/gone/`);
+    await expect(page.getByText("Nothing at this address")).toBeVisible();
+    await clean();
+  } finally {
+    rmSync(scratch, { recursive: true });
+  }
+});
+
 test("axe finds nothing on the open palette", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/`);
   await page.keyboard.press("Control+k");
@@ -192,8 +222,8 @@ test("the keys move into the list that opens beside a menu action, and Escape cl
   await page.goto(`${okfs.origin}/deep/`);
   await expect(cursorName(page)).toHaveText("deeper");
   const openMenu = async () => {
-    // The folder under the cursor has a list too, in the next column: the first is the folder on screen.
-    const box = await list(page).first().boundingBox();
+    // The empty space is under the rows, in the scroll that holds the listbox.
+    const box = await page.locator(".list").first().boundingBox();
     await page.mouse.click(box!.x + 60, box!.y + box!.height - 40, { button: "right" });
     await page.mouse.move(2, 2);
   };
