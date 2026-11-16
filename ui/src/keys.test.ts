@@ -161,6 +161,31 @@ test("the dot key shows hidden entries and hides them again, remembered, and the
   expect(preview.columnsUrl("inner")).not.toContain("all=1");
 });
 
+test("the dot key says so when the folder has nothing hidden to show, and what would show a dotfile", async () => {
+  const { config } = await import("./config");
+  const store = showing("notes.md");
+  keys.keyFor(store, host, press("."))?.();
+  expect(store.s.notice).toBe("Nothing hidden here. Dotfiles need okfs --hidden");
+  // Hiding them again says nothing, and neither does a folder with hidden entries to show.
+  store.s.notice = null;
+  keys.keyFor(store, host, press("."))?.();
+  expect(store.s.notice).toBeNull();
+  store.s.unlisted = 2;
+  keys.keyFor(store, host, press("."))?.();
+  expect(store.s.notice).toBeNull();
+  // With `--hidden` dotfiles are sent, so the flag is not named.
+  store.setHidden(false);
+  store.s.unlisted = 0;
+  config.hidden = true;
+  try {
+    keys.keyFor(store, host, press("."))?.();
+    expect(store.s.notice as string | null).toBe("Nothing hidden in this folder");
+  } finally {
+    config.hidden = false;
+    store.setHidden(false);
+  }
+});
+
 test("r flips only a file that has two forms", () => {
   const twoForms = ["page.html", "page.htm", "notes.md", "shape.svg", "table.csv", "table.tsv", "data.json"];
   const oneForm = ["main.rs", "photo.jpg", "clip.mp4", "paper.pdf", "pack.zip", "blob.bin", "notes.txt", "inner/"];

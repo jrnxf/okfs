@@ -1158,6 +1158,10 @@ export class Store {
    * entry, or goes to the nearest one left. The choice is kept for this browser.
    */
   setHidden(on = !this.s.hidden): void {
+    // A folder with nothing to show would look as if the key did nothing. Dotfiles are not sent without
+    // `--hidden`, so the page cannot tell whether the folder holds one: it says what would show them.
+    if (on && !this.s.unlisted && this.s.status === "ready" && !this.s.denied && !this.s.matches && !this.s.trashView)
+      this.say(config.hidden ? "Nothing hidden in this folder" : "Nothing hidden here. Dotfiles need okfs --hidden");
     setShowsHidden(on);
     this.s.hidden = on;
     this.emit();
