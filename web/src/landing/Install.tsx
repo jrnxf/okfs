@@ -13,7 +13,7 @@ export function Install() {
           </h2>
           <div>
             <p className="m-0 text-pretty text-ink-2">
-              On a Mac or Linux, Homebrew installs it. With nix, run it without installing anything. On x86-64 Linux, each release has the binary on its own. From a checkout, cargo builds it.
+              On a Mac or Linux, Homebrew installs it. With nix, run it without installing anything. Each release has an archive for Linux and macOS and a zip for Windows. From a checkout, cargo builds it.
             </p>
           </div>
         </div>
@@ -38,12 +38,6 @@ export function Install() {
           </div>
           <div>
             <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] under-760:whitespace-normal under-760:wrap-anywhere">
-              gh release download --repo jrnxf/okfs --pattern &apos;okfs-x86_64-unknown-linux-gnu*&apos;
-            </code>
-            <CopyButton className="flex-none cursor-pointer border-0 bg-ink px-2 py-1.25 [font:600_12px/1_var(--sans)] text-bg hover:bg-spot hover:text-spot-ink" text="gh release download --repo jrnxf/okfs --pattern 'okfs-x86_64-unknown-linux-gnu*'" />
-          </div>
-          <div>
-            <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] under-760:whitespace-normal under-760:wrap-anywhere">
               {"cargo install --path . "}
               <span className="text-ink-3">
                 # in a checkout, with bun on the PATH
@@ -54,7 +48,7 @@ export function Install() {
         </div>
         <div className="mt-5.5 mb-24 flex flex-wrap gap-x-7 gap-y-2 [font:13px/1.5_var(--mono)] text-ink-3 under-860:mb-16">
           <span>
-            Linux and macOS
+            Linux, macOS and Windows
           </span>
           <span>
             Read only by default
@@ -66,6 +60,9 @@ export function Install() {
         <div className="-mt-16 mb-24 flex flex-wrap gap-x-7 gap-y-3 [font:15px/1.5_var(--mono)] under-860:-mt-10 under-860:mb-16 *:text-ink *:decoration-spot *:underline-offset-5">
           <a href="https://github.com/jrnxf/okfs">
             Source on GitHub
+          </a>
+          <a href="https://github.com/jrnxf/okfs/releases">
+            Release archives
           </a>
           <a href="https://github.com/jrnxf/okfs#use">
             How to use it
