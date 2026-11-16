@@ -511,6 +511,24 @@ fn on_loopback_any_write_asks_for_the_key_unless_told_not_to() {
 }
 
 #[test]
+fn a_wrong_number_or_a_second_folder_is_refused_with_what_to_give() {
+    for (args, expected) in [
+        (&["--port", "abc"][..], "Give a number from 0 to 65535"),
+        (&["--trash-days", "x"][..], "Give a whole number from 1 to 36500"),
+        (&["--trash-days", "0"][..], "Give a whole number from 1 to 36500"),
+        (&["a", "b"][..], "'b' is a second folder, and okfs serves one"),
+    ] {
+        let (ended, error) = run(&[&["--no-open"][..], args].concat());
+        assert_eq!(ended.code(), Some(2), "{args:?}: {error}");
+        assert!(error.contains(expected), "{args:?}: {error}");
+    }
+    // A real subcommand after a folder keeps clap's own words.
+    let (ended, error) = run(&["a", "theme"]);
+    assert_eq!(ended.code(), Some(2));
+    assert!(error.contains("the subcommand 'theme' cannot be used with"), "{error}");
+}
+
+#[test]
 fn with_no_key_anyone_who_reaches_the_address_gets_in_and_is_told_so() {
     let (_tmp, okfs) = site(&["--bind", "0.0.0.0", "--no-key"]);
     assert_eq!(okfs.key, None);

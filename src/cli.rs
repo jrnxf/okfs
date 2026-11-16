@@ -65,7 +65,7 @@ struct Serve {
     bind: IpAddr,
 
     /// Port to listen on, 0 for any free one. Without it, 8080 or the next free port after it
-    #[arg(env = "OKFS_PORT", short, long)]
+    #[arg(env = "OKFS_PORT", short, long, value_parser = port)]
     port: Option<u16>,
 
     /// Print a QR code for the address another device can use. Needs a terminal
@@ -132,7 +132,7 @@ struct Serve {
     allow_delete: bool,
 
     /// How many days the Trash keeps what is deleted before it goes for good [default: 30]
-    #[arg(env = "OKFS_TRASH_DAYS", long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..=36500), help_heading = "Writes")]
+    #[arg(env = "OKFS_TRASH_DAYS", long, value_name = "DAYS", value_parser = days, help_heading = "Writes")]
     trash_days: Option<u32>,
 
     /// Delete for good at once, with no Trash and no undo
@@ -235,7 +235,7 @@ fn print(text: &[u8]) {
 }
 
 pub fn run() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse().unwrap_or_else(|error| second_path(error).exit());
     let result = match cli.command {
         Some(Command::Theme {
             action: ThemeAction::Check { file },
@@ -333,6 +333,37 @@ fn address(text: &str) -> Result<IpAddr, String> {
     }
     text.parse()
         .map_err(|_| "not an IP address such as 127.0.0.1 or 0.0.0.0, or localhost".to_owned())
+}
+
+/// clap reads a second folder after the first as a subcommand, and says the subcommand cannot be
+/// used with `[PATH]`. When the word is no subcommand, say what is wrong: okfs serves one folder.
+fn second_path(error: clap::Error) -> clap::Error {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+    let mut cli = Cli::command();
+    let word = match error.get(ContextKind::InvalidSubcommand) {
+        Some(ContextValue::String(word)) if error.kind() == ErrorKind::ArgumentConflict => word,
+        _ => return error,
+    };
+    if cli.find_subcommand(word).is_some() {
+        return error;
+    }
+    let message =
+        format!("'{word}' is a second folder, and okfs serves one. Give one PATH, and quote a name that has spaces");
+    cli.error(ErrorKind::ArgumentConflict, message)
+}
+
+/// A port: a whole number from 0 to 65535.
+fn port(text: &str) -> Result<u16, String> {
+    text.parse()
+        .map_err(|_| "not a port. Give a number from 0 to 65535, or 0 for any free one".to_owned())
+}
+
+/// The days a deleted file stays in the Trash: a whole number from 1 to 36500.
+fn days(text: &str) -> Result<u32, String> {
+    match text.parse() {
+        Ok(days @ 1..=36500) => Ok(days),
+        _ => Err("not a number of days. Give a whole number from 1 to 36500".to_owned()),
+    }
 }
 
 /// A size in bytes, with an optional unit: `500K`, `20M`, `4G` or `1T`, each 1024 times the last.
