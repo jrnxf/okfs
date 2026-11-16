@@ -1,7 +1,7 @@
 //! The command line: `okfs [PATH]`, `okfs theme check <file>`, `okfs theme list` and
 //! `okfs completions <shell>`.
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -212,6 +212,28 @@ fn shown(path: &std::path::Path) -> String {
     }
 }
 
+/// Prints one line to standard output, as `println!` does, through [`print`].
+macro_rules! say {
+    ($($line:tt)*) => {
+        print(format!("{}\n", format_args!($($line)*)).as_bytes())
+    };
+}
+
+/// Writes `text` to standard output. `println!` panics when it cannot write, and a reader that
+/// closes its end early, as `head` does, is no failure: what it read is what it wanted. okfs ends
+/// there and says nothing.
+fn print(text: &[u8]) {
+    let mut out = io::stdout().lock();
+    match out.write_all(text).and_then(|()| out.flush()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(error) => {
+            eprintln!("okfs: cannot write to standard output: {error}");
+            std::process::exit(1)
+        }
+    }
+}
+
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
@@ -225,16 +247,22 @@ pub fn run() -> ExitCode {
             Ok(())
         }
         Some(Command::Completions { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut io::stdout());
+            // Into memory first: clap_complete panics when it cannot write.
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut script);
+            print(&script);
             Ok(())
         }
-        Some(Command::Manpage) => match clap_mangen::Man::new(Cli::command()).render(&mut io::stdout()) {
-            // Read only in part, as by `head`: what was read is what was wanted.
-            Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
-                Err(format!("cannot write the manual page: {error}"))
+        Some(Command::Manpage) => {
+            let mut page = Vec::new();
+            match clap_mangen::Man::new(Cli::command()).render(&mut page) {
+                Ok(()) => {
+                    print(&page);
+                    Ok(())
+                }
+                Err(error) => Err(format!("cannot write the manual page: {error}")),
             }
-            _ => Ok(()),
-        },
+        }
         Some(Command::PdfPage { width }) => {
             // Its failures are for the server that started it, which reads the exit code alone.
             return match crate::pdf::page(width) {
@@ -286,14 +314,14 @@ fn this_program() -> Option<PathBuf> {
 
 fn theme_check(file: &std::path::Path) -> Result<(), String> {
     let (_, theme) = server::read_theme(file)?;
-    println!("{}: ok ({})", file.display(), theme.name);
+    say!("{}: ok ({})", file.display(), theme.name);
     Ok(())
 }
 
 fn theme_list() {
     for (id, _) in theme::BUILT_IN {
         if let Some(theme) = theme::built_in(id) {
-            println!("{id:<12} {}", theme.about);
+            say!("{id:<12} {}", theme.about);
         }
     }
 }
@@ -502,7 +530,7 @@ fn serve(args: Serve) -> Result<(), String> {
         let address = listener
             .local_addr()
             .map_err(|error| format!("cannot listen on {}: {error}", args.bind))?;
-        println!("okfs {}", env!("CARGO_PKG_VERSION"));
+        say!("okfs {}", env!("CARGO_PKG_VERSION"));
         let can = abilities(args.allow_upload, args.allow_edit, args.allow_delete);
         let writes = match can.strip_prefix("read") {
             Some("") => "read only".to_owned(),
@@ -511,32 +539,32 @@ fn serve(args: Serve) -> Result<(), String> {
                 can.trim_start_matches("read, ").trim_start_matches("read and ")
             ),
         };
-        println!("  serving  {} ({writes})", shown(root.dir()));
+        say!("  serving  {} ({writes})", shown(root.dir()));
         if let Some(trash) = app.trash() {
-            println!(
+            say!(
                 "  trash    a delete is kept {} days in {}, then goes for good",
                 trash.days(),
                 crate::paths::TRASH
             );
         }
         if let Follow::Rescan(every) = follow {
-            println!("  rescan   every {}", every::spoken(every));
+            say!("  rescan   every {}", every::spoken(every));
         }
         if args.port.is_none() && address.port() != PORT {
-            println!("  port     {}, as {PORT} is busy", address.port());
+            say!("  port     {}, as {PORT} is busy", address.port());
         }
         let addresses = lan::addresses(address.ip(), &lan::found());
         let key = key.as_ref().map(Key::as_str);
         for (index, ip) in addresses.iter().enumerate() {
             let label = if index == 0 { "at" } else { "" };
-            println!("  {label:<8} {}", lan::link(*ip, address.port(), key, tls.is_some()));
+            say!("  {label:<8} {}", lan::link(*ip, address.port(), key, tls.is_some()));
         }
         if key.is_some() {
-            println!("  key      on: anyone with one of these links can {can} every file shown");
+            say!("  key      on: anyone with one of these links can {can} every file shown");
         } else if !args.bind.is_loopback() {
-            println!("  open to  anyone who can reach these addresses can {can} every file shown");
+            say!("  open to  anyone who can reach these addresses can {can} every file shown");
         }
-        println!("  theme    {theme_name}");
+        say!("  theme    {theme_name}");
         if args.qr {
             match lan::scan(
                 address.ip(),
@@ -547,12 +575,12 @@ fn serve(args: Serve) -> Result<(), String> {
                 std::io::stdout().is_terminal(),
             ) {
                 Scan::Code(lines) => {
-                    println!();
+                    say!("");
                     for line in lines {
-                        println!("  {line}");
+                        say!("  {line}");
                     }
                 }
-                Scan::Nothing(why) => println!("  qr       {why}"),
+                Scan::Nothing(why) => say!("  qr       {why}"),
                 Scan::Skipped => {}
             }
         }
@@ -562,7 +590,7 @@ fn serve(args: Serve) -> Result<(), String> {
                 None => lan::link(*ip, address.port(), key, tls.is_some()),
             };
             if let Err(error) = webbrowser::open(&link) {
-                println!("  open     could not open the browser: {error}");
+                say!("  open     could not open the browser: {error}");
             }
         }
         let router = server::router(app);

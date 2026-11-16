@@ -676,6 +676,37 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
     assert!(error.contains("invalid value 'tcsh'"), "{error}");
 }
 
+/// A reader such as `head` closes its end early. okfs then ends and says nothing, where a panic
+/// would print a trace and end with 101.
+#[cfg(unix)]
+#[test]
+fn a_reader_that_stops_early_ends_okfs_with_no_complaint() {
+    let (_cache, served, cache) = folder();
+    let commands: [&[&str]; 4] = [
+        &["theme", "list"],
+        &["completions", "fish"],
+        &["manpage"],
+        &["--no-open", "--port", "0", served.to_str().unwrap()],
+    ];
+    for args in commands {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let mut child = Command::new(env!("CARGO_BIN_EXE_okfs"))
+            .args(args)
+            .env("XDG_CACHE_HOME", &cache)
+            .stdout(writer)
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let status = ended(&mut child, Duration::from_secs(20));
+        let _ = child.kill();
+        let mut error = String::new();
+        child.stderr.take().unwrap().read_to_string(&mut error).unwrap();
+        assert!(status.is_some_and(|status| status.success()), "{args:?}: {status:?}");
+        assert_eq!(error, "", "{args:?}");
+    }
+}
+
 /// okfs in a terminal of its own, through `script`, as it opens the browser only from a terminal.
 /// The browser is a script that writes down what it was started with. Stopped when dropped.
 #[cfg(target_os = "linux")]
