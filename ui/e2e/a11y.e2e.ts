@@ -310,6 +310,17 @@ test("the row menu is named, takes the focus and tells which action the keys are
   await expect(page).toHaveURL(/photo-00\.png/);
 });
 
+test("the row menu's note about what is off keeps each flag on one line", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  await page.keyboard.press("a");
+  const flags = page.getByRole("menu", { name: "photo-00.png" }).locator("code");
+  await expect(flags).toHaveText(["--allow-edit", "--allow-upload", "--allow-delete"]);
+  // A flag that wraps at its hyphen draws as two boxes, one on each line.
+  const lines = await flags.evaluateAll((codes) => codes.map((code) => code.getClientRects().length));
+  expect(lines).toEqual([1, 1, 1]);
+});
+
 test("the keys move into the list that opens beside a menu action, and Escape closes only that list", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/deep/`);
   await expect(cursorName(page)).toHaveText("deeper");
