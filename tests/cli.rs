@@ -511,6 +511,24 @@ fn on_loopback_any_write_asks_for_the_key_unless_told_not_to() {
 }
 
 #[test]
+fn a_wrong_number_or_a_second_folder_is_refused_with_what_to_give() {
+    for (args, expected) in [
+        (&["--port", "abc"][..], "Give a number from 0 to 65535"),
+        (&["--trash-days", "x"][..], "Give a whole number from 1 to 36500"),
+        (&["--trash-days", "0"][..], "Give a whole number from 1 to 36500"),
+        (&["a", "b"][..], "'b' is a second folder, and okfs serves one"),
+    ] {
+        let (ended, error) = run(&[&["--no-open"][..], args].concat());
+        assert_eq!(ended.code(), Some(2), "{args:?}: {error}");
+        assert!(error.contains(expected), "{args:?}: {error}");
+    }
+    // A real subcommand after a folder keeps clap's own words.
+    let (ended, error) = run(&["a", "theme"]);
+    assert_eq!(ended.code(), Some(2));
+    assert!(error.contains("the subcommand 'theme' cannot be used with"), "{error}");
+}
+
+#[test]
 fn with_no_key_anyone_who_reaches_the_address_gets_in_and_is_told_so() {
     let (_tmp, okfs) = site(&["--bind", "0.0.0.0", "--no-key"]);
     assert_eq!(okfs.key, None);
@@ -599,6 +617,23 @@ fn a_busy_port_is_passed_over_only_when_no_port_was_given() {
 }
 
 #[test]
+fn an_address_the_machine_does_not_have_is_refused_with_the_flag_to_change() {
+    let tmp = TempDir::new().unwrap();
+    // 192.0.2.1 is a documentation address: no machine has it.
+    let (ended, error) = run(&[
+        "--no-open",
+        "--bind",
+        "192.0.2.1",
+        "--port",
+        "0",
+        tmp.path().to_str().unwrap(),
+    ]);
+    assert!(!ended.success());
+    assert!(error.contains("cannot listen on 192.0.2.1:0"), "{error}");
+    assert!(error.contains("--bind"), "{error}");
+}
+
+#[test]
 fn a_busy_port_that_was_asked_for_is_never_traded_for_another() {
     let held = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = held.local_addr().unwrap().port().to_string();
@@ -674,6 +709,37 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
     let (ended, error) = run(&["completions", "tcsh"]);
     assert!(!ended.success());
     assert!(error.contains("invalid value 'tcsh'"), "{error}");
+}
+
+/// A reader such as `head` closes its end early. okfs then ends and says nothing, where a panic
+/// would print a trace and end with 101.
+#[cfg(unix)]
+#[test]
+fn a_reader_that_stops_early_ends_okfs_with_no_complaint() {
+    let (_cache, served, cache) = folder();
+    let commands: [&[&str]; 4] = [
+        &["theme", "list"],
+        &["completions", "fish"],
+        &["manpage"],
+        &["--no-open", "--port", "0", served.to_str().unwrap()],
+    ];
+    for args in commands {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let mut child = Command::new(env!("CARGO_BIN_EXE_okfs"))
+            .args(args)
+            .env("XDG_CACHE_HOME", &cache)
+            .stdout(writer)
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let status = ended(&mut child, Duration::from_secs(20));
+        let _ = child.kill();
+        let mut error = String::new();
+        child.stderr.take().unwrap().read_to_string(&mut error).unwrap();
+        assert!(status.is_some_and(|status| status.success()), "{args:?}: {status:?}");
+        assert_eq!(error, "", "{args:?}");
+    }
 }
 
 /// okfs in a terminal of its own, through `script`, as it opens the browser only from a terminal.
@@ -957,6 +1023,15 @@ fn the_trash_is_said_at_start_and_its_days_are_set_or_it_is_turned_off() {
     for args in [&["--allow-delete", "--no-trash"][..], &[][..]] {
         let (_tmp, okfs) = site(args);
         assert!(!okfs.said.contains("trash"), "{args:?}: {}", okfs.said);
+    }
+    // Without deleting on, the Trash's options do nothing, and the lines at start say so.
+    for (args, given) in [
+        (&["--no-trash"][..], "--no-trash"),
+        (&["--trash-days", "7"][..], "--trash-days"),
+    ] {
+        let (_tmp, okfs) = site(args);
+        let warning = format!("trash    {given} does nothing without --allow-delete");
+        assert!(okfs.said.contains(&warning), "{args:?}: {}", okfs.said);
     }
     for wrong in [
         &["--trash-days", "0", "."][..],

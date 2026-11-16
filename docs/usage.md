@@ -102,7 +102,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `c` | Copy to a folder you pick. Only with `--allow-upload`. |
 | `u` | Upload files into this folder. Only with `--allow-upload`. |
 | `n`, `Shift N` | Make a new file or folder in this folder and name it in place. Only with `--allow-upload`. |
-| `Shift D` | Move the file or folder, or the selection, to the Trash. Only with `--allow-delete`. |
+| `Shift D`, `Delete`, `Cmd Backspace` | Move the file or folder, or the selection, to the Trash. Only with `--allow-delete`. |
 | `Ctrl Z`, `Cmd Z` | Undo the last move to the Trash, rename, move or copy, while its note is up |
 | `?` | Show the keys |
 ## Addresses you can rely on

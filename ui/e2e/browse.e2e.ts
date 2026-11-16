@@ -65,13 +65,48 @@ test("the palette finds a file in a nested folder", async ({ page, okfs }) => {
   await expect(page.getByText("found me")).toBeVisible();
 });
 
+test("the palette says that okfs is not answering, and finds the file when okfs is heard again", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(page.getByRole("option", { name: /^main\.rs/ })).toBeVisible();
+  // Every search gets no answer at all, as from an okfs that has stopped.
+  await page.route(/\/api\/search\?/, (route) => route.abort());
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", { name: "Find anything" });
+  await page.keyboard.type("needle");
+  await expect(palette.getByText("okfs is not answering. Retrying…")).toBeVisible();
+  await expect(palette.getByRole("option")).toHaveCount(0);
+  // An Enter that got no answer is dropped: it does not open a file much later.
+  await page.keyboard.press("Enter");
+
+  // A change on disk makes the page read the folder again, and that answer says okfs is back.
+  await page.unroute(/\/api\/search\?/);
+  writeFileSync(join(okfs.root, "main.rs"), 'fn main() {\n    println!("hello from the fixture");\n}\n');
+  await expect(palette.getByText("needle-in-haystack.txt")).toBeVisible();
+  await expect(page).toHaveURL(`${okfs.origin}/`);
+});
+
+test("an open file that is removed on disk closes with a notice that says so", async ({ page, okfs }) => {
+  const file = join(okfs.root, "short-lived.txt");
+  writeFileSync(file, "here for a moment\n");
+  try {
+    await page.goto(`${okfs.origin}/short-lived.txt`);
+    await expect(page.getByText("here for a moment")).toBeVisible();
+    // okfs tells of a change once the folder has settled. A file made and removed inside that time was never there for it.
+    await page.waitForTimeout(SETTLED_MS);
+  } finally {
+    rmSync(file, { force: true });
+  }
+  await expect(page.getByRole("status").filter({ hasText: "“short-lived.txt” is no longer in this folder" })).toBeVisible();
+  await expect(page).toHaveURL(`${okfs.origin}/`);
+});
+
 test("Markdown opens rendered and r flips it to source", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/notes.md`);
   await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toBeVisible();
   await expect(page.locator("pre.code")).toHaveCount(0);
 
   await page.keyboard.press("r");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toHaveCount(0);
   await expect(page.locator("pre.code")).toContainText("# Field notes");
   await expect(page.locator("pre.code")).toContainText("**bold**");
 
@@ -124,7 +159,8 @@ test("a folder okfs may not read says so, and is not called missing or empty", a
     })();
     test.skip(readable, "this user can read a folder with no permissions");
     await page.goto(`${okfs.origin}/locked/`);
-    const list = page.getByRole("listbox", { name: "Files" });
+    // The words are beside the listbox, which holds rows only.
+    const list = page.locator(".list");
     await expect(list.getByText("This folder could not be read")).toBeVisible();
     await expect(list.getByText("Nothing at this address")).toHaveCount(0);
     await expect(page.getByText("0 items")).toHaveCount(0);
@@ -156,6 +192,27 @@ test("a picture, a video and a PDF that cannot be shown say so and offer the fil
     }
   } finally {
     rmSync(damaged, { recursive: true });
+  }
+});
+
+test("a file of no bytes says it is empty, whatever its kind", async ({ page, okfs }) => {
+  const empty = join(okfs.root, "nothing");
+  mkdirSync(empty);
+  const names = ["empty.txt", "empty.md", "empty.png"];
+  for (const name of names) writeFileSync(join(empty, name), "");
+  try {
+    for (const name of names) {
+      await page.goto(`${okfs.origin}/nothing/${name}`);
+      await page.waitForTimeout(SETTLED_MS);
+      await expect(page.getByText("This file is empty")).toBeVisible();
+      await expect(page.getByText("0 lines")).toHaveCount(0);
+      await expect(page.getByText("could not be shown")).toHaveCount(0);
+      // There is no source to show and no line to wrap, so neither is offered.
+      await expect(page.getByRole("button", { name: "Show the source" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Wrap long lines" })).toHaveCount(0);
+    }
+  } finally {
+    rmSync(empty, { recursive: true });
   }
 });
 

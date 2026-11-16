@@ -1,7 +1,7 @@
 //! The command line: `okfs [PATH]`, `okfs theme check <file>`, `okfs theme list` and
 //! `okfs completions <shell>`.
 
-use std::io::{self, IsTerminal};
+use std::io::{self, IsTerminal, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -42,7 +42,7 @@ Examples:
 
 Everything is read only unless you pass --allow-upload, --allow-edit or --allow-delete.
 Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.
-With any of the three, the key is asked for on loopback too.";
+With --allow-upload, --allow-edit or --allow-delete, the key is asked for on loopback too.";
 
 /// A web file browser. Run it in a folder and flip through every file inside.
 #[derive(Parser)]
@@ -65,7 +65,7 @@ struct Serve {
     bind: IpAddr,
 
     /// Port to listen on, 0 for any free one. Without it, 8080 or the next free port after it
-    #[arg(env = "OKFS_PORT", short, long)]
+    #[arg(env = "OKFS_PORT", short, long, value_parser = port)]
     port: Option<u16>,
 
     /// Print a QR code for the address another device can use. Needs a terminal
@@ -132,7 +132,7 @@ struct Serve {
     allow_delete: bool,
 
     /// How many days the Trash keeps what is deleted before it goes for good [default: 30]
-    #[arg(env = "OKFS_TRASH_DAYS", long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..=36500), help_heading = "Writes")]
+    #[arg(env = "OKFS_TRASH_DAYS", long, value_name = "DAYS", value_parser = days, help_heading = "Writes")]
     trash_days: Option<u32>,
 
     /// Delete for good at once, with no Trash and no undo
@@ -212,8 +212,30 @@ fn shown(path: &std::path::Path) -> String {
     }
 }
 
+/// Prints one line to standard output, as `println!` does, through [`print`].
+macro_rules! say {
+    ($($line:tt)*) => {
+        print(format!("{}\n", format_args!($($line)*)).as_bytes())
+    };
+}
+
+/// Writes `text` to standard output. `println!` panics when it cannot write, and a reader that
+/// closes its end early, as `head` does, is no failure: what it read is what it wanted. okfs ends
+/// there and says nothing.
+fn print(text: &[u8]) {
+    let mut out = io::stdout().lock();
+    match out.write_all(text).and_then(|()| out.flush()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(error) => {
+            eprintln!("okfs: cannot write to standard output: {error}");
+            std::process::exit(1)
+        }
+    }
+}
+
 pub fn run() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse().unwrap_or_else(|error| second_path(error).exit());
     let result = match cli.command {
         Some(Command::Theme {
             action: ThemeAction::Check { file },
@@ -225,16 +247,22 @@ pub fn run() -> ExitCode {
             Ok(())
         }
         Some(Command::Completions { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut io::stdout());
+            // Into memory first: clap_complete panics when it cannot write.
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut script);
+            print(&script);
             Ok(())
         }
-        Some(Command::Manpage) => match clap_mangen::Man::new(Cli::command()).render(&mut io::stdout()) {
-            // Read only in part, as by `head`: what was read is what was wanted.
-            Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
-                Err(format!("cannot write the manual page: {error}"))
+        Some(Command::Manpage) => {
+            let mut page = Vec::new();
+            match clap_mangen::Man::new(Cli::command()).render(&mut page) {
+                Ok(()) => {
+                    print(&page);
+                    Ok(())
+                }
+                Err(error) => Err(format!("cannot write the manual page: {error}")),
             }
-            _ => Ok(()),
-        },
+        }
         Some(Command::PdfPage { width }) => {
             // Its failures are for the server that started it, which reads the exit code alone.
             return match crate::pdf::page(width) {
@@ -286,14 +314,14 @@ fn this_program() -> Option<PathBuf> {
 
 fn theme_check(file: &std::path::Path) -> Result<(), String> {
     let (_, theme) = server::read_theme(file)?;
-    println!("{}: ok ({})", file.display(), theme.name);
+    say!("{}: ok ({})", file.display(), theme.name);
     Ok(())
 }
 
 fn theme_list() {
     for (id, _) in theme::BUILT_IN {
         if let Some(theme) = theme::built_in(id) {
-            println!("{id:<12} {}", theme.about);
+            say!("{id:<12} {}", theme.about);
         }
     }
 }
@@ -305,6 +333,37 @@ fn address(text: &str) -> Result<IpAddr, String> {
     }
     text.parse()
         .map_err(|_| "not an IP address such as 127.0.0.1 or 0.0.0.0, or localhost".to_owned())
+}
+
+/// clap reads a second folder after the first as a subcommand, and says the subcommand cannot be
+/// used with `[PATH]`. When the word is no subcommand, say what is wrong: okfs serves one folder.
+fn second_path(error: clap::Error) -> clap::Error {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+    let mut cli = Cli::command();
+    let word = match error.get(ContextKind::InvalidSubcommand) {
+        Some(ContextValue::String(word)) if error.kind() == ErrorKind::ArgumentConflict => word,
+        _ => return error,
+    };
+    if cli.find_subcommand(word).is_some() {
+        return error;
+    }
+    let message =
+        format!("'{word}' is a second folder, and okfs serves one. Give one PATH, and quote a name that has spaces");
+    cli.error(ErrorKind::ArgumentConflict, message)
+}
+
+/// A port: a whole number from 0 to 65535.
+fn port(text: &str) -> Result<u16, String> {
+    text.parse()
+        .map_err(|_| "not a port. Give a number from 0 to 65535, or 0 for any free one".to_owned())
+}
+
+/// The days a deleted file stays in the Trash: a whole number from 1 to 36500.
+fn days(text: &str) -> Result<u32, String> {
+    match text.parse() {
+        Ok(days @ 1..=36500) => Ok(days),
+        _ => Err("not a number of days. Give a whole number from 1 to 36500".to_owned()),
+    }
 }
 
 /// A size in bytes, with an optional unit: `500K`, `20M`, `4G` or `1T`, each 1024 times the last.
@@ -353,10 +412,27 @@ async fn listen(bind: IpAddr, asked: Option<u16>) -> Result<tokio::net::TcpListe
                     "cannot listen on {bind}: ports {first} to {last} are all busy. Pass --port 0 for any free one"
                 ));
             }
-            Err(error) => return Err(format!("cannot listen on {address}: {error}")),
+            Err(error) => return Err(cannot_listen(address, &error)),
         }
     }
     unreachable!("a range of ports is never empty")
+}
+
+/// What to say when the system refuses `address` for a reason other than a busy port. The system's
+/// own text ("Permission denied", "Can't assign requested address") names no flag, so the two
+/// causes a person can act on get the next step.
+fn cannot_listen(address: SocketAddr, error: &io::Error) -> String {
+    let next = match error.kind() {
+        io::ErrorKind::PermissionDenied if address.port() < 1024 => {
+            ". Ports below 1024 often need administrator rights. Pass a --port of 1024 or more, or --port 0 for any free one"
+        }
+        io::ErrorKind::PermissionDenied => ". Pass another --port, or --port 0 for any free one",
+        io::ErrorKind::AddrNotAvailable => {
+            ". This machine has no such address. Pass one of its own addresses to --bind: 127.0.0.1 for this machine only, or 0.0.0.0 for every address"
+        }
+        _ => "",
+    };
+    format!("cannot listen on {address}: {error}{next}")
 }
 
 /// Ends when okfs is asked to stop: Ctrl-C in a terminal, or SIGTERM from a service manager such as
@@ -502,7 +578,7 @@ fn serve(args: Serve) -> Result<(), String> {
         let address = listener
             .local_addr()
             .map_err(|error| format!("cannot listen on {}: {error}", args.bind))?;
-        println!("okfs {}", env!("CARGO_PKG_VERSION"));
+        say!("okfs {}", env!("CARGO_PKG_VERSION"));
         let can = abilities(args.allow_upload, args.allow_edit, args.allow_delete);
         let writes = match can.strip_prefix("read") {
             Some("") => "read only".to_owned(),
@@ -511,32 +587,35 @@ fn serve(args: Serve) -> Result<(), String> {
                 can.trim_start_matches("read, ").trim_start_matches("read and ")
             ),
         };
-        println!("  serving  {} ({writes})", shown(root.dir()));
+        say!("  serving  {} ({writes})", shown(root.dir()));
         if let Some(trash) = app.trash() {
-            println!(
+            say!(
                 "  trash    a delete is kept {} days in {}, then goes for good",
                 trash.days(),
                 crate::paths::TRASH
             );
+        } else if !args.allow_delete && (args.no_trash || args.trash_days.is_some()) {
+            let given = if args.no_trash { "--no-trash" } else { "--trash-days" };
+            say!("  trash    {given} does nothing without --allow-delete");
         }
         if let Follow::Rescan(every) = follow {
-            println!("  rescan   every {}", every::spoken(every));
+            say!("  rescan   every {}", every::spoken(every));
         }
         if args.port.is_none() && address.port() != PORT {
-            println!("  port     {}, as {PORT} is busy", address.port());
+            say!("  port     {}, as {PORT} is busy", address.port());
         }
         let addresses = lan::addresses(address.ip(), &lan::found());
         let key = key.as_ref().map(Key::as_str);
         for (index, ip) in addresses.iter().enumerate() {
             let label = if index == 0 { "at" } else { "" };
-            println!("  {label:<8} {}", lan::link(*ip, address.port(), key, tls.is_some()));
+            say!("  {label:<8} {}", lan::link(*ip, address.port(), key, tls.is_some()));
         }
         if key.is_some() {
-            println!("  key      on: anyone with one of these links can {can} every file shown");
+            say!("  key      on: anyone with one of these links can {can} every file shown");
         } else if !args.bind.is_loopback() {
-            println!("  open to  anyone who can reach these addresses can {can} every file shown");
+            say!("  open to  anyone who can reach these addresses can {can} every file shown");
         }
-        println!("  theme    {theme_name}");
+        say!("  theme    {theme_name}");
         if args.qr {
             match lan::scan(
                 address.ip(),
@@ -547,22 +626,23 @@ fn serve(args: Serve) -> Result<(), String> {
                 std::io::stdout().is_terminal(),
             ) {
                 Scan::Code(lines) => {
-                    println!();
+                    say!("");
                     for line in lines {
-                        println!("  {line}");
+                        say!("  {line}");
                     }
                 }
-                Scan::Nothing(why) => println!("  qr       {why}"),
+                Scan::Nothing(why) => say!("  qr       {why}"),
                 Scan::Skipped => {}
             }
         }
+        say!("  Press Ctrl-C to stop");
         if open && let Some(ip) = addresses.first() {
             let link = match &once {
                 Some(once) => lan::link_once(*ip, address.port(), once.as_str(), tls.is_some()),
                 None => lan::link(*ip, address.port(), key, tls.is_some()),
             };
             if let Err(error) = webbrowser::open(&link) {
-                println!("  open     could not open the browser: {error}");
+                say!("  open     could not open the browser: {error}");
             }
         }
         let router = server::router(app);
@@ -585,7 +665,17 @@ fn serve(args: Serve) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{abilities, byte_size, should_open};
+    use super::{abilities, byte_size, cannot_listen, should_open};
+
+    #[test]
+    fn a_refused_port_or_address_names_the_flag_to_change() {
+        use std::io::{Error, ErrorKind};
+        let said = |address: &str, kind| cannot_listen(address.parse().unwrap(), &Error::from(kind));
+        assert!(said("127.0.0.1:80", ErrorKind::PermissionDenied).contains("--port of 1024 or more"));
+        assert!(said("127.0.0.1:8080", ErrorKind::PermissionDenied).contains("another --port"));
+        assert!(said("192.0.2.1:8080", ErrorKind::AddrNotAvailable).contains("--bind"));
+        assert!(!said("127.0.0.1:8080", ErrorKind::OutOfMemory).contains("--"));
+    }
 
     #[test]
     fn a_size_reads_with_or_without_its_unit() {

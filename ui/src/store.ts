@@ -463,10 +463,10 @@ export class Store {
     return hasSource(file) && sourceFirst(file) !== this.s.flipped.includes(formOf(file));
   }
 
-  /** The file on show, when it has a second form to flip to: see `hasSource`. */
+  /** The file on show, when it has a second form to flip to: see `hasSource`. A file of no bytes has neither. */
   flippable(): Entry | null {
     const file = this.shown();
-    return file && hasSource(file) ? file : null;
+    return file && hasSource(file) && file.size > 0 ? file : null;
   }
 
   /** Whether the source of `file` wraps at the edge of the pane: prose does until its kind is flipped, code never. */
@@ -474,10 +474,10 @@ export class Store {
     return isProse(file) && !this.s.unwrapped.includes(file.kind);
   }
 
-  /** The file on show, when it is prose shown as its source, which has lines to wrap. */
+  /** The file on show, when it is prose shown as its source, which has lines to wrap: a file of no bytes has none. */
   wrappable(): Entry | null {
     const file = this.shown();
-    return file && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
+    return file && file.size > 0 && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
   }
 
   /** The folder whose columns are beside the list: the one under the cursor, while no file has the full width. */
@@ -866,6 +866,7 @@ export class Store {
 
     const order = s.entries.map((entry) => entry.name);
     const at = s.cursor;
+    let left: string | null = null;
     this.take(listing);
     this.compute();
     const now = new Map(s.all.map((entry) => [entry.name, entry]));
@@ -879,6 +880,8 @@ export class Store {
       // A file that is edited stays open when it is gone, and the editor says so: what it holds is not lost.
       else if (s.editing?.path === s.open.path) this.restamp(s.open.path);
       else {
+        // Deleted, renamed or moved by something other than this page: the view closes, and the notice says why.
+        left = s.open.name;
         s.open = null;
         // The address of a file that is gone gives way to its folder's.
         this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
@@ -887,7 +890,8 @@ export class Store {
 
     if (all) this.distrust();
     s.caught++;
-    this.emit();
+    if (left === null) this.emit();
+    else this.say(`“${left}” is no longer in this folder`);
   }
 
   /**
@@ -1730,6 +1734,7 @@ export class Store {
     const dir = parentOf(renaming.path);
     const fresh = renaming.fresh === true;
     name = name?.trim() ?? null;
+    if (fresh && name !== null) name = meantName(name, was);
     if (name === null || name === was) {
       s.renaming = null;
       this.emit();
@@ -2066,6 +2071,19 @@ export function freeName(name: string, taken: ReadonlySet<string>): string {
     const tried = copy ? `${stem} (${copy})${ext}` : name;
     if (!taken.has(tried.toLowerCase())) return tried;
   }
+}
+
+/**
+ * The name meant for a new file, whose field offers `was` with all but its extension selected. A name typed with an
+ * extension okfs knows lands before the offered one, as "notes.md.txt": the offered extension is dropped, so the
+ * file is "notes.md". A name typed without one keeps the offered extension.
+ */
+export function meantName(name: string, was: string): string {
+  const dot = was.lastIndexOf(".");
+  const offered = dot > 0 ? was.slice(dot).toLowerCase() : "";
+  if (!offered || !name.toLowerCase().endsWith(offered)) return name;
+  const typed = name.slice(0, -offered.length);
+  return kindOf(typed, false) === "file" ? name : typed;
 }
 
 /**

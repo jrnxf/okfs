@@ -23,6 +23,8 @@ interface Props {
   /** Changes when the list is a different list: the scroll position starts over. */
   listKey: string;
   render: (index: number, cell: Cell) => ComponentChildren;
+  /** A row drawn beside the listbox, in the same place, for the time it holds a control: an option may hold none. */
+  apart?: number;
   /** Shown over the list when there is nothing in it. */
   empty: ComponentChildren;
   /** Shown under the rows, in the same scroll. */
@@ -31,7 +33,7 @@ interface Props {
   onShown?: (last: number) => void;
 }
 
-export function VList({ scroller, count, cursor, caught, listKey, render, empty, children, onShown }: Props) {
+export function VList({ scroller, count, cursor, caught, listKey, render, apart = -1, empty, children, onShown }: Props) {
   const inner = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLDivElement>(null);
   const live = useRef<HTMLDivElement>(null);
@@ -90,18 +92,18 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
   const first = Math.max(0, Math.floor(scrollTop / step) - OVERSCAN);
   const last = Math.min(count, Math.ceil((scrollTop + box.height) / step) + OVERSCAN);
   useEffect(() => onShown?.(last), [last, count, onShown]);
-  // The keys are read by the page and the list never has focus, so a screen reader is told where the cursor is:
+  // The keys are read by the page, so the list often does not have focus, and a screen reader is told where the cursor is:
   // by the listbox's active row for a reader that does have focus on it, and by a live region for the rest.
   // Only an attribute and a line of text change; nothing renders again.
   const tell = useCallback(() => {
-    const [outer, status] = [scroller.current, live.current];
-    if (!outer || !status) return;
-    const row = count > 0 ? outer.querySelector(`[data-i="${cursor}"]`) : null;
-    if (row?.id) outer.setAttribute("aria-activedescendant", row.id);
-    else outer.removeAttribute("aria-activedescendant");
+    const [box, status] = [inner.current, live.current];
+    if (!box || !status) return;
+    const row = count > 0 ? box.querySelector(`[data-i="${cursor}"]`) : null;
+    if (row?.id) box.setAttribute("aria-activedescendant", row.id);
+    else box.removeAttribute("aria-activedescendant");
     // With focus on the listbox the reader follows the active row itself: saying it here too would be heard twice.
-    status.textContent = row && document.activeElement !== outer ? (row.getAttribute("aria-label") ?? "") : "";
-  }, [cursor, count, scroller]);
+    status.textContent = row && document.activeElement !== box ? (row.getAttribute("aria-label") ?? "") : "";
+  }, [cursor, count, apart]);
   useLayoutEffect(tell, [tell, listKey, caught]);
   // A click moves the cursor first and focus after: the line said for the first is taken back, and given again when focus leaves.
   // The listeners are put on once and call the latest `tell`: a focus that lands between a render and the effect that
@@ -109,29 +111,36 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
   const latest = useRef(tell);
   latest.current = tell;
   useEffect(() => {
-    const outer = scroller.current;
+    const box = inner.current;
     const told = () => latest.current();
-    outer?.addEventListener("focus", told);
-    outer?.addEventListener("blur", told);
+    box?.addEventListener("focus", told);
+    box?.addEventListener("blur", told);
     return () => {
-      outer?.removeEventListener("focus", told);
-      outer?.removeEventListener("blur", told);
+      box?.removeEventListener("focus", told);
+      box?.removeEventListener("blur", told);
     };
-  }, [scroller]);
+  }, []);
   const cells: ComponentChildren[] = [];
-  for (let index = first; index < last; index++) {
-    cells.push(render(index, { top: index * step, left: 0, width: box.width, height: step }));
-  }
+  const draw = (index: number) => {
+    if (index !== apart) cells.push(render(index, { top: index * step, left: 0, width: box.width, height: step }));
+  };
+  for (let index = first; index < last; index++) draw(index);
   // The cursor's row stays in the page when a wheel or a touch scrolls it away, so the active row always exists.
-  if (cursor < count && (cursor < first || cursor >= last)) cells.push(render(cursor, { top: cursor * step, left: 0, width: box.width, height: step }));
+  if (cursor < count && (cursor < first || cursor >= last)) draw(cursor);
+  const held = apart >= 0 && apart < count;
+  const listed = count - (held ? 1 : 0);
 
   return (
     <Fragment>
-      <div class="list relative min-h-0 flex-1 overflow-auto overscroll-contain" ref={scroller} tabIndex={-1} role="listbox" aria-label="Files">
+      <div class="list relative min-h-0 flex-1 overflow-auto overscroll-contain" ref={scroller}>
         {/* A row's height, as the page draws it: see `pageOf` in app.tsx. */}
         <div class="probe pointer-events-none invisible absolute h-(--row-h) w-0" ref={probe} aria-hidden="true" />
         {empty}
-        <div class="rows relative" ref={inner} style={{ height: `${height}px` }}>
+        {held && <div class="absolute inset-x-0 top-0">{render(apart, { top: apart * step, left: 0, width: box.width, height: step })}</div>}
+        {/* The listbox holds the rows and nothing else: the text of an empty list and the README are beside it, in the same scroll.
+            With no row there is no listbox, as in the palette: a list with no option tells a screen reader nothing.
+            Tab stops on it, so a keyboard comes to the rows in the order of the page. Its ring is drawn on the scroll round it: see app.css. */}
+        <div class="rows relative" ref={inner} tabIndex={listed ? 0 : -1} role={listed ? "listbox" : undefined} aria-label={listed ? "Files" : undefined} style={{ height: `${height}px` }}>
           {cells}
         </div>
         {children}

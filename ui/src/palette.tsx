@@ -9,6 +9,7 @@ import { type Answer, holdBack, took, waiting } from "./find";
 import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
 import { SCRIM } from "./look";
+import { UNREACHED, useDown } from "./reach";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
 import { pick } from "./upload";
 import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
@@ -183,10 +184,13 @@ export function Palette() {
   const [recent, setRecent] = useState<Changed[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const down = useDown();
 
   // The nested list that is up, with the top list's input and highlight to go back to.
   const [nested, setNested] = useState<{ menu: Menu; value: string; selected: number } | null>(null);
   const chosen = useRef(false);
+  // True once a row was picked: then the pick says where the focus goes, not the palette.
+  const left = useRef(false);
   const menu = nested?.menu;
 
   // Inside a nested list the input only filters that list.
@@ -196,9 +200,17 @@ export function Palette() {
   const asked = searching ? query : "";
 
   // Focused as it is drawn, not after the paint: a key typed right after the one that opened the palette is its own.
+  // Closed with Escape, a click outside or the key that opened it, the palette gives the focus back to what had it, as
+  // the "Find anything" button. Not when the focus has gone somewhere else meanwhile.
   useLayoutEffect(() => {
+    const before = document.activeElement;
     input.current?.focus();
     input.current?.select();
+    return () => {
+      const at = document.activeElement;
+      const loose = !at || at === document.body || at === input.current || list.current?.contains(at);
+      if (!left.current && loose && before instanceof HTMLElement && before.isConnected) before.focus();
+    };
   }, []);
 
   useEffect(() => {
@@ -208,7 +220,8 @@ export function Palette() {
     // Asked again when the first walk ends: until then the newest files are those it has read so far.
   }, [found?.ready]);
 
-  // An empty query still asks once, for the count of indexed entries shown in the footer.
+  // An empty query still asks once, for the count of indexed entries shown in the footer. A query that okfs did not
+  // answer is asked again when okfs is heard from, so its matches come with no new key.
   useEffect(() => {
     const abort = new AbortController();
     const timer = setTimeout(
@@ -222,7 +235,7 @@ export function Palette() {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [asked]);
+  }, [asked, down]);
 
   // The server searches what its first walk has found so far: ask again while it goes on, for the count and the matches.
   useEffect(() => {
@@ -245,8 +258,12 @@ export function Palette() {
     if (query) matched.sort((a, b) => b.score - a.score);
     return matched;
   };
+  // The query typed has no answer and okfs cannot be reached: the list says that, in place of the last query's rows.
+  const lost = searching && down !== null && waiting(asked, answer);
   let rows: Row[];
-  if (searching) {
+  if (lost) {
+    rows = [];
+  } else if (searching) {
     rows = (found?.hits ?? []).map((hit) => ({ hit }));
     // The way to every match, below the best ones: see `Store.find`.
     if (found?.total) rows.push({ all: true });
@@ -298,6 +315,7 @@ export function Palette() {
   const pick = (index: number) => {
     const row = rows[index];
     if (!row) return;
+    if (!("command" in row && "menu" in row.command)) left.current = true;
     if ("command" in row) {
       const { command } = row;
       if ("menu" in command) return enter(command.menu());
@@ -316,6 +334,8 @@ export function Palette() {
   // query's, and the first of them need not match what was typed.
   const [entered, setEntered] = useState(false);
   useEffect(() => {
+    // An Enter that okfs never answered is dropped: its answer may land much later, when okfs is back.
+    if (entered && lost) return setEntered(false);
     if (!entered || waiting(asked, answer)) return;
     setEntered(false);
     pick(at);
@@ -326,7 +346,7 @@ export function Palette() {
     if (key === "ArrowDown" || (ctrlKey && key === "n")) setSelected(Math.min(at + 1, rows.length - 1));
     else if (key === "ArrowUp" || (ctrlKey && key === "p")) setSelected(Math.max(at - 1, 0));
     else if (key === "Enter" && (ctrlKey || event.metaKey) && searching) store.leave(() => store.find(query));
-    else if (key === "Enter" && searching && waiting(asked, answer)) setEntered(true);
+    else if (key === "Enter" && searching && waiting(asked, answer)) setEntered(!lost);
     else if (key === "Enter") pick(at);
     else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);
@@ -343,7 +363,15 @@ export function Palette() {
   const pending = searching && waiting(asked, answer);
 
   return (
-    <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setPalette(false)}>
+    <div
+      class={SCRIM}
+      onPointerDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        // The press would move the focus to the page after the palette gave it back.
+        event.preventDefault();
+        store.setPalette(false);
+      }}
+    >
       <div class="flex max-h-[min(70vh,560px)] w-[min(620px,100%)] flex-col overflow-hidden rounded-lg bg-surface shadow" role="dialog" aria-label={menu ? menu.title : "Find anything"}>
         <div class="flex h-[calc(48px*var(--density))] flex-none items-center gap-2.5 border-b border-b-line px-3.5 text-faint">
           {menu ? (
@@ -379,6 +407,7 @@ export function Palette() {
           <kbd class="pointer-coarse:hidden">esc</kbd>
         </div>
         <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list} id="palette-list" role={rows.length ? "listbox" : undefined} aria-label={rows.length ? (menu ? menu.title : "Results") : undefined} aria-owns={allAt >= 0 ? "palette-row-all" : undefined}>
+          {lost && <div class="px-3 py-7 text-center text-faint">{UNREACHED[down]}</div>}
           {rows.length === 0 && !pending && <div class="px-3 py-7 text-center text-faint">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
             if ("all" in row) return null;

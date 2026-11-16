@@ -102,7 +102,8 @@ export function FolderBar({
   return (
     <div class={inList ? `${BAR} phone:hidden` : BAR} onMouseDown={keepFocus}>
       {!missing && <KindIcon kind="folder" />}
-      <span class={BAR_NAME}>{name}</span>
+      {/* The main list's folder is what the page is about: its name is the page's heading. */}
+      {inList ? <h1 class={BAR_NAME}>{name}</h1> : <span class={BAR_NAME}>{name}</span>}
       <span class={BAR_FACTS} title={mtime === undefined ? undefined : fmt.abs(mtime)}>
         {facts.join(" · ")}
       </span>
@@ -408,7 +409,8 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           <Icon name="left" />
         </button>
         <KindIcon kind={file.kind} />
-        <span class={BAR_NAME}>{file.name}</span>
+        {/* A file at the full width hides the list, and its name is the page's heading then. */}
+        {s.open ? <h1 class={BAR_NAME}>{file.name}</h1> : <span class={BAR_NAME}>{file.name}</span>}
         <span class={BAR_FACTS}>{[...learned, fmt.size(file.size), fmt.abs(file.mtime)].join(" · ")}</span>
         <span class={`num px-1 text-xs whitespace-nowrap text-faint ${OPEN_ONLY} phone:viewing:hidden`}>
           {files.indexOf(file) + 1} / {files.length}
@@ -420,7 +422,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
         <button class={`btn ${BAR_BTN} ${OPEN_ONLY} phone:viewing:hidden`} aria-label="Next file" onClick={() => store.step(1)}>
           <Icon name="down" />
         </button>
-        {hasSource(file) && (
+        {hasSource(file) && file.size > 0 && (
           <button class={`btn ${BAR_BTN}`} aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw(file)}>
             <Icon name="code" />
           </button>

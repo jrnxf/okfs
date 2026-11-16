@@ -14,15 +14,15 @@ import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
 import { Prose, lookAhead, pagesAhead } from "./preview";
-import { NEEDS_KEY, NOT_ANSWERING, useDown } from "./reach";
+import { UNREACHED, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
 import { DENIED_FOLDER, EMPTY_FOLDER, FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
 import { slots } from "./slots";
-import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, refusedName, store } from "./store";
+import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, meantName, refusedName, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { drop, pick, uploads } from "./upload";
-import { rowId, rowName } from "./rows";
+import { ageCell, rowId, rowName, sizeCell } from "./rows";
 import { type Cell, VList } from "./vlist";
 import { ClashDialog, NameDialog, Tray } from "./write-ui";
 import { ContextMenu, Toast } from "./menu";
@@ -217,7 +217,8 @@ function RenameField({ entry }: { entry: Entry }) {
     const dot = entry.dir ? -1 : entry.name.lastIndexOf(".");
     input.setSelectionRange(0, dot > 0 ? dot : entry.name.length);
   }, [entry.path]);
-  const live = value === entry.name ? null : refusedName(value, s.all, entry.name);
+  const meant = s.renaming?.fresh ? meantName(value.trim(), entry.name) : value;
+  const live = meant === entry.name ? null : refusedName(meant, s.all, entry.name);
   const said = live ?? error;
   return (
     <span class="relative block w-full min-w-0">
@@ -263,14 +264,8 @@ function pageOf(list: HTMLElement | null): number {
   return Math.max(1, Math.floor(list.clientHeight / row) - 1);
 }
 
-/** The keys the foot of the page hints at. */
-const HINTS = "items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
-
-/** What the foot of the page says for each reason okfs cannot be reached. */
-const UNREACHED = {
-  [NOT_ANSWERING]: `${NOT_ANSWERING}. Retrying…`,
-  [NEEDS_KEY]: `${NEEDS_KEY}: open the address okfs printed`,
-};
+/** The keys the foot of the page hints at. The 3px pad shows the focus ring of the one that is a button. */
+const HINTS = "-m-[3px] p-[3px] items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
 
 /**
  * A quiet word at the foot of the page: that okfs is not answering or refuses the key, for as long as it does, or
@@ -340,7 +335,7 @@ export function App() {
   const cut = slots();
 
   const scroller = useRef<HTMLDivElement>(null);
-  const main = useRef<HTMLDivElement>(null);
+  const main = useRef<HTMLElement>(null);
   // Drawn with the change, before the panes are measured for the slide: a frame later, the slide would start from
   // the layout of a file that no longer has the full width, or not yet has it.
   useLayoutEffect(() => {
@@ -692,14 +687,17 @@ export function App() {
     const chosen = s.picked.sel.has(entry.path);
     const renaming = s.renaming?.path === entry.path;
     const menued = s.menu?.target.kind === "entries" && s.menu.target.entries.length === 1 && s.menu.target.entries[0]?.path === entry.path;
-    const marks = `${chosen ? " bg-accent-soft" : ""}${picking && on && !s.selecting ? " shadow-[inset_3px_0_0_var(--accent)]" : ""}${menued ? " outline-[1.5px] outline-accent -outline-offset-[1.5px] rounded" : ""}`;
+    const marks = `${renaming ? " data-renaming:bg-accent-soft data-renaming:shadow-[inset_3px_0_0_var(--accent)]" : ""}${chosen ? " bg-accent-soft" : ""}${picking && on && !s.selecting ? " shadow-[inset_3px_0_0_var(--accent)]" : ""}${menued ? " outline-[1.5px] outline-accent -outline-offset-[1.5px] rounded" : ""}`;
     return (
       <div
         class={`${ROW} ${ROW_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}${entry.dir && uploads.target === entry.path ? ` ${DROP_ROW}` : ""}${marks}`}
         id={rowId(index)}
-        role="option"
-        aria-label={rowName(entry)}
-        aria-selected={on && !picking}
+        // While its name is typed the row holds a field, and an option may hold no control: it is drawn outside the
+        // listbox then (see `apart` in vlist.tsx), with the cursor's look by its own mark, and the field names it.
+        role={renaming ? undefined : "option"}
+        aria-label={renaming ? undefined : rowName(entry)}
+        aria-selected={renaming ? undefined : on && !picking}
+        data-renaming={renaming ? "" : undefined}
         data-i={index}
         data-cursor={on ? "" : undefined}
         data-dir={entry.dir ? "" : undefined}
@@ -724,9 +722,11 @@ export function App() {
             <b class={nameWeight(entry.dir)}>{entry.name}</b>
           </span>
         )}
-        <span class={SIZE}>{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
-        <span class={AGE} title={fmt.abs(entry.mtime)}>
-          {fmt.rel(entry.mtime)}
+        {/* Each cell is its own word to a screen reader, as rowName says them: a grid draws no space between them. */}
+        {" "}
+        <span class={SIZE}>{sizeCell(entry)}</span>{" "}
+        <span class={AGE} title={entry.mtime ? fmt.abs(entry.mtime) : undefined}>
+          {ageCell(entry)}
         </span>
       </div>
     );
@@ -768,9 +768,9 @@ export function App() {
         <TrailButton />
         <Crumbs />
         <div class="flex flex-none items-center gap-1" onMouseDown={(event) => event.preventDefault()}>
-          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto ${TOOL}`} aria-label="Find anything" onClick={() => store.setPalette(true)}>
+          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto ${TOOL}`} aria-label={`Find anything, ${MOD} K`} onClick={() => store.setPalette(true)}>
             <Icon name="search" />
-            <span class="flex-1 text-left phone:hidden">Find anything</span>
+            <span class="flex-1 text-left phone:hidden">Find anything</span>{" "}
             <kbd class="phone:hidden">{MOD} K</kbd>
           </button>
           {/* A phone has no folder bar above the list to hold these, and a tap on a folder goes in. */}
@@ -827,7 +827,7 @@ export function App() {
           html={config.header}
         />
       )}
-      <div
+      <main
         class="main relative grid min-h-0 grid-cols-[repeat(var(--slots,4),minmax(0,1fr))] overflow-clip viewing:grid-cols-[minmax(0,1fr)] phone:grid-cols-[minmax(0,1fr)]"
         ref={main}
         style={`--slots: ${cut}`}
@@ -918,6 +918,7 @@ export function App() {
             caught={s.caught}
             listKey={finding ? `find\n${s.matches?.q}\n${s.matches?.sort.key}${s.matches?.sort.rev}` : `${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
             render={renderCell}
+            apart={!finding && s.renaming ? s.entries.findIndex((entry) => entry.path === s.renaming?.path) : undefined}
             empty={finding ? <MatchesEmpty /> : <Empty />}
             onShown={finding ? (last) => store.more(last) : undefined}
           >
@@ -935,7 +936,7 @@ export function App() {
         {(!finding || wide) && <Side slots={finding ? cut - 1 : cut} matches={finding} />}
           </>
         )}
-      </div>
+      </main>
       <footer
         class={`flex h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
       >
@@ -1035,9 +1036,9 @@ export function App() {
                 <span>
                   <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
                 </span>
-                <span>
+                <button class="-mx-1 rounded px-1 text-muted hover:text-fg" aria-haspopup="dialog" onClick={() => store.setHelp(true)}>
                   <kbd>?</kbd> keys
-                </span>
+                </button>
               </>
             )}
           </span>

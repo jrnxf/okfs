@@ -1,6 +1,9 @@
 // What a screen reader is told: where the cursor is in the list and the palette, and an axe pass over both.
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
+import { type Served, serve } from "./serve";
 import { expect, test } from "./test";
 
 const list = (page: Page) => page.locator('[role="listbox"][aria-label="Files"]');
@@ -44,6 +47,21 @@ test("a click puts focus on the list and the live region stands down", async ({ 
   await page.getByRole("option", { name: /^photo-05\.png/ }).click();
   await expect(cursorName(page)).toHaveText("photo-05.png");
   await expect.poll(() => announced(page)).toMatchObject({ ...named("photo-05.png"), focused: true, said: "" });
+});
+
+test("Tab stops on the list after the column heads, and the keys move its cursor from there", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  await page.getByRole("button", { name: "Mod." }).focus();
+  await page.keyboard.press("Tab");
+  await expect(list(page)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(cursorName(page)).toHaveText("photo-01.png");
+  await expect.poll(() => announced(page)).toMatchObject({ ...named("photo-01.png"), focused: true, said: "" });
+  // The ring goes round the pane that scrolls the rows, so its four sides show however long the list is.
+  await expect(page.locator(".list").filter({ has: list(page) })).toHaveCSS("outline-style", "solid");
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "Mod." })).toBeFocused();
 });
 
 test("the active row survives a sort and a filter", async ({ page, okfs }) => {
@@ -105,6 +123,30 @@ test("the palette's active option exists after every arrow key, the show-all row
   await expect(page.locator("#palette-row-all")).toHaveCount(1);
 });
 
+test("the palette gives the focus back to what opened it when it closes with no pick", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  const opener = page.getByRole("button", { name: "Find anything" });
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(palette(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(palette(page)).toBeHidden();
+  await expect(opener).toBeFocused();
+  // A click outside closes it too, and the press does not take the focus to the page.
+  await page.keyboard.press("Enter");
+  await expect(palette(page)).toBeVisible();
+  await page.mouse.click(4, 4);
+  await expect(palette(page)).toBeHidden();
+  await expect(opener).toBeFocused();
+  // Opened from the list with its key, it gives the focus back to the list.
+  await list(page).focus();
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(palette(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list(page)).toBeFocused();
+});
+
 test("the palette with nothing found names no active option", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/`);
   await page.keyboard.press("Control+k");
@@ -122,11 +164,7 @@ test("the palette with nothing found names no active option", async ({ page, okf
  * widget's wiring. Everything else axe checks is held at zero.
  */
 const KNOWN = [
-  "color-contrast", // the --faint text token is 3.5:1 on the light surface
-  "label-content-name-mismatch", // a row's name adds its kind, which is shown only as an icon
-  "landmark-one-main",
-  "page-has-heading-one",
-  "region", // the list and the folder bar sit outside a landmark
+  "color-contrast", // text on --accent is held at 3:1, and the ported themes keep their upstream accent and syntax colors
 ];
 
 const brief = (v: { id: string; help: string; nodes: { target: unknown[] }[] }) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`;
@@ -136,6 +174,74 @@ test("axe finds nothing on the main view", async ({ page, okfs }) => {
   await expect(cursorName(page)).toBeVisible();
   const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
   expect(violations.map(brief)).toEqual([]);
+});
+
+test("the list sits in the main landmark, and the heading names the folder, or the file that is open", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursorName(page)).toBeVisible();
+  await expect(page.getByRole("main").getByRole("listbox", { name: "Files" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(okfs.root.split("/").pop() ?? "");
+  await page.goto(`${okfs.origin}/main.rs`);
+  await expect(page.locator(".code")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("main.rs");
+});
+
+test("the list holds rows only: a README, an empty folder, a missing address and a filter with no match pass axe", async ({ page, okfs }) => {
+  const scratch = join(okfs.root, "listed");
+  mkdirSync(join(scratch, "empty"), { recursive: true });
+  writeFileSync(join(scratch, "README.md"), "# About\n\nA [link](https://example.com).\n");
+  try {
+    const clean = async () => {
+      const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
+      expect(violations.map(brief)).toEqual([]);
+    };
+    await page.goto(`${okfs.origin}/listed/`);
+    await expect(page.getByRole("heading", { name: "About" })).toBeVisible();
+    await expect(list(page).locator(":scope > :not([role=option])")).toHaveCount(0);
+    await clean();
+    await page.keyboard.press("/");
+    await page.keyboard.type("zzqq");
+    await expect(page.getByText("No name contains")).toBeVisible();
+    await clean();
+    await page.goto(`${okfs.origin}/listed/empty/`);
+    await expect(page.locator(".list").getByText("This folder is empty")).toBeVisible();
+    await clean();
+    await page.goto(`${okfs.origin}/listed/gone/`);
+    await expect(page.getByText("Nothing at this address")).toBeVisible();
+    await clean();
+  } finally {
+    rmSync(scratch, { recursive: true });
+  }
+});
+
+/** Each built-in theme, by the id its file gives it. */
+const THEMES = readdirSync(resolve(import.meta.dirname, "../../themes")).map((file) => file.replace(/\.css$/, ""));
+
+test("faint text reaches 4.5:1 in every built-in theme, light and dark", async ({ page, okfs }) => {
+  const faintFails: string[] = [];
+  for (const theme of THEMES) {
+    for (const scheme of ["light", "dark"]) {
+      // A code file has faint line numbers and a faint count in its bar, and a filter with no match a faint hint.
+      for (const [address, keys] of [["/main.rs", ""], ["/", "/zzqq"]] as const) {
+        await page.goto(`${okfs.origin}${address}?theme=${theme}&scheme=${scheme}`);
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+        if (keys) {
+          await expect(cursorName(page)).toBeVisible();
+          await page.keyboard.type(keys);
+          await expect(page.getByText("No name contains")).toBeVisible();
+        } else {
+          await expect(page.locator(".code")).toBeVisible();
+        }
+        const faint = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--faint").trim().toLowerCase());
+        const { violations } = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+        for (const node of violations.flatMap((v) => v.nodes)) {
+          const data = node.any[0]?.data as { fgColor?: string; contrastRatio?: number } | undefined;
+          if (data?.fgColor === faint) faintFails.push(`${theme} ${scheme} ${address}: ${data.contrastRatio}:1 at ${node.target.join(" ")}`);
+        }
+      }
+    }
+  }
+  expect(faintFails).toEqual([]);
 });
 
 test("axe finds nothing on the open palette", async ({ page, okfs }) => {
@@ -155,12 +261,27 @@ test("Tab stays in the list of keys and does not walk the page behind it", async
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toBeFocused();
   await expect(help).toHaveAttribute("aria-modal", "true");
-  for (const key of ["Tab", "Tab", "Shift+Tab"]) {
+  const close = help.getByRole("button", { name: "Close" });
+  for (const [key, on] of [["Tab", close], ["Tab", help], ["Shift+Tab", close]] as const) {
     await page.keyboard.press(key);
-    await expect(help).toBeFocused();
+    await expect(on).toBeFocused();
   }
   await page.keyboard.press("Escape");
   await expect(help).toHaveCount(0);
+});
+
+test("the list of keys opens from the foot of the page and closes from its button", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursorName(page)).toBeVisible();
+  const open = page.getByRole("button", { name: "? keys" });
+  await open.click();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  const { violations } = await new AxeBuilder({ page }).include('[role="dialog"]').disableRules(KNOWN).analyze();
+  expect(violations.map(brief)).toEqual([]);
+  await help.getByRole("button", { name: "Close" }).click();
+  await expect(help).toHaveCount(0);
+  await expect(open).toBeFocused();
 });
 
 test("the row menu is named, takes the focus and tells which action the keys are on", async ({ page, okfs }) => {
@@ -188,12 +309,23 @@ test("the row menu is named, takes the focus and tells which action the keys are
   await expect(page).toHaveURL(/photo-00\.png/);
 });
 
+test("the row menu's note about what is off keeps each flag on one line", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  await page.keyboard.press("a");
+  const flags = page.getByRole("menu", { name: "photo-00.png" }).locator("code");
+  await expect(flags).toHaveText(["--allow-edit", "--allow-upload", "--allow-delete"]);
+  // A flag that wraps at its hyphen draws as two boxes, one on each line.
+  const lines = await flags.evaluateAll((codes) => codes.map((code) => code.getClientRects().length));
+  expect(lines).toEqual([1, 1, 1]);
+});
+
 test("the keys move into the list that opens beside a menu action, and Escape closes only that list", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/deep/`);
   await expect(cursorName(page)).toHaveText("deeper");
   const openMenu = async () => {
-    // The folder under the cursor has a list too, in the next column: the first is the folder on screen.
-    const box = await list(page).first().boundingBox();
+    // The empty space is under the rows, in the scroll that holds the listbox.
+    const box = await page.locator(".list").first().boundingBox();
     await page.mouse.click(box!.x + 60, box!.y + box!.height - 40, { button: "right" });
     await page.mouse.move(2, 2);
   };
@@ -225,4 +357,31 @@ test("the keys move into the list that opens beside a menu action, and Escape cl
   await expect(menu.getByRole("menuitem", { name: "Show hidden files" })).toBeVisible();
   await menu.getByRole("menuitem", { name: "Sort by" }).click();
   await expect(menu.getByRole("menuitemradio", { name: "Modified" })).toHaveAttribute("aria-checked", "true");
+});
+
+test.describe("with --allow-edit", () => {
+  let editable: Served;
+  test.beforeAll(async () => {
+    editable = await serve(["--allow-edit"]);
+  });
+  test.afterAll(() => editable.stop());
+
+  test("the rename field is not inside an option, and the renamed row is the active row again", async ({ page }) => {
+    await page.goto(editable.link);
+    await expect(cursorName(page)).toBeVisible();
+    for (let i = 0; i < 20 && (await cursorName(page).textContent()) !== "notes.md"; i++) await page.keyboard.press("ArrowDown");
+    await expect(cursorName(page)).toHaveText("notes.md");
+    await page.keyboard.press("F2");
+    const field = page.getByRole("textbox", { name: "New name for notes.md" });
+    await expect(field).toBeFocused();
+    // An option may hold no control: the row with the field is drawn beside the listbox while the name is typed.
+    await expect(list(page).getByRole("textbox")).toHaveCount(0);
+    const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
+    expect(violations.map(brief)).toEqual([]);
+    await page.keyboard.type("log");
+    await page.keyboard.press("Enter");
+    await expect(field).toHaveCount(0);
+    await expect(cursorName(page)).toHaveText("log.md");
+    expect(await announced(page)).toMatchObject(named("log.md"));
+  });
 });

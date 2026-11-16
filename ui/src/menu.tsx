@@ -389,7 +389,8 @@ export function ContextMenu() {
       {off.map((need, i) => (
         <Fragment key={need}>
           {i > 0 && ", "}
-          {OFF[need]} (<code class="font-mono">{FLAG[need]}</code>)
+          {/* A flag never breaks at its hyphens, and its brackets stay with it. */}
+          {OFF[need]} <span class="whitespace-nowrap">(<code class="font-mono">{FLAG[need]}</code>)</span>
         </Fragment>
       ))}
       .

@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { DeleteError } from "./api";
 import { config } from "./config";
 import * as fmt from "./fmt";
-import { KindIcon } from "./icons";
+import { Icon, KindIcon } from "./icons";
 import { ASK, ASK_BTN, ASK_DO, ASK_IN, DIALOG, DIALOG_HEAD, MENU_ROW, POP_IN, SCRIM } from "./look";
 import { DELETE_KEY, MOD } from "./palette";
 import { type Doomed, store } from "./store";
@@ -147,13 +147,14 @@ const keys = (): Key[] => [
         [["N"], "New folder in this folder"] satisfies Key,
       ]
     : []),
-  ...(config.delete ? [[[DELETE_KEY], config.trash ? "Move to the Trash" : "Delete the file or folder"] satisfies Key] : []),
+  ...(config.delete ? [[[DELETE_KEY, "del", ...(MOD === "⌘" ? ["⌘ ⌫"] : [])], config.trash ? "Move to the Trash" : "Delete the file or folder"] satisfies Key] : []),
   ...(config.trash ? [[[`${MOD} Z`], "Undo the last change while its note is up"] satisfies Key] : []),
   [["?"], "This list"],
 ];
 
 export function Help() {
   const card = useRef<HTMLDivElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
   // The list takes the focus, so the arrows, the page keys and Space scroll it when the window is too short for it.
   // The focus goes back to where it was when the list closes.
   useEffect(() => {
@@ -163,13 +164,13 @@ export function Help() {
       if (before instanceof HTMLElement && before.isConnected) before.focus();
     };
   }, []);
-  // The list holds no control, so Tab has nowhere to go: the focus stays on the list and never walks the page behind it.
+  // Tab goes between the list and its close button and never walks the page behind it.
   // On the document, as in the delete dialog, so it holds wherever the focus is.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       event.preventDefault();
-      card.current?.focus();
+      (document.activeElement === close.current ? card.current : close.current)?.focus();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -177,7 +178,12 @@ export function Help() {
   return (
     <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setHelp(false)}>
       <div class={`${DIALOG} px-5 py-4.5 outline-none`} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} ref={card}>
-        <h2 class={`mt-0 mb-2.5 ${DIALOG_HEAD}`}>Keyboard</h2>
+        <div class="mb-2.5 flex items-center justify-between gap-3">
+          <h2 class={`m-0 ${DIALOG_HEAD}`}>Keyboard</h2>
+          <button class="btn -my-1 -mr-2 px-1.5" aria-label="Close" title="Close (esc)" ref={close} onClick={() => store.setHelp(false)}>
+            <Icon name="close" />
+          </button>
+        </div>
         <dl class="m-0 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.75">
           {keys().map(([caps, what]) => (
             <>

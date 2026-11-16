@@ -38,6 +38,8 @@ okfs theme check ./mine.css  # check a file against the contract
 
 Visitors can switch between the built-in themes in the page, with `Theme` in the palette. Moving over a theme shows it and `Enter` chooses it. The choice is remembered per browser.
 
+The ported themes (all but `default`) keep the accent and syntax colors of their upstream palettes, so they look as their authors made them. In the light schemes some of these colors are below 4.5:1 as text, for example links and code in Rosé Pine, Everforest and Tokyo Night. Text in `--fg` and `--faint` reaches at least 4.5:1 in every built-in theme.
+
 ## Write one
 
 Copy a file from `themes/`, change the values and run `okfs --theme ./mine.css` to see it on your own files. Edits show on the next page load.
@@ -81,7 +83,7 @@ The rules, all enforced by `okfs theme check` and again when okfs loads a theme 
   | `--icon-set` | `line`, `solid` or `none` |
   | `--label-case` | `none` or `uppercase` |
 
-- `--bg`, `--surface`, `--fg`, `--faint`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` needs at least 4.5:1 against `--bg` and `--surface`, `--faint` at least 3:1 against `--bg`, and `--accent-fg` at least 3:1 against `--accent`.
+- `--bg`, `--surface`, `--fg`, `--faint`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` and `--faint` need at least 4.5:1 against `--bg` and `--surface`, and `--accent-fg` at least 3:1 against `--accent`.
 
 </details>
 

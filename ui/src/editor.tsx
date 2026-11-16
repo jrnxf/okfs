@@ -196,7 +196,8 @@ export function Editor({ file }: { file: Entry }) {
           <Icon name="left" />
         </button>
         <KindIcon kind={file.kind} />
-        <span class={BAR_NAME}>{file.name}</span>
+        {/* As in the file's own bar: at the full width the list is hidden, and the name is the page's heading. */}
+        {store.s.open ? <h1 class={BAR_NAME}>{file.name}</h1> : <span class={BAR_NAME}>{file.name}</span>}
         {changed > 0 ? (
           <span class={STATE}>
             <i class="size-1.75 flex-none rounded-[50%] bg-accent" title="Unsaved" />

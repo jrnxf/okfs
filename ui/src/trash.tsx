@@ -38,7 +38,7 @@ export function TrashList({ onMenu }: { onMenu: (event: MouseEvent, item: TrashI
     <>
       <div class={BAR}>
         <Icon name="bin" class="text-muted" />
-        <span class={BAR_NAME}>Trash</span>
+        <h1 class={BAR_NAME}>Trash</h1>
         <span class={BAR_FACTS}>
           {fmt.items(items.length)} · {fmt.size(bytes)} · each kept {trash?.days ?? 30} days, then deleted for good
         </span>

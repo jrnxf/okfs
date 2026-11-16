@@ -1322,6 +1322,8 @@ interface Shown {
 }
 
 function Kind({ entry, stamp, report, raw, wrap, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
+  // A file of no bytes has nothing to show of any kind, and is said to be empty, not shown as a blank pane.
+  if (entry.kind !== "folder" && entry.size === 0) return <Card entry={entry} line="This file is empty" />;
   // The bytes as they are, colored and never run: the same answer for a page, a drawing, a table.
   if (raw && hasSource(entry)) return <Text entry={entry} report={report} source wrap={wrap} />;
   switch (entry.kind) {
