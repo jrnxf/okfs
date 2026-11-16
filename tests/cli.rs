@@ -650,7 +650,7 @@ fn completions_and_the_manual_page_are_printed_for_packages() {
         );
         // The subcommands that the help shows are offered. The ones okfs runs itself are not.
         assert!(
-            text.contains("theme") && text.contains("completions"),
+            text.contains("check") && text.contains("completions"),
             "{shell}: {text}"
         );
         assert!(
