@@ -48,6 +48,21 @@ test("a click puts focus on the list and the live region stands down", async ({ 
   await expect.poll(() => announced(page)).toMatchObject({ ...named("photo-05.png"), focused: true, said: "" });
 });
 
+test("Tab stops on the list after the column heads, and the keys move its cursor from there", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  await page.getByRole("button", { name: "Mod." }).focus();
+  await page.keyboard.press("Tab");
+  await expect(list(page)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(cursorName(page)).toHaveText("photo-01.png");
+  await expect.poll(() => announced(page)).toMatchObject({ ...named("photo-01.png"), focused: true, said: "" });
+  // The ring goes round the pane that scrolls the rows, so its four sides show however long the list is.
+  await expect(page.locator(".list").filter({ has: list(page) })).toHaveCSS("outline-style", "solid");
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "Mod." })).toBeFocused();
+});
+
 test("the active row survives a sort and a filter", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/photos/`);
   // A key has rows to move over only once the listing is in.

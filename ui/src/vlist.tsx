@@ -90,7 +90,7 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
   const first = Math.max(0, Math.floor(scrollTop / step) - OVERSCAN);
   const last = Math.min(count, Math.ceil((scrollTop + box.height) / step) + OVERSCAN);
   useEffect(() => onShown?.(last), [last, count, onShown]);
-  // The keys are read by the page and the list never has focus, so a screen reader is told where the cursor is:
+  // The keys are read by the page, so the list often does not have focus, and a screen reader is told where the cursor is:
   // by the listbox's active row for a reader that does have focus on it, and by a live region for the rest.
   // Only an attribute and a line of text change; nothing renders again.
   const tell = useCallback(() => {
@@ -132,8 +132,9 @@ export function VList({ scroller, count, cursor, caught, listKey, render, empty,
         <div class="probe pointer-events-none invisible absolute h-(--row-h) w-0" ref={probe} aria-hidden="true" />
         {empty}
         {/* The listbox holds the rows and nothing else: the text of an empty list and the README are beside it, in the same scroll.
-            With no row there is no listbox, as in the palette: a list with no option tells a screen reader nothing. */}
-        <div class="rows relative" ref={inner} tabIndex={-1} role={count ? "listbox" : undefined} aria-label={count ? "Files" : undefined} style={{ height: `${height}px` }}>
+            With no row there is no listbox, as in the palette: a list with no option tells a screen reader nothing.
+            Tab stops on it, so a keyboard comes to the rows in the order of the page. Its ring is drawn on the scroll round it: see app.css. */}
+        <div class="rows relative" ref={inner} tabIndex={count ? 0 : -1} role={count ? "listbox" : undefined} aria-label={count ? "Files" : undefined} style={{ height: `${height}px` }}>
           {cells}
         </div>
         {children}
