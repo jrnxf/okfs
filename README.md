@@ -33,6 +33,8 @@ okfs --help                 # every flag, with examples
 
 okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the keys, and `Ctrl K` or `Cmd K` to find any file in the tree. Every flag also reads from an `OKFS_*` environment variable. See [docs/usage.md](docs/usage.md) for the flags, keys and stable addresses.
 
+An agent can show you a folder the same way. [skills/okfs](skills/okfs/SKILL.md) is a skill that tells it how, and `npx skills add jrnxf/okfs` installs it.
+
 ## Features
 
 - Previews for images, video, audio, PDF, Markdown, source code, CSV, JSON, zip files and HTML pages. Hold `j` and each file shows as the cursor passes it.
