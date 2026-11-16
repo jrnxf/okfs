@@ -106,7 +106,7 @@ export function Hero({ demo, failed, sub }: { demo?: Demo; failed: boolean; sub:
             </span>
             <span className="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span>
             <span>
-              Linux, macOS
+              Linux, macOS, Windows
             </span>
           </li>
           <li>
@@ -115,7 +115,7 @@ export function Hero({ demo, failed, sub }: { demo?: Demo; failed: boolean; sub:
             </span>
             <span className="min-w-5 flex-1 border-b [border-bottom-style:dotted] border-b-ink-2 [transform:translateY(-5px)]"></span>
             <span>
-              one binary, about 18 MB
+              one binary, 19 to 22 MB
             </span>
           </li>
           <li>
