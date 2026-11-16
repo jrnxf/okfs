@@ -2,7 +2,7 @@
 // file changes on disk meanwhile, and CodeMirror under them, fetched the first time a file is edited.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { type Want, WriteError, putFile, urls } from "./api";
+import { type Want, WriteError, putFile, tagOf, urls } from "./api";
 import type { Editing } from "./cm";
 import { config } from "./config";
 import * as fmt from "./fmt";
@@ -38,12 +38,6 @@ async function fetchText(path: string): Promise<Base> {
   const read = readText(new Uint8Array(await response.arrayBuffer()));
   if (!read) throw new Error("this file is not text okfs can edit");
   return { ...read, etag: response.headers.get("etag") ?? "" };
-}
-
-/** The tag of the file as it is on disk now, or `null` when it is gone. */
-async function tagOf(path: string): Promise<string | null> {
-  const response = await call(urls.raw(path), { method: "HEAD", cache: "no-store" });
-  return response.ok ? (response.headers.get("etag") ?? "") : null;
 }
 
 export function Editor({ file }: { file: Entry }) {

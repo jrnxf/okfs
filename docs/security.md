@@ -17,6 +17,7 @@ With `--allow-upload` or `--allow-edit`:
 - `--allow-upload` alone never replaces or changes a file.
 - A change is refused when the file changed since it was read. The check and the step that replaces the file are not split by another write from okfs, but a program outside okfs could still write in the moment between them.
 - Another website cannot make your browser write, and an HTML or SVG file in the folder cannot write to its neighbours, by the same rules as for deleting, below.
+- With `--allow-edit`, an HTML page in the preview can have okfs keep what its form controls show, in its own file and nowhere else: only the `checked`, `selected`, `open` and `value` attributes and a textarea's text, escaped so that they cannot add markup or script. A password field is never written. See [Pages that keep their own controls](writing.md#pages-that-keep-their-own-controls).
 - With `--allow-edit` the page's policy lets in style elements that carry a nonce made fresh for each page, which the editor needs. Nothing else in the policy changes.
 
 With `--allow-delete`:
