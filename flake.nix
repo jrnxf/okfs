@@ -40,7 +40,10 @@
               nativeBuildInputs = [ pkgs.bun ];
               dontConfigure = true;
               dontFixup = true;
+              # With no home in the sandbox, bun keeps its download cache in node_modules/.cache,
+              # whose files differ between systems. It goes in the build's temporary folder instead.
               buildPhase = ''
+                export BUN_INSTALL_CACHE_DIR=$TMPDIR/bun-cache
                 bun install --frozen-lockfile --omit=optional --ignore-scripts --no-progress
               '';
               installPhase = ''
@@ -48,7 +51,7 @@
               '';
               outputHashMode = "recursive";
               outputHashAlgo = "sha256";
-              outputHash = "sha256-TlKBMvg7wHIj6GXfsX4mNExPXQVQFUD674ei8T/b4t4=";
+              outputHash = "sha256-5m9/nitOBzLb5b/5c7MV1MQk5GLnadraSHmTpnfCrwg=";
             };
           in
           pkgs.rustPlatform.buildRustPackage {
