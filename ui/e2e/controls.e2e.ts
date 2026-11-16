@@ -30,7 +30,7 @@ ${SNIPPET}
 
 const COPY = `<!doctype html><button onclick="navigator.clipboard.writeText('copied text').then(() => (document.title = 'done'), (e) => (document.title = e.name))">Copy</button>`;
 
-const PAGES = { "list.html": PAGE, "outside.html": PAGE, "copy.html": COPY };
+const PAGES = { "list.html": PAGE, "outside.html": PAGE, "proxied.html": PAGE, "copy.html": COPY };
 
 let okfs: Served;
 test.beforeAll(async () => {
@@ -69,6 +69,26 @@ test("a box ticked, a field typed in and a section opened are kept in the page's
   await page.waitForTimeout(1000);
   expect(await frame.locator("body").evaluate(() => (window as unknown as { mark?: number }).mark)).toBe(1);
   await expect(frame.locator("#note")).toBeFocused();
+});
+
+test("behind a proxy that compresses, a page's own save does not load it again", async ({ page }) => {
+  // Caddy's encode adds the coding to the tag of each file it compresses: "tag" comes as "tag-zstd".
+  await page.route("**/raw/**", async (route) => {
+    const response = await route.fetch();
+    const headers = response.headers();
+    if (headers.etag) headers.etag = headers.etag.replace(/"$/, '-zstd"');
+    await route.fulfill({ response, headers });
+  });
+  const file = join(okfs.root, "proxied.html");
+  await open(page, okfs, "proxied.html");
+  const frame = page.frameLocator("iframe.pv-frame:not(.pv-ahead)");
+  await expect(frame.getByText("milk")).toBeVisible();
+  await frame.locator("body").evaluate(() => ((window as unknown as { mark: number }).mark = 1));
+
+  await frame.getByLabel("milk").check();
+  await expect.poll(() => readFileSync(file, "utf8")).toContain('id="milk" checked>');
+  await page.waitForTimeout(1000);
+  expect(await frame.locator("body").evaluate(() => (window as unknown as { mark?: number }).mark)).toBe(1);
 });
 
 test("a write from outside okfs still loads the page again", async ({ page }) => {
