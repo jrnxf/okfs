@@ -6,6 +6,6 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
     "typeRoots": ["../ui/node_modules/@types"]
   },
-  "include": ["src", "build.ts", "../ui/css.ts"],
+  "include": ["src", "build.ts", "comparison.ts", "../ui/css.ts"],
   "exclude": ["src/demo-boot.ts", "src/demo-main.tsx", "src/frame-address.ts", "src/frame-host.ts", "src/wait-for-host.ts"]
 }
