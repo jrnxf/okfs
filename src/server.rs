@@ -647,6 +647,10 @@ struct Listing {
     /// How many names in the folder are not text. They are not shown, and there is no address for them.
     #[serde(skip_serializing_if = "is_zero")]
     unreadable: usize,
+    /// The folder is there, but okfs has no permission to read what is in it. It is sent with no
+    /// entries, so the page can say why it shows none.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    denied: bool,
     readme: Option<Readme>,
     /// The listing of the first entry, when it is a folder and levels were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -684,7 +688,12 @@ fn list_folder(
     all: bool,
 ) -> Option<Listing> {
     let found = app.root.resolve(path).filter(|found| found.meta.is_dir())?;
-    let (mut seen, unreadable) = app.root.scan_counting(&found.abs).ok()?;
+    // A folder okfs may not read is still at its address: it is listed with nothing in it, and said so.
+    let (mut seen, unreadable, denied) = match app.root.scan_counting(&found.abs) {
+        Ok((seen, unreadable)) => (seen, unreadable, false),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => (Vec::new(), 0, true),
+        Err(_) => return None,
+    };
     let rules = app.index.rules_in(&found.rel);
     let before = seen.len();
     if !all {
@@ -762,6 +771,7 @@ fn list_folder(
         total,
         hidden,
         unreadable,
+        denied,
         readme,
         under,
     })

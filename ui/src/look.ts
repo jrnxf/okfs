@@ -52,8 +52,9 @@ export const MENU_ROW = "flex h-(--row-h) w-full items-center gap-2.5 rounded px
 /** A menu or a dialog over the page: it grows in from where it opens. */
 export const POP_IN = "transition-[opacity,transform] duration-150 ease-out starting:opacity-0 starting:[transform:scale(0.96)] motion-reduce:starting:[transform:none]";
 
-/** The backdrop behind a dialog, which holds it near the top of the window. */
-export const SCRIM = "fixed inset-0 z-50 grid [align-items:start] justify-items-center bg-scrim px-4 pt-[min(14vh,120px)] pb-4";
+/** The backdrop behind a dialog, which holds it near the top of the window. Its one row is as tall as the window
+ * has room, so a dialog can be told to stay inside it. */
+export const SCRIM = "fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)] [align-items:start] justify-items-center bg-scrim px-4 pt-[min(14vh,120px)] pb-4";
 
 /** What a list says when it has nothing to show, over the middle of it. */
 export const EMPTY = "absolute inset-0 grid place-content-center justify-items-center gap-1.5 p-6 text-center text-muted";
@@ -66,8 +67,9 @@ export const DROP_ROW = "bg-accent-soft rounded outline-[1.5px] outline-dashed o
 /** A list or a column that a drag of files is over, away from its folder rows. */
 export const DROP_PANE = "rounded-lg outline-[1.5px] outline-dashed outline-accent -outline-offset-4";
 
-/** The list of keys and the dialogs that ask: a card over the page. */
-export const DIALOG = "w-[min(420px,100%)] rounded-lg bg-surface shadow";
+/** The list of keys and the dialogs that ask: a card over the page. In a short window, or at a high zoom, it is as
+ * tall as the room under it and scrolls. */
+export const DIALOG = "max-h-full w-[min(420px,100%)] overflow-y-auto overscroll-contain rounded-lg bg-surface shadow";
 export const DIALOG_HEAD = "[font:var(--weight-strong)_var(--text)_var(--font-ui)]";
 
 /** A dialog that asks for a decision, and the backdrop it comes up over, fading in: they are rare. */

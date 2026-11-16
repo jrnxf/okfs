@@ -1,6 +1,11 @@
 // Moving through a folder and opening what is in it, as a visitor does with the keyboard.
+import { chmodSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./test";
+
+/** Longer than a pane takes to run its first effects after a load. */
+const SETTLED_MS = 500;
 
 const cursor = (page: Page) => page.locator('[role="listbox"] [data-cursor] b').last();
 
@@ -101,4 +106,78 @@ test("a picture at the top of the tree previews", async ({ page, okfs }) => {
   const picture = page.getByRole("img", { name: "poster.png" });
   await expect(picture).toBeVisible();
   await expect.poll(() => picture.evaluate(loaded)).toBe(true);
+});
+
+test("a folder okfs may not read says so, and is not called missing or empty", async ({ page, okfs }) => {
+  const locked = join(okfs.root, "locked");
+  mkdirSync(locked);
+  chmodSync(locked, 0o000);
+  try {
+    // Root reads any folder, and Windows has no such mode: there is nothing to see then.
+    const readable = (() => {
+      try {
+        readdirSync(locked);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    test.skip(readable, "this user can read a folder with no permissions");
+    await page.goto(`${okfs.origin}/locked/`);
+    const list = page.getByRole("listbox", { name: "Files" });
+    await expect(list.getByText("This folder could not be read")).toBeVisible();
+    await expect(list.getByText("Nothing at this address")).toHaveCount(0);
+    await expect(page.getByText("0 items")).toHaveCount(0);
+  } finally {
+    chmodSync(locked, 0o755);
+    rmSync(locked, { recursive: true });
+  }
+});
+
+test("a picture, a video and a PDF that cannot be shown say so and offer the file", async ({ page, okfs }) => {
+  const damaged = join(okfs.root, "damaged");
+  mkdirSync(damaged);
+  writeFileSync(join(damaged, "broken.png"), "not a picture");
+  writeFileSync(join(damaged, "broken.mp4"), "not a video");
+  writeFileSync(join(damaged, "broken.pdf"), "not a pdf");
+  try {
+    // The page is loaded once before: with its script at hand, a file can fail before the pane's first effects run.
+    // The card must still be there after them, so each check waits past them first.
+    await page.goto(`${okfs.origin}/`);
+    for (const [name, line] of [
+      ["broken.png", "This image could not be shown"],
+      ["broken.mp4", "This browser cannot play this file"],
+      ["broken.pdf", "This PDF could not be read"],
+    ] as const) {
+      await page.goto(`${okfs.origin}/damaged/${name}`);
+      await page.waitForTimeout(SETTLED_MS);
+      await expect(page.getByText(line)).toBeVisible();
+      await expect(page.locator(`a[download][href$="/damaged/${name}"]`).last()).toBeVisible();
+    }
+  } finally {
+    rmSync(damaged, { recursive: true });
+  }
+});
+
+test("the theme menu keeps the keys and the focus, and Esc gives the focus back to its button", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursor(page)).toHaveText("deep");
+  const button = page.getByRole("button", { name: "Theme" });
+  await button.focus();
+  await page.keyboard.press("Enter");
+  const menu = page.getByRole("dialog", { name: "Theme" });
+  await expect(menu.getByRole("button", { pressed: true }).first()).toBeFocused();
+  // Tab never leaves the menu: it goes around.
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Shift+Tab");
+  await expect(menu.getByRole("button").last()).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(menu.getByRole("button").first()).toBeFocused();
+  // An arrow moves in the menu, not in the list behind it.
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("button").nth(1)).toBeFocused();
+  await expect(cursor(page)).toHaveText("deep");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(button).toBeFocused();
 });

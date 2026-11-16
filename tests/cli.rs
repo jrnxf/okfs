@@ -263,11 +263,6 @@ fn beyond_loopback_only_a_link_with_the_key_gets_in() {
     );
 }
 
-/// A port nothing listens on right now.
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
 /// A folder to serve, and the cache folder beside it.
 fn folder() -> (TempDir, PathBuf, PathBuf) {
     let tmp = TempDir::new().unwrap();
@@ -313,11 +308,27 @@ fn refused(served: &Path, cache: &Path, vars: &[(&str, &str)], args: &[&str]) ->
 #[test]
 fn an_option_can_come_from_the_environment() {
     let (_tmp, served, cache) = folder();
-    let port = free_port();
+    // Hold the port the variable names, so okfs can only say that this port is busy. A port that is
+    // free now may be taken by another test before okfs binds it.
+    let held = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
     let mut command = okfs(&served, &cache, &[]);
-    command.env("OKFS_PORT", port.to_string()).env("OKFS_ASK_KEY", "true");
+    command
+        .env("OKFS_PORT", port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    // If okfs did not read the variable it would listen on another port and never end.
+    let mut child = command.spawn().unwrap();
+    let status = ended(&mut child, Duration::from_secs(10));
+    let _ = child.kill();
+    let output = child.wait_with_output().unwrap();
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(status.is_some_and(|status| !status.success()), "{error}");
+    assert!(error.contains(&format!("cannot listen on 127.0.0.1:{port}")), "{error}");
+
+    let mut command = okfs(&served, &cache, &["--port", "0"]);
+    command.env("OKFS_ASK_KEY", "true");
     let running = listening(command);
-    assert_eq!(running.port, port);
     assert!(running.key.is_some(), "{}", running.said);
 }
 
@@ -345,12 +356,11 @@ fn a_flag_beats_the_same_option_in_the_environment() {
     // before it printed an address: the test passes only when the flag won.
     let held = TcpListener::bind("127.0.0.1:0").unwrap();
     let from_env = held.local_addr().unwrap().port();
-    let from_flag = free_port();
-    assert_ne!(from_env, from_flag);
 
-    let mut command = okfs(&served, &cache, &["--port", &from_flag.to_string()]);
+    // The flag asks for any free port, so no port is named here that another test could take.
+    let mut command = okfs(&served, &cache, &["--port", "0"]);
     command.env("OKFS_PORT", from_env.to_string());
-    assert_eq!(listening(command).port, from_flag);
+    assert_ne!(listening(command).port, from_env);
 }
 
 #[test]
@@ -1154,4 +1164,22 @@ fn on_a_disk_with_no_exclusive_rename_moves_copies_and_the_trash_still_never_rep
         .collect();
     hidden.retain(|name| name != ".okfs-trash");
     assert!(hidden.is_empty(), "{hidden:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folder_okfs_may_not_read_is_refused_at_the_start_and_says_why() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = TempDir::new().unwrap();
+    let locked = tmp.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads any folder: there is nothing to refuse then.
+    if std::fs::read_dir(&locked).is_ok() {
+        return;
+    }
+    let (ended, error) = run(&["--no-open", "--port", "0", locked.to_str().unwrap()]);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!ended.success());
+    assert!(error.contains("okfs has no permission to read this folder"), "{error}");
 }

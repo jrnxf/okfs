@@ -62,6 +62,8 @@ export interface Entry {
 export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count" | "unlisted"> & {
   /** For good, past the Trash: the entry is on another disk than the Trash, or there is no Trash. */
   forever?: boolean;
+  /** The selected entries, this one among them, when the delete is asked for all of them. */
+  all?: Doomed[];
 };
 
 /** What a right click, a long press or `a` opened a menu on. */
@@ -200,6 +202,8 @@ export interface State {
   unlisted: number;
   /** Names in this folder that are not text, so okfs cannot show them. */
   unreadable: number;
+  /** The folder is there, but okfs has no permission to read what is in it. */
+  denied: boolean;
   palette: boolean;
   help: boolean;
   /** The matches are on screen in place of the folder's list. */
@@ -334,6 +338,7 @@ export class Store {
     bytes: 0,
     unlisted: 0,
     unreadable: 0,
+    denied: false,
     palette: false,
     help: false,
     finding: false,
@@ -588,6 +593,7 @@ export class Store {
     s.bytes = s.all.reduce((sum, entry) => sum + entry.size, 0);
     s.unlisted = listing.hidden ?? 0;
     s.unreadable = listing.unreadable ?? 0;
+    s.denied = listing.denied === true;
     s.readme = listing.readme;
     s.picked = stillIn(s.picked, s.all.map((entry) => entry.path));
   }
@@ -595,7 +601,7 @@ export class Store {
   /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
-    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, filter: "" });
+    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, denied: false, filter: "" });
   }
 
   /**
@@ -1152,6 +1158,10 @@ export class Store {
    * entry, or goes to the nearest one left. The choice is kept for this browser.
    */
   setHidden(on = !this.s.hidden): void {
+    // A folder with nothing to show would look as if the key did nothing. Dotfiles are not sent without
+    // `--hidden`, so the page cannot tell whether the folder holds one: it says what would show them.
+    if (on && !this.s.unlisted && this.s.status === "ready" && !this.s.denied && !this.s.matches && !this.s.trashView)
+      this.say(config.hidden ? "Nothing hidden in this folder" : "Nothing hidden here. Dotfiles need okfs --hidden");
     setShowsHidden(on);
     this.s.hidden = on;
     this.emit();
@@ -1359,10 +1369,11 @@ export class Store {
   }
 
   /**
-   * Deletes the open file, the selected entries or the entry under the cursor unless one is given. With a Trash, at
-   * once, with a way to undo it; without one, the delete dialog asks first.
+   * Deletes the open file, the selected entries or the entry under the cursor unless one is given. One of the
+   * selected entries stands for all of them. With a Trash, at once, with a way to undo it; without one, the delete
+   * dialog asks first.
    */
-  askDelete(doomed: Doomed | null = this.s.open ?? this.cur()): void {
+  askDelete(doomed: Doomed | null = this.s.open ?? this.pickedEntries()[0] ?? null): void {
     // A match is deleted from its own folder, where the list shows what is left.
     if (!config.delete || !doomed || this.s.finding) return;
     const picked = this.pickedEntries();
@@ -1372,7 +1383,7 @@ export class Store {
       return;
     }
     this.leave(() => {
-      this.s.doomed = doomed;
+      this.s.doomed = many ? { ...doomed, all: picked } : doomed;
     });
   }
 
@@ -1385,7 +1396,8 @@ export class Store {
   async remove(doomed: Doomed): Promise<void> {
     this.removing = true;
     try {
-      await this.removeNow(doomed);
+      if (doomed.all) await this.removeAll(doomed.all);
+      else await this.removeNow(doomed);
     } finally {
       this.removing = false;
       // What other programs changed meanwhile was left waiting.
@@ -1400,7 +1412,9 @@ export class Store {
     // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.
     const above = here ? await getJson<Listing>(urls.list(parentOf(doomed.path))).catch(() => null) : null;
     try {
-      got?.(await deleteEntry(doomed.path, doomed.forever === true || this.s.trash === null));
+      // Not inside `got?.(...)`: an optional call with no `got` skips its arguments, and so the delete.
+      const item = await deleteEntry(doomed.path, doomed.forever === true || this.s.trash === null);
+      got?.(item);
     } catch (error) {
       // Part of a folder may be gone all the same: the list, the pane and the dialog show what is there now.
       await this.showDir(s.path, { open: s.open?.name, listing: true, history: "none" }).catch(() => undefined);
@@ -1440,6 +1454,36 @@ export class Store {
       forgetAnswers();
       this.emit();
     }
+  }
+
+  /** Deletes the selected entries for good, one by one. A failure stops it, and is said over what is left. */
+  private async removeAll(entries: Doomed[]): Promise<void> {
+    const gone = new Set<string>();
+    let failed: string | null = null;
+    for (const entry of entries) {
+      try {
+        await deleteEntry(entry.path, true);
+        gone.add(entry.path);
+      } catch (error) {
+        failed = `${entry.name}: ${reasonOf(error)}`;
+        break;
+      }
+    }
+    this.s.doomed = null;
+    await this.showWithout(entries, gone);
+    if (failed) this.say(`${gone.size ? "Stopped part way" : "Not deleted"}: ${failed}`);
+  }
+
+  /** After a delete of the selected `entries`: no selection, and the list read again with the cursor beside them. */
+  private async showWithout(entries: Doomed[], gone: Set<string>): Promise<void> {
+    const { s } = this;
+    s.picked = NONE;
+    s.selecting = false;
+    const order = s.entries.map((entry) => entry.path);
+    const last = Math.max(...entries.map((entry) => order.indexOf(entry.path)));
+    const beside = s.entries.slice(last + 1).find((entry) => !gone.has(entry.path)) ?? [...s.entries.slice(0, last)].reverse().find((entry) => !gone.has(entry.path));
+    await this.showAgain(beside?.path);
+    forgetAnswers();
   }
 
   // Selecting rows: see pick.ts.
@@ -1846,14 +1890,7 @@ export class Store {
         break;
       }
     }
-    s.picked = NONE;
-    s.selecting = false;
-    const order = s.entries.map((entry) => entry.path);
-    const gone = new Set(items.map((item) => item.path));
-    const last = Math.max(...entries.map((entry) => order.indexOf(entry.path)));
-    const beside = s.entries.slice(last + 1).find((entry) => !gone.has(entry.path)) ?? [...s.entries.slice(0, last)].reverse().find((entry) => !gone.has(entry.path));
-    await this.showAgain(beside?.path);
-    forgetAnswers();
+    await this.showWithout(entries, new Set(items.map((item) => item.path)));
     if (failed) this.say(`Not moved to the Trash: ${failed}`);
     if (items.length) this.trashed(items, `${items.length} items`);
   }

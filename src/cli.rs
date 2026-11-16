@@ -397,6 +397,15 @@ fn should_open(no_open: bool, terminal: bool, ssh: bool) -> bool {
 fn serve(args: Serve) -> Result<(), String> {
     let root =
         Root::new(&args.path, args.hidden).map_err(|error| format!("cannot serve {}: {error}", args.path.display()))?;
+    // A folder that cannot be listed would start as a page with nothing in it.
+    if let Err(error) = std::fs::read_dir(&args.path)
+        && error.kind() == std::io::ErrorKind::PermissionDenied
+    {
+        return Err(format!(
+            "cannot serve {}: okfs has no permission to read this folder. Check its permissions, or serve another folder",
+            args.path.display()
+        ));
+    }
     let theme = if theme::built_in(&args.theme).is_some() {
         ThemeChoice::BuiltIn(args.theme.clone())
     } else if std::path::Path::new(&args.theme).is_file() {

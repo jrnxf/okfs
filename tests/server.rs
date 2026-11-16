@@ -1471,6 +1471,34 @@ async fn a_folder_reached_through_a_link_says_where_it_really_is() {
     assert_eq!(json(&app, "/api/list?path=sub/deep").await["real"], Value::Null);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_okfs_may_not_read_is_listed_as_denied_not_as_missing() {
+    use std::os::unix::fs::PermissionsExt;
+    let site = Site::new();
+    let locked = site.served.join("sub/deep");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads any folder: there is nothing to see then.
+    let refused = fs::read_dir(&locked).is_err();
+    let app = site.router();
+    let (response, _) = get(&app, "/api/list?path=sub/deep").await;
+    let listing = json(&app, "/api/list?path=sub/deep").await;
+    // As a column beside its parent, it says the same.
+    let levels = json(&app, "/api/list?path=sub&limit=40&depth=1").await;
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    if !refused {
+        return;
+    }
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(listing["denied"], true);
+    assert_eq!(listing["entries"], serde_json::json!([]));
+    assert_eq!(levels["denied"], Value::Null);
+    assert_eq!(levels["under"]["denied"], true);
+    // A folder that is not there is still not found.
+    let (response, _) = get(&app, "/api/list?path=sub/nowhere").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn search_finds_names_across_the_tree_and_follows_changes() {
     let site = Site::new();

@@ -36,6 +36,8 @@ export interface Listing {
   hidden?: number;
   /** How many names in it are not text, so okfs cannot show them. */
   unreadable?: number;
+  /** The folder is there, but okfs has no permission to read what is in it: it comes with no entries. */
+  denied?: boolean;
   readme: Readme | null;
   /** The listing of the entry followed, the first unless another was named, when levels were asked for and it is a folder. */
   under?: Listing;

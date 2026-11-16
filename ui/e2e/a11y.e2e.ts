@@ -147,3 +147,82 @@ test("axe finds nothing on the open palette", async ({ page, okfs }) => {
   const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
   expect(violations.map(brief)).toEqual([]);
 });
+
+test("Tab stays in the list of keys and does not walk the page behind it", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursorName(page)).toBeVisible();
+  await page.keyboard.press("?");
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeFocused();
+  await expect(help).toHaveAttribute("aria-modal", "true");
+  for (const key of ["Tab", "Tab", "Shift+Tab"]) {
+    await page.keyboard.press(key);
+    await expect(help).toBeFocused();
+  }
+  await page.keyboard.press("Escape");
+  await expect(help).toHaveCount(0);
+});
+
+test("the row menu is named, takes the focus and tells which action the keys are on", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  await page.keyboard.press("a");
+  const menu = page.getByRole("menu", { name: "photo-00.png" });
+  await expect(menu).toBeFocused();
+  const active = () => menu.evaluate((box) => document.getElementById(box.getAttribute("aria-activedescendant") ?? "")?.textContent ?? null);
+  const items = await menu.getByRole("menuitem").allTextContents();
+  await expect.poll(active).toBe(items[0]);
+  // j and k move as the arrows do, and Home and End go to the ends.
+  for (const [key, at] of [["ArrowDown", 1], ["j", 2], ["k", 1], ["End", items.length - 1], ["Home", 0]] as const) {
+    await page.keyboard.press(key);
+    await expect.poll(active).toBe(items[at]);
+  }
+  const { violations } = await new AxeBuilder({ page }).include('[role="menu"]').disableRules(KNOWN).analyze();
+  expect(violations.map(brief)).toEqual([]);
+  // The action is the one the highlight is on at the key press, however fast Enter follows the arrow.
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(active).toBe(items[1]);
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await expect(page).toHaveURL(/photo-00\.png/);
+});
+
+test("the keys move into the list that opens beside a menu action, and Escape closes only that list", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/deep/`);
+  await expect(cursorName(page)).toHaveText("deeper");
+  const openMenu = async () => {
+    // The folder under the cursor has a list too, in the next column: the first is the folder on screen.
+    const box = await list(page).first().boundingBox();
+    await page.mouse.click(box!.x + 60, box!.y + box!.height - 40, { button: "right" });
+    await page.mouse.move(2, 2);
+  };
+  await openMenu();
+  const menu = page.getByRole("menu", { name: "deep" });
+  await expect(menu).toBeFocused();
+  const active = () => menu.evaluate((box) => document.getElementById(box.getAttribute("aria-activedescendant") ?? "")?.textContent ?? null);
+  const items = await menu.getByRole("menuitem").allTextContents();
+  const sort = items.indexOf("Sort by");
+  for (let i = 0; i <= sort; i++) await page.keyboard.press("ArrowDown");
+  await expect.poll(active).toBe("Sort by");
+  // The right arrow opens the list with the keys on the ticked choice. Down moves in it, not in the menu behind.
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(active).toBe("Name");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(active).toBe("Modified");
+  const { violations } = await new AxeBuilder({ page }).include('[role="menu"]').disableRules(KNOWN).analyze();
+  expect(violations.map(brief)).toEqual([]);
+  // Escape goes one level back: the list closes and the menu stays.
+  await page.keyboard.press("Escape");
+  await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
+  await expect.poll(active).toBe("Sort by");
+  // Enter on a choice sets the order, however fast it follows the arrows, and does not run the next action of the menu.
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await openMenu();
+  await expect(menu.getByRole("menuitem", { name: "Show hidden files" })).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Sort by" }).click();
+  await expect(menu.getByRole("menuitemradio", { name: "Modified" })).toHaveAttribute("aria-checked", "true");
+});

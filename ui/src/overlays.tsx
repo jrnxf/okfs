@@ -25,8 +25,14 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
     const left = Math.max(8, Math.min(box.right - WIDTH, innerWidth - WIDTH - 8));
     const above = box.top > innerHeight / 2;
     el.style.left = `${left}px`;
-    if (above) el.style.bottom = `${innerHeight - box.top + 8}px`;
-    else el.style.top = `${box.bottom + 8}px`;
+    // It ends 8px short of the window's edge and scrolls, so a short window still reaches every theme.
+    if (above) {
+      el.style.bottom = `${innerHeight - box.top + 8}px`;
+      el.style.maxHeight = `${box.top - 16}px`;
+    } else {
+      el.style.top = `${box.bottom + 8}px`;
+      el.style.maxHeight = `calc(100dvh - ${box.bottom + 16}px)`;
+    }
     // It grows out of the button: from the button's middle, at the edge nearest it.
     el.style.transformOrigin = `${box.left + box.width / 2 - left}px ${above ? "100%" : "0"}`;
   }, [anchor]);
@@ -40,6 +46,37 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
     return () => document.removeEventListener("pointerdown", outside, true);
   }, [anchor, onClose]);
 
+  // The panel takes the focus when it opens and gives it back to its button when it closes. Opened with a key, the
+  // focus is on the scheme in use. Opened with a pointer, it is on the panel itself, which shows no ring.
+  // A click on another control closes the panel too: then the focus stays where the click put it.
+  useEffect(() => {
+    const el = pop.current;
+    ((anchor.matches(":focus-visible") && el?.querySelector<HTMLElement>('[aria-pressed="true"]')) || el)?.focus();
+    return () => {
+      const at = document.activeElement;
+      if (!at || at === document.body || el?.contains(at)) anchor.focus();
+    };
+  }, [anchor]);
+
+  // The keys are the panel's while it is up: none reaches the list behind it, and Tab stays inside.
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    event.stopPropagation();
+    const { key } = event;
+    const stops = [...(pop.current?.querySelectorAll<HTMLElement>("button") ?? [])];
+    const at = stops.indexOf(document.activeElement as HTMLElement);
+    const tab = key === "Tab" ? (event.shiftKey ? -1 : 1) : 0;
+    const by = tab || { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[key];
+    let to: HTMLElement | undefined;
+    if (key === "Escape") onClose();
+    else if (key === "Home") to = stops[0];
+    else if (key === "End") to = stops.at(-1);
+    else if (by !== undefined) to = stops[at < 0 ? (by > 0 ? 0 : stops.length - 1) : (at + by + stops.length) % stops.length];
+    else return;
+    event.preventDefault();
+    to?.focus();
+  };
+
   const dark = isDark();
   const then = (change: () => void) => () => {
     change();
@@ -47,7 +84,7 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
   };
   return (
     // It grows out of the button that opened it, which sets its origin. It is opened by a click, now and then.
-    <div class={`fixed z-60 w-[248px] rounded-lg bg-surface p-1.5 shadow ${POP_IN}`} role="dialog" aria-label="Theme" ref={pop}>
+    <div class={`fixed z-60 w-[248px] overflow-y-auto overscroll-contain rounded-lg bg-surface p-1.5 shadow outline-none ${POP_IN}`} role="dialog" aria-modal="true" aria-label="Theme" tabIndex={-1} onKeyDown={onKeyDown} ref={pop}>
       <div class="mb-1.5 grid auto-cols-[1fr] grid-flow-col gap-0.5 rounded bg-sunken p-0.5">
         {SCHEMES.map((scheme) => (
           <button
@@ -116,9 +153,30 @@ const keys = (): Key[] => [
 ];
 
 export function Help() {
+  const card = useRef<HTMLDivElement>(null);
+  // The list takes the focus, so the arrows, the page keys and Space scroll it when the window is too short for it.
+  // The focus goes back to where it was when the list closes.
+  useEffect(() => {
+    const before = document.activeElement;
+    card.current?.focus();
+    return () => {
+      if (before instanceof HTMLElement && before.isConnected) before.focus();
+    };
+  }, []);
+  // The list holds no control, so Tab has nowhere to go: the focus stays on the list and never walks the page behind it.
+  // On the document, as in the delete dialog, so it holds wherever the focus is.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      card.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   return (
     <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setHelp(false)}>
-      <div class={`${DIALOG} px-5 py-4.5`} role="dialog" aria-label="Keyboard shortcuts">
+      <div class={`${DIALOG} px-5 py-4.5 outline-none`} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} ref={card}>
         <h2 class={`mt-0 mb-2.5 ${DIALOG_HEAD}`}>Keyboard</h2>
         <dl class="m-0 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.75">
           {keys().map(([caps, what]) => (
@@ -177,9 +235,14 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
       setFailure(`${stopped}: ${error instanceof Error ? error.message : String(error)}.`);
     });
   };
-  const noun = doomed.link ? "link" : doomed.dir ? "folder" : "file";
+  // The selected entries are asked about together: each is named, and the button says how many go.
+  const all = doomed.all ?? [doomed];
+  const many = all.length > 1;
+  const noun = many ? fmt.items(all.length) : doomed.link ? "link" : doomed.dir ? "folder" : "file";
   let what = "This file will be removed.";
-  if (doomed.link) {
+  if (many) {
+    what = `These ${noun} will be removed${all.some((one) => one.dir && !one.link) ? ", each folder with everything in it" : ""}.`;
+  } else if (doomed.link) {
     what = `This is a link to a ${doomed.dir ? "folder" : "file"}. Only the link will be removed: what it points at stays as it is.`;
   } else if (doomed.dir) {
     // Hidden entries go with it whether or not they are shown, so they are counted.
@@ -201,11 +264,15 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
         aria-describedby="ask-what"
       >
         <h2 id="ask-title" class={`m-0 ${DIALOG_HEAD}`}>
-          {config.trash ? `Delete this ${noun} for good?` : `Delete this ${noun}?`}
+          {`Delete ${many ? "these" : "this"} ${noun}${config.trash ? " for good" : ""}?`}
         </h2>
-        <div class="flex max-h-[8.5em] gap-2.25 overflow-auto overscroll-contain rounded bg-sunken px-2.75 py-2.25 text-s wrap-anywhere">
-          <KindIcon kind={doomed.kind} class="mt-[0.14em]" />
-          <span class="num">/{doomed.path}</span>
+        <div class="grid max-h-[8.5em] gap-1 overflow-auto overscroll-contain rounded bg-sunken px-2.75 py-2.25 text-s wrap-anywhere">
+          {all.map((one) => (
+            <div key={one.path} class="flex gap-2.25">
+              <KindIcon kind={one.kind} class="mt-[0.14em]" />
+              <span class="num">/{one.path}</span>
+            </div>
+          ))}
         </div>
         <p id="ask-what" class="m-0 text-muted">
           {what} <b class="font-strong text-fg">There is no undo.</b>
