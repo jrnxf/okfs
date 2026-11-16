@@ -78,13 +78,14 @@ const LONG_PRESS = 480;
  * or else the column it is over, or else the folder on screen. `null` when nothing can be added there.
  */
 function dropTarget(target: EventTarget | null): string | null {
-  const here = store.addsTo();
+  const here = store.addsTo(true);
   if (here === null) return null;
   const el = target instanceof Element ? target : null;
   const row = el?.closest<HTMLElement>("[data-drop]");
   if (row?.dataset.drop !== undefined) return row.dataset.drop;
   const column = el?.closest<HTMLElement>("[data-level][data-pane]");
-  return column?.dataset.pane ?? here;
+  const into = column?.dataset.pane ?? here;
+  return store.locked(into) ? null : into;
 }
 
 /** The slots are cut from the window's width: see `slotsFor`. */
@@ -738,6 +739,8 @@ export function App() {
     (s.denied ? "not readable" : s.filter ? `${fmt.count(s.entries.length)} of ${fmt.count(total)}` : fmt.items(total)) +
     (s.unlisted ? ` · ${fmt.count(s.unlisted)} hidden` : "") +
     (s.unreadable ? ` · ${fmt.unreadable(s.unreadable)}` : "") +
+    // okfs may change files, but not here: the menu and the keys say why when asked.
+    (s.locked ? " · read only" : "") +
     // The size is of the files right here; a folder of folders has none to add up.
     `${s.all.some((entry) => !entry.dir) ? ` · ${fmt.size(s.bytes)}` : ""} · by ${SORT_LABEL[s.sort.key].toLowerCase()}`;
 
@@ -1073,7 +1076,7 @@ export function App() {
             <span>
               <kbd>space</kbd> select
             </span>
-            {config.edit && (
+            {config.edit && !s.locked && (
               <span>
                 <kbd>m</kbd> move
               </span>
@@ -1083,7 +1086,7 @@ export function App() {
                 <kbd>c</kbd> copy
               </span>
             )}
-            {config.delete && (
+            {config.delete && !s.locked && (
               <span>
                 <kbd>⇧</kbd>
                 <kbd>D</kbd> {s.trash ? "trash" : "delete"}
@@ -1097,7 +1100,7 @@ export function App() {
         {s.selecting && (
           // A phone's select mode: what to do with the ticked rows, in reach of a thumb.
           <span class="flex items-center gap-1 [&_.btn]:h-auto [&_.btn]:flex-col [&_.btn]:gap-0.5 [&_.btn]:px-2 [&_.btn]:py-1 [&_.btn]:text-xs [&_.ic]:size-4.5 [&_.ic]:text-fg">
-            {config.edit && (
+            {config.edit && !s.locked && (
               <button class="btn" disabled={!s.picked.sel.size} onClick={() => store.startPicking("move")}>
                 <Icon name="move" />
                 Move
@@ -1109,7 +1112,7 @@ export function App() {
                 Copy
               </button>
             )}
-            {config.delete && (
+            {config.delete && !s.locked && (
               <button class="btn" disabled={!s.picked.sel.size} onClick={() => store.askDelete(store.pickedEntries()[0] ?? null)}>
                 <Icon name="trash" />
                 {s.trash ? "Trash" : "Delete"}

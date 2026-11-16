@@ -38,6 +38,8 @@ export interface Listing {
   unreadable?: number;
   /** The folder is there, but okfs has no permission to read what is in it: it comes with no entries. */
   denied?: boolean;
+  /** okfs may change files, but not in this folder: the account it runs as may not write in it. */
+  locked?: boolean;
   readme: Readme | null;
   /** The listing of the entry followed, the first unless another was named, when levels were asked for and it is a folder. */
   under?: Listing;

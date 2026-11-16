@@ -1,6 +1,6 @@
 // With --allow-edit, a page in the preview keeps what its controls show in its own file, and is not loaded again
 // for it. The page uses the snippet from docs/writing.md, as a page someone writes would.
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { type Served, serve } from "./serve";
@@ -92,6 +92,27 @@ test("without --allow-edit nothing is written", async ({ page }) => {
     expect(readFileSync(file, "utf8")).toBe(PAGE);
   } finally {
     reader.stop();
+  }
+});
+
+test("in a folder okfs may not write in, the page says why and nothing is sent", async ({ page }) => {
+  const shut = join(okfs.root, "shut");
+  mkdirSync(shut);
+  writeFileSync(join(shut, "list.html"), PAGE);
+  chmodSync(shut, 0o555);
+  const puts: string[] = [];
+  page.on("request", (request) => void (request.method() === "PUT" && puts.push(request.url())));
+  try {
+    await open(page, okfs, "shut/list.html");
+    const frame = page.frameLocator("iframe.pv-frame:not(.pv-ahead)");
+    await frame.getByLabel("milk").check();
+    await expect(page.getByText("Not saved: the account okfs runs as cannot write in this folder")).toBeVisible();
+    await frame.getByLabel("eggs").uncheck();
+    await page.waitForTimeout(1000);
+    expect(puts).toEqual([]);
+    expect(readFileSync(join(shut, "list.html"), "utf8")).toBe(PAGE);
+  } finally {
+    chmodSync(shut, 0o755);
   }
 });
 
