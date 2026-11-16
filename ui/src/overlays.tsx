@@ -25,8 +25,14 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
     const left = Math.max(8, Math.min(box.right - WIDTH, innerWidth - WIDTH - 8));
     const above = box.top > innerHeight / 2;
     el.style.left = `${left}px`;
-    if (above) el.style.bottom = `${innerHeight - box.top + 8}px`;
-    else el.style.top = `${box.bottom + 8}px`;
+    // It ends 8px short of the window's edge and scrolls, so a short window still reaches every theme.
+    if (above) {
+      el.style.bottom = `${innerHeight - box.top + 8}px`;
+      el.style.maxHeight = `${box.top - 16}px`;
+    } else {
+      el.style.top = `${box.bottom + 8}px`;
+      el.style.maxHeight = `calc(100dvh - ${box.bottom + 16}px)`;
+    }
     // It grows out of the button: from the button's middle, at the edge nearest it.
     el.style.transformOrigin = `${box.left + box.width / 2 - left}px ${above ? "100%" : "0"}`;
   }, [anchor]);
@@ -47,7 +53,7 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
   };
   return (
     // It grows out of the button that opened it, which sets its origin. It is opened by a click, now and then.
-    <div class={`fixed z-60 w-[248px] rounded-lg bg-surface p-1.5 shadow ${POP_IN}`} role="dialog" aria-label="Theme" ref={pop}>
+    <div class={`fixed z-60 w-[248px] overflow-y-auto overscroll-contain rounded-lg bg-surface p-1.5 shadow ${POP_IN}`} role="dialog" aria-label="Theme" ref={pop}>
       <div class="mb-1.5 grid auto-cols-[1fr] grid-flow-col gap-0.5 rounded bg-sunken p-0.5">
         {SCHEMES.map((scheme) => (
           <button
@@ -116,9 +122,19 @@ const keys = (): Key[] => [
 ];
 
 export function Help() {
+  const card = useRef<HTMLDivElement>(null);
+  // The list takes the focus, so the arrows, the page keys and Space scroll it when the window is too short for it.
+  // The focus goes back to where it was when the list closes.
+  useEffect(() => {
+    const before = document.activeElement;
+    card.current?.focus();
+    return () => {
+      if (before instanceof HTMLElement && before.isConnected) before.focus();
+    };
+  }, []);
   return (
     <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setHelp(false)}>
-      <div class={`${DIALOG} px-5 py-4.5`} role="dialog" aria-label="Keyboard shortcuts">
+      <div class={`${DIALOG} px-5 py-4.5 outline-none`} role="dialog" aria-label="Keyboard shortcuts" tabIndex={-1} ref={card}>
         <h2 class={`mt-0 mb-2.5 ${DIALOG_HEAD}`}>Keyboard</h2>
         <dl class="m-0 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.75">
           {keys().map(([caps, what]) => (
