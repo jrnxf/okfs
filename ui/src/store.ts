@@ -10,6 +10,7 @@ import {
   type MatchOrder,
   type Readme,
   type TrashItem,
+  type Written,
   copyEntry,
   deleteEntry,
   forgetEntry,
@@ -18,6 +19,7 @@ import {
   moveEntry,
   putFile,
   restoreEntry,
+  tagOf,
   findOf,
   getJson,
   joinPath,
@@ -388,6 +390,11 @@ export class Store {
   /** The stamp of each file shown by its address, and the time and size the file had when it was loaded. See `stamp`. */
   private readonly stamps = new Map<string, { stamp: string; seen?: string }>();
   private stamped = 0;
+  /**
+   * The writes a page in the preview had okfs make to its own file, by the file's path: what each answered with, or
+   * `null` when it failed. While the file on disk is the version such a write left, the page is not loaded again.
+   */
+  private readonly own = new Map<string, Promise<Written | null>>();
   /** True while the editor holds changes that are not saved. The editor says: see `watchUnsaved`. */
   private unsaved: () => boolean = () => false;
   private noticed: ReturnType<typeof setTimeout> | undefined;
@@ -728,6 +735,30 @@ export class Store {
   }
 
   /**
+   * A page in the preview has okfs write its own file, to keep what its controls show. The page already shows what
+   * the write puts in the file, so it is not loaded again for it: only for a write that is not this one.
+   */
+  ownWrite(path: string, done: Promise<Written>): void {
+    const own = done.catch(() => null);
+    this.own.set(path, own);
+    void own.then((written) => {
+      const kept = this.stamps.get(path);
+      if (written && kept && this.own.get(path) === own) kept.seen = `${written.m}.${written.s}`;
+    });
+  }
+
+  /** The server named a file a page had okfs write: it is loaded again unless the file is the version that write left. */
+  private async recheck(path: string, own: Promise<Written | null>): Promise<void> {
+    const written = await own;
+    const tag = written ? await tagOf(path).catch(() => null) : null;
+    if (this.own.get(path) !== own) return;
+    if (written && tag === written.etag) return;
+    this.own.delete(path);
+    this.restamp(path);
+    this.emit();
+  }
+
+  /**
    * Nothing that is kept can be trusted. A stamp stays only where the folder on screen lists its file with
    * the time and size it was loaded with, and every answer is asked for again.
    */
@@ -757,7 +788,12 @@ export class Store {
     const here = this.local(dir);
     const named = new Set(files);
     // A file on screen is loaded again once its folder has been read: see `stamp`.
-    for (const name of files) this.restamp(joinPath(here, name));
+    for (const name of files) {
+      const path = joinPath(here, name);
+      const own = this.own.get(path);
+      if (own) void this.recheck(path, own);
+      else this.restamp(path);
+    }
     // What is kept about the folder and about the files written in it is out of date, on screen or not.
     // So is what is kept about each folder above it: the answer for a folder's columns holds the folders under it.
     const holds = (path: string): boolean => (path ? here.startsWith(`${path}/`) : here !== "");

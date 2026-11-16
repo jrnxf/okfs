@@ -33,6 +33,30 @@ A rename, a move, a copy of a folder and putting back from the Trash take one st
 
 There is no limit on size unless you give one: `--max-upload 4G`.
 
+### Pages that keep their own controls
+
+With `--allow-edit`, an HTML page in the preview can keep what its controls show in its own file: a box ticked, a radio or an option picked, text typed in a field or a textarea, a `<details>` section opened. A checklist then stays ticked after a reload, on every machine that opens it. The page asks for it with this script, pasted anywhere in it:
+
+```html
+<script>
+addEventListener("change", keep);
+addEventListener("input", keep);
+addEventListener("toggle", keep, true);
+function keep() {
+  const all = document.querySelectorAll("input[id]:not([type=password]):not([type=file]), textarea[id], select[id], details[id]");
+  const controls = [...all].map((el) =>
+    el.localName === "details" ? { id: el.id, open: el.open }
+    : el.type === "checkbox" || el.type === "radio" ? { id: el.id, checked: el.checked }
+    : { id: el.id, value: el.value });
+  parent.postMessage({ type: "okfs:save", controls }, "*");
+}
+</script>
+```
+
+Each control to keep needs an `id` of its own. okfs waits until the controls have rested for a moment, then sets the `checked`, `selected`, `open` or `value` attribute, or a textarea's text, of each element with that id, and writes the file over the version it read. Nothing else in the file changes, not even its spacing, and a page whose controls already say the same is not written. An id that two elements share, a control of another kind than the page says, a password field, a file field and a hidden field are left alone. The page is not loaded again for its own write, so the focus and the scroll stay where they are. A write from anywhere else loads it again, as it does any page.
+
+Only the page on screen in the preview is heard, and only about its own file. A page opened at its own address, one loaded ahead of the cursor, one that went to another page by a link, and a frame inside a page are not. A page larger than 2 MB, or one that is not UTF-8 text, keeps nothing, and a note says why.
+
 ## Deleting
 
 okfs deletes nothing until you start it with `--allow-delete`:

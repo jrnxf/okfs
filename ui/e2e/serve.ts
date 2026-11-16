@@ -1,6 +1,6 @@
 // Starts the built okfs on a folder and says where it listens.
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build } from "./fixture";
@@ -18,12 +18,16 @@ export interface Served {
   stop: () => void;
 }
 
-/** Runs okfs on a fresh fixture folder. `args` are okfs's own, such as `--key`. */
-export async function serve(args: string[] = []): Promise<Served> {
+/**
+ * Runs okfs on a fresh fixture folder. `args` are okfs's own, such as `--key`. `files` are more files to put in it,
+ * by name, before okfs starts: one written after would be named as changed while a test looks at it.
+ */
+export async function serve(args: string[] = [], files: Record<string, string> = {}): Promise<Served> {
   const home = mkdtempSync(join(tmpdir(), "okfs-e2e-"));
   const root = join(home, "files");
   mkdirSync(root);
   build(root);
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(root, name), text);
   const child: ChildProcess = spawn(BIN, [root, "--port", "0", "--no-open", ...args], {
     // Thumbnails are cached under the home's cache folder: a run starts with none, as a visitor's first visit does.
     env: { ...process.env, HOME: home, XDG_CACHE_HOME: join(home, "cache"), XDG_DATA_HOME: join(home, "data") },

@@ -5,10 +5,12 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { type Archive, type TextPreview, getAnswer, getJson, pathOf, urls } from "./api";
 import { config } from "./config";
+import { readMessage } from "./controls";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { LABEL, decodedByServer, hasSource } from "./kinds";
 import { NoAnswer, type Unreached, useDown } from "./reach";
+import { saveControls } from "./saves";
 import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
 import type { Entry } from "./store";
 
@@ -792,6 +794,8 @@ interface Slot {
   left: number;
   /** Since when it has been on screen with its page loaded, or 0. */
   rested: number;
+  /** The page in it went to another of its own accord, as by a link: what it says is not about this file. */
+  away: boolean;
 }
 
 const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms";
@@ -873,12 +877,28 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
   const shown = useRef(-1);
   const frames = useRef(new Map<number, HTMLIFrameElement>());
 
+  // With `--allow-edit`, the page on screen may ask okfs to keep what its controls show, in its own file: see
+  // `saveControls`. Only the page this frame was sent to, loaded and in view, is heard: not a page loaded ahead,
+  // one that went elsewhere by a link, a frame inside it, or the page that was in the frame before.
+  useEffect(() => {
+    if (!config.edit) return;
+    const heard = (event: MessageEvent) => {
+      const controls = readMessage(event.data);
+      if (!controls || !event.source) return;
+      const slot = slots.current.find((one) => frames.current.get(one.id)?.contentWindow === event.source);
+      if (!slot || slot.pdf || !slot.loaded || slot.away || slot.id !== shown.current) return;
+      saveControls(slot.path, controls);
+    };
+    addEventListener("message", heard);
+    return () => removeEventListener("message", heard);
+  }, []);
+
   // With the draw that moved the cursor, as `useLoaded` asks: a plain effect would wait for the next paint.
   useLayoutEffect(() => {
     const now = performance.now();
     const before = slots.current.map((slot) => slot.id).join() + shown.current;
     const add = (file: Entry): Slot => {
-      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, since: 0, left: 0, rested: 0 };
+      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, since: 0, left: 0, rested: 0, away: false };
       slots.current.push(slot);
       return slot;
     };
@@ -900,6 +920,7 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
       slot.sent = to;
       slot.loaded = false;
       slot.rested = 0;
+      slot.away = false;
       return true;
     };
 
@@ -1076,10 +1097,14 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
           // A served page runs in a sandbox: it gets an origin of its own and cannot reach the app.
           // The server sends the same restriction as a header, so it holds when the page is opened directly too.
           sandbox={slot.pdf ? undefined : SANDBOX}
+          // A page in another origin may not write to the clipboard unless its frame lets it: a copy button needs it.
+          allow={slot.pdf ? undefined : "clipboard-write"}
           title={slot.path.slice(slot.path.lastIndexOf("/") + 1)}
           onLoad={() => {
             // An empty frame reports a load of its own, before it is sent anywhere.
             if (!slot.sent) return;
+            // A second load with nothing sent between: the page went to another one by itself.
+            if (slot.loaded) slot.away = true;
             slot.loaded = true;
             slot.since = performance.now();
             // The picture over a PDF goes once its viewer has had its time: see `SHEET_KEEP`.
