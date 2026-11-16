@@ -42,7 +42,7 @@ Examples:
 
 Everything is read only unless you pass --allow-upload, --allow-edit or --allow-delete.
 Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.
-With any of the three, the key is asked for on loopback too.";
+With --allow-upload, --allow-edit or --allow-delete, the key is asked for on loopback too.";
 
 /// A web file browser. Run it in a folder and flip through every file inside.
 #[derive(Parser)]
