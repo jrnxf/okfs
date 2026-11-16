@@ -128,6 +128,20 @@ curl -o photos.zip http://127.0.0.1:8080/zip/photos
 
 Everything under `/api/` is okfs's own channel to its page. It may change in any release, so do not build on it.
 
+## What you can rely on
+
+A script, a service unit or a Compose file can build on these:
+
+- The flags and the `OKFS_*` variable of each one, as listed under [Options from the environment](#options-from-the-environment).
+- The addresses in [Addresses you can rely on](#addresses-you-can-rely-on).
+- The exit code. `0`: okfs did what was asked. That includes `--help`, `--version`, a theme that passes `okfs theme check`, and a server stopped with Ctrl-C. `1`: okfs failed, for example when the folder is not there or a theme does not pass the check. `2`: the command line is wrong, such as an unknown flag, a value that cannot be read, or two flags that exclude each other.
+
+These are not promises, and may change in any release:
+
+- What okfs prints in the terminal, on standard output and standard error. Do not parse it.
+- Everything under `/api/`.
+- The Rust library. okfs has no stable library API.
+
 ## A folder that is a small site
 
 A folder is shown as its listing. With `--index`, a folder that holds a file of that name opens as that page, at the folder's own address, so a link to the folder is a link to the site:

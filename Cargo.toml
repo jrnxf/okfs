@@ -13,6 +13,15 @@ publish = false
 # What cargo package ships. ui/dist is the built page, so a cargo install needs no bun.
 include = ["/src/**", "/build.rs", "/themes/**", "/ui/dist/**", "/ui/src/styles/tokens.css", "/README.md", "/LICENSE", "/THIRD_PARTY.md", "/about.*"]
 
+# Where cargo-binstall finds the binaries of a release: the archives that release.yml publishes.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }{ archive-suffix }"
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
 [profile.release]
 lto = "thin"
 codegen-units = 4
