@@ -37,7 +37,10 @@ entries that the page makes in the visitor's browser.
   `@fontsource` packages in `package.json`; `build.ts` copies them to `dist/fonts/`.
 - `public/og.png`: the picture a link to the site shows, okfs's logo and its line at 1200 by 630.
 - `public/robots.txt`, `public/sitemap.xml`, `public/llms.txt`: for crawlers and answer engines. The sitemap lists
-  `/` and `/demo/`; robots.txt allows every crawler and names the sitemap.
+  `/` and `/demo/`, each with a `lastmod` date that is set by hand when the page changes; robots.txt allows every
+  crawler and names the sitemap. `llms.txt` links each page in `docs/`, and the build fails when one has no link.
+- `dist/llms-full.txt`: `build.ts` writes it from `README.md` and every `docs/*.md`, with relative links made
+  absolute. `llms.txt` links it.
 - `demo/files/`: the demo's files with real contents: the tidewater text files, a zip, a PDF (made with
   `typst compile demo/survey.typ`), a 10 s film (two of the page's landscapes, panned and faded with ffmpeg,
   VP9) and a page. `demo/templates/`: one file of each kind whose preview the others borrow.
@@ -81,3 +84,8 @@ npm run comparison
 The Worker is `okfs-web`, at okfs.jrnxf.co (`wrangler.jsonc`). Workers Builds runs `npm run build` in `/web` on
 each push that touches `web/`, `src/`, `ui/` or `themes/`: `main` deploys with `wrangler deploy`, other branches
 upload a version with `wrangler versions upload`.
+
+`docs/` and `README.md` now feed the build too (`llms-full.txt`), so they must be in the watch paths. The watch
+paths are a setting of the Worker in the Cloudflare dashboard, not a file in this repository: until `docs/` and
+`README.md` are added there, a push that changes only those does not deploy, and `llms-full.txt` on the site stays
+as it was.

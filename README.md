@@ -2,7 +2,7 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo/okfs-dark.svg"><img src="docs/logo/okfs-light.svg" alt="okfs" width="300"></picture>
 </h1>
 
-<p align="center">An open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.</p>
+<p align="center">okfs is an open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard, each one shown beside the list as the cursor lands on it.</p>
 
 <p align="center"><a href="https://okfs.jrnxf.co/demo/">Try it in your browser</a> · <a href="https://okfs.jrnxf.co">okfs.jrnxf.co</a></p>
 
