@@ -130,3 +130,26 @@ test("a folder okfs may not read says so, and is not called missing or empty", a
     rmSync(locked, { recursive: true });
   }
 });
+
+test("the theme menu keeps the keys and the focus, and Esc gives the focus back to its button", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursor(page)).toHaveText("deep");
+  const button = page.getByRole("button", { name: "Theme" });
+  await button.focus();
+  await page.keyboard.press("Enter");
+  const menu = page.getByRole("dialog", { name: "Theme" });
+  await expect(menu.getByRole("button", { pressed: true }).first()).toBeFocused();
+  // Tab never leaves the menu: it goes around.
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Shift+Tab");
+  await expect(menu.getByRole("button").last()).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(menu.getByRole("button").first()).toBeFocused();
+  // An arrow moves in the menu, not in the list behind it.
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("button").nth(1)).toBeFocused();
+  await expect(cursor(page)).toHaveText("deep");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(button).toBeFocused();
+});

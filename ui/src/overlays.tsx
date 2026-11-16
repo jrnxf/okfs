@@ -46,6 +46,37 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
     return () => document.removeEventListener("pointerdown", outside, true);
   }, [anchor, onClose]);
 
+  // The panel takes the focus when it opens and gives it back to its button when it closes. Opened with a key, the
+  // focus is on the scheme in use. Opened with a pointer, it is on the panel itself, which shows no ring.
+  // A click on another control closes the panel too: then the focus stays where the click put it.
+  useEffect(() => {
+    const el = pop.current;
+    ((anchor.matches(":focus-visible") && el?.querySelector<HTMLElement>('[aria-pressed="true"]')) || el)?.focus();
+    return () => {
+      const at = document.activeElement;
+      if (!at || at === document.body || el?.contains(at)) anchor.focus();
+    };
+  }, [anchor]);
+
+  // The keys are the panel's while it is up: none reaches the list behind it, and Tab stays inside.
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    event.stopPropagation();
+    const { key } = event;
+    const stops = [...(pop.current?.querySelectorAll<HTMLElement>("button") ?? [])];
+    const at = stops.indexOf(document.activeElement as HTMLElement);
+    const tab = key === "Tab" ? (event.shiftKey ? -1 : 1) : 0;
+    const by = tab || { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[key];
+    let to: HTMLElement | undefined;
+    if (key === "Escape") onClose();
+    else if (key === "Home") to = stops[0];
+    else if (key === "End") to = stops.at(-1);
+    else if (by !== undefined) to = stops[at < 0 ? (by > 0 ? 0 : stops.length - 1) : (at + by + stops.length) % stops.length];
+    else return;
+    event.preventDefault();
+    to?.focus();
+  };
+
   const dark = isDark();
   const then = (change: () => void) => () => {
     change();
@@ -53,7 +84,7 @@ export function ThemeMenu({ anchor, onClose }: { anchor: HTMLElement; onClose: (
   };
   return (
     // It grows out of the button that opened it, which sets its origin. It is opened by a click, now and then.
-    <div class={`fixed z-60 w-[248px] overflow-y-auto overscroll-contain rounded-lg bg-surface p-1.5 shadow ${POP_IN}`} role="dialog" aria-label="Theme" ref={pop}>
+    <div class={`fixed z-60 w-[248px] overflow-y-auto overscroll-contain rounded-lg bg-surface p-1.5 shadow outline-none ${POP_IN}`} role="dialog" aria-modal="true" aria-label="Theme" tabIndex={-1} onKeyDown={onKeyDown} ref={pop}>
       <div class="mb-1.5 grid auto-cols-[1fr] grid-flow-col gap-0.5 rounded bg-sunken p-0.5">
         {SCHEMES.map((scheme) => (
           <button
