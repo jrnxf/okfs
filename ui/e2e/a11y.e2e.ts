@@ -122,6 +122,30 @@ test("the palette's active option exists after every arrow key, the show-all row
   await expect(page.locator("#palette-row-all")).toHaveCount(1);
 });
 
+test("the palette gives the focus back to what opened it when it closes with no pick", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  const opener = page.getByRole("button", { name: "Find anything" });
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await expect(palette(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(palette(page)).toBeHidden();
+  await expect(opener).toBeFocused();
+  // A click outside closes it too, and the press does not take the focus to the page.
+  await page.keyboard.press("Enter");
+  await expect(palette(page)).toBeVisible();
+  await page.mouse.click(4, 4);
+  await expect(palette(page)).toBeHidden();
+  await expect(opener).toBeFocused();
+  // Opened from the list with its key, it gives the focus back to the list.
+  await list(page).focus();
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(palette(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list(page)).toBeFocused();
+});
+
 test("the palette with nothing found names no active option", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/`);
   await page.keyboard.press("Control+k");

@@ -189,6 +189,8 @@ export function Palette() {
   // The nested list that is up, with the top list's input and highlight to go back to.
   const [nested, setNested] = useState<{ menu: Menu; value: string; selected: number } | null>(null);
   const chosen = useRef(false);
+  // True once a row was picked: then the pick says where the focus goes, not the palette.
+  const left = useRef(false);
   const menu = nested?.menu;
 
   // Inside a nested list the input only filters that list.
@@ -198,9 +200,17 @@ export function Palette() {
   const asked = searching ? query : "";
 
   // Focused as it is drawn, not after the paint: a key typed right after the one that opened the palette is its own.
+  // Closed with Escape, a click outside or the key that opened it, the palette gives the focus back to what had it, as
+  // the "Find anything" button. Not when the focus has gone somewhere else meanwhile.
   useLayoutEffect(() => {
+    const before = document.activeElement;
     input.current?.focus();
     input.current?.select();
+    return () => {
+      const at = document.activeElement;
+      const loose = !at || at === document.body || at === input.current || list.current?.contains(at);
+      if (!left.current && loose && before instanceof HTMLElement && before.isConnected) before.focus();
+    };
   }, []);
 
   useEffect(() => {
@@ -305,6 +315,7 @@ export function Palette() {
   const pick = (index: number) => {
     const row = rows[index];
     if (!row) return;
+    if (!("command" in row && "menu" in row.command)) left.current = true;
     if ("command" in row) {
       const { command } = row;
       if ("menu" in command) return enter(command.menu());
@@ -352,7 +363,15 @@ export function Palette() {
   const pending = searching && waiting(asked, answer);
 
   return (
-    <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setPalette(false)}>
+    <div
+      class={SCRIM}
+      onPointerDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        // The press would move the focus to the page after the palette gave it back.
+        event.preventDefault();
+        store.setPalette(false);
+      }}
+    >
       <div class="flex max-h-[min(70vh,560px)] w-[min(620px,100%)] flex-col overflow-hidden rounded-lg bg-surface shadow" role="dialog" aria-label={menu ? menu.title : "Find anything"}>
         <div class="flex h-[calc(48px*var(--density))] flex-none items-center gap-2.5 border-b border-b-line px-3.5 text-faint">
           {menu ? (
