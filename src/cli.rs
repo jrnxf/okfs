@@ -601,6 +601,7 @@ fn serve(args: Serve) -> Result<(), String> {
                 Scan::Skipped => {}
             }
         }
+        say!("  Press Ctrl-C to stop");
         if open && let Some(ip) = addresses.first() {
             let link = match &once {
                 Some(once) => lan::link_once(*ip, address.port(), once.as_str(), tls.is_some()),
