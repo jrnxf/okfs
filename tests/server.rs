@@ -3588,6 +3588,26 @@ async fn a_file_is_changed_only_while_it_is_still_the_version_read() {
     assert!(parts_in(&site.served).is_empty());
 }
 
+#[tokio::test]
+async fn a_tag_a_compressing_proxy_changed_still_names_its_version() {
+    // Caddy's `encode` sends a file's tag with its coding added, "tag" as "tag-zstd", and does
+    // not take it off the If-Match a save sends back: such a save names the version it read.
+    let site = Site::new();
+    let app = site.writing();
+    for coding in ["zstd", "gzip", "br", "deflate"] {
+        let read = tag_of(&app, "a.txt").await;
+        let through = format!("{}-{coding}\"", read.trim_end_matches('"'));
+        let (status, answer) = wrote(&app, page_write("a.txt", ("if-match", &through), coding)).await;
+        assert_eq!(status, StatusCode::OK, "{coding}: {answer}");
+        assert_eq!(fs::read_to_string(site.served.join("a.txt")).unwrap(), coding);
+
+        // A stale tag is still refused, coding or not.
+        let (status, _) = wrote(&app, page_write("a.txt", ("if-match", &through), "stale")).await;
+        assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{coding}");
+        assert_eq!(fs::read_to_string(site.served.join("a.txt")).unwrap(), coding);
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn a_change_through_a_link_writes_the_real_file_and_the_link_stays() {

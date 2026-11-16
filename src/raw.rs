@@ -85,9 +85,26 @@ fn header_str(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
 }
 
 fn etag_matches(list: &str, etag: &str) -> bool {
-    list.split(',')
-        .map(|tag| tag.trim().trim_start_matches("W/"))
-        .any(|tag| tag == "*" || tag == etag)
+    list.split(',').any(|tag| tag.trim() == "*" || same_etag(tag, etag))
+}
+
+/// The content codings a proxy that compresses okfs's answers adds to their tags: Caddy's
+/// `encode` and Apache's `mod_deflate` send `"tag"` as `"tag-zstd"` or `"tag-gzip"`, and take
+/// only some of them off the tags a request sends back.
+const CODINGS: [&str; 4] = ["-gzip", "-zstd", "-br", "-deflate"];
+
+/// A tag as okfs sent it: without `W/`, and without a coding a proxy added to it. okfs's own
+/// tags are two hex numbers, so a coding's name never ends one.
+fn plain_etag(tag: &str) -> String {
+    let tag = tag.trim().trim_start_matches("W/");
+    let Some(inner) = tag.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')) else {
+        return tag.to_owned();
+    };
+    let inner = CODINGS
+        .iter()
+        .find_map(|coding| inner.strip_suffix(coding))
+        .unwrap_or(inner);
+    format!("\"{inner}\"")
 }
 
 /// The tag a file is sent with, from its time and its size. A write that replaces a file has to
@@ -101,9 +118,10 @@ pub fn etag(meta: &Metadata) -> String {
     format!("\"{:x}-{:x}\"", stamp.as_nanos(), meta.len())
 }
 
-/// True when a tag a request names, `If-Match` style, is the file's: weak and strong are alike.
+/// True when a tag a request names, `If-Match` style, is the file's: weak and strong are alike,
+/// and so is a tag a compressing proxy added its coding to.
 pub fn same_etag(asked: &str, etag: &str) -> bool {
-    asked.trim().trim_start_matches("W/") == etag
+    plain_etag(asked) == etag
 }
 
 /// Answers a request for a file that has already been resolved inside the served folder.
