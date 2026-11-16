@@ -636,6 +636,20 @@ function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
 }
 
 /**
+ * The address of the picture or the player that failed to load, and how to set it. A failure while okfs did not
+ * answer is forgotten once okfs answers, so the file is asked for again. Nothing is forgotten when the pane is
+ * first drawn: a file that fails before that effect runs keeps its card.
+ */
+function useBroken(): [string, (src: string) => void] {
+  const [broken, setBroken] = useState("");
+  const down = useDown();
+  useEffect(() => {
+    if (down) return () => setBroken("");
+  }, [down]);
+  return [broken, setBroken];
+}
+
+/**
  * Where a picture is loaded from: the file itself, or what the server makes of it for a format a browser
  * cannot show. The stamp makes a rewritten picture a new address: a page keeps the pictures it has loaded by
  * address.
@@ -650,7 +664,7 @@ const THUMB_WIDTH = 160;
 
 function Picture({ entry, stamp, report }: Shown) {
   const src = pictureSrc(entry, stamp);
-  const [broken, setBroken] = useState("");
+  const [broken, setBroken] = useBroken();
   // The picture that has loaded last, and the one that has been waited for longer than `PICTURE_KEEP`.
   const [ready, setReady] = useState("");
   const [late, setLate] = useState("");
@@ -660,11 +674,7 @@ function Picture({ entry, stamp, report }: Shown) {
     const timer = setTimeout(() => setLate(src), PICTURE_KEEP);
     return () => clearTimeout(timer);
   }, [src, ready]);
-  // A picture that failed while okfs did not answer is asked for again once it does.
   const down = useDown();
-  useEffect(() => {
-    if (!down) setBroken("");
-  }, [down]);
   if (broken === src) return <Card entry={entry} line={down ?? "This image could not be shown"} unreached={!!down} />;
   // The element is reused from file to file: the browser keeps the old picture up until the new one is ready.
   // That is for a moment only. Past it the old picture would sit under the new name, so it is hidden, and the
@@ -697,7 +707,7 @@ function Picture({ entry, stamp, report }: Shown) {
  * set on a player the cursor has left, kept up while the next preview gets ready.
  */
 function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
-  const [broken, setBroken] = useState("");
+  const [broken, setBroken] = useBroken();
   // A player the cursor left before it started stays as it is, a picture and no more: its file is not
   // asked for, which would take the line from the player the cursor is on.
   const unhurried = useUnhurried();
@@ -720,11 +730,7 @@ function Media({ entry, stamp, report, waiting, left, onReady }: Shown & { waiti
   useLayoutEffect(() => {
     if (settled) hush();
   }, [settled]);
-  // A file that failed while okfs did not answer is asked for again once it does.
   const down = useDown();
-  useEffect(() => {
-    if (!down) setBroken("");
-  }, [down]);
   if (broken === src) return <Card entry={entry} line={down ?? "This browser cannot play this file"} unreached={!!down} />;
   // A player getting ready behind the preview before it, at the size it will be shown at.
   const center = waiting ? `${CENTER} invisible absolute inset-0` : CENTER;
