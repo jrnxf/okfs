@@ -1,6 +1,6 @@
 // What a screen reader is told: where the cursor is in the list and the palette, and an axe pass over both.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./test";
@@ -124,7 +124,7 @@ test("the palette with nothing found names no active option", async ({ page, okf
  * widget's wiring. Everything else axe checks is held at zero.
  */
 const KNOWN = [
-  "color-contrast", // the --faint text token is 3.5:1 on the light surface
+  "color-contrast", // text on --accent is held at 3:1, and the ported themes keep their upstream accent and syntax colors
   "label-content-name-mismatch", // a row's name adds its kind, which is shown only as an icon
   "landmark-one-main",
   "page-has-heading-one",
@@ -166,6 +166,36 @@ test("the list holds rows only: a README, an empty folder, a missing address and
   } finally {
     rmSync(scratch, { recursive: true });
   }
+});
+
+/** Each built-in theme, by the id its file gives it. */
+const THEMES = readdirSync(resolve(import.meta.dirname, "../../themes")).map((file) => file.replace(/\.css$/, ""));
+
+test("faint text reaches 4.5:1 in every built-in theme, light and dark", async ({ page, okfs }) => {
+  const faintFails: string[] = [];
+  for (const theme of THEMES) {
+    for (const scheme of ["light", "dark"]) {
+      // A code file has faint line numbers and a faint count in its bar, and a filter with no match a faint hint.
+      for (const [address, keys] of [["/main.rs", ""], ["/", "/zzqq"]] as const) {
+        await page.goto(`${okfs.origin}${address}?theme=${theme}&scheme=${scheme}`);
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+        if (keys) {
+          await expect(cursorName(page)).toBeVisible();
+          await page.keyboard.type(keys);
+          await expect(page.getByText("No name contains")).toBeVisible();
+        } else {
+          await expect(page.locator(".code")).toBeVisible();
+        }
+        const faint = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--faint").trim().toLowerCase());
+        const { violations } = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+        for (const node of violations.flatMap((v) => v.nodes)) {
+          const data = node.any[0]?.data as { fgColor?: string; contrastRatio?: number } | undefined;
+          if (data?.fgColor === faint) faintFails.push(`${theme} ${scheme} ${address}: ${data.contrastRatio}:1 at ${node.target.join(" ")}`);
+        }
+      }
+    }
+  }
+  expect(faintFails).toEqual([]);
 });
 
 test("axe finds nothing on the open palette", async ({ page, okfs }) => {

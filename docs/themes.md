@@ -81,7 +81,7 @@ The rules, all enforced by `okfs theme check` and again when okfs loads a theme 
   | `--icon-set` | `line`, `solid` or `none` |
   | `--label-case` | `none` or `uppercase` |
 
-- `--bg`, `--surface`, `--fg`, `--faint`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` needs at least 4.5:1 against `--bg` and `--surface`, `--faint` at least 3:1 against `--bg`, and `--accent-fg` at least 3:1 against `--accent`.
+- `--bg`, `--surface`, `--fg`, `--faint`, `--accent` and `--accent-fg` are opaque hex or `rgb()` colors, so contrast can be checked. In both schemes `--fg` and `--faint` need at least 4.5:1 against `--bg` and `--surface`, and `--accent-fg` at least 3:1 against `--accent`.
 
 </details>
 
