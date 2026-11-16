@@ -215,12 +215,27 @@ test("Tab stays in the list of keys and does not walk the page behind it", async
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toBeFocused();
   await expect(help).toHaveAttribute("aria-modal", "true");
-  for (const key of ["Tab", "Tab", "Shift+Tab"]) {
+  const close = help.getByRole("button", { name: "Close" });
+  for (const [key, on] of [["Tab", close], ["Tab", help], ["Shift+Tab", close]] as const) {
     await page.keyboard.press(key);
-    await expect(help).toBeFocused();
+    await expect(on).toBeFocused();
   }
   await page.keyboard.press("Escape");
   await expect(help).toHaveCount(0);
+});
+
+test("the list of keys opens from the foot of the page and closes from its button", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursorName(page)).toBeVisible();
+  const open = page.getByRole("button", { name: "? keys" });
+  await open.click();
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeVisible();
+  const { violations } = await new AxeBuilder({ page }).include('[role="dialog"]').disableRules(KNOWN).analyze();
+  expect(violations.map(brief)).toEqual([]);
+  await help.getByRole("button", { name: "Close" }).click();
+  await expect(help).toHaveCount(0);
+  await expect(open).toBeFocused();
 });
 
 test("the row menu is named, takes the focus and tells which action the keys are on", async ({ page, okfs }) => {

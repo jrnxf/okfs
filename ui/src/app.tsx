@@ -264,8 +264,8 @@ function pageOf(list: HTMLElement | null): number {
   return Math.max(1, Math.floor(list.clientHeight / row) - 1);
 }
 
-/** The keys the foot of the page hints at. */
-const HINTS = "items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
+/** The keys the foot of the page hints at. The 3px pad shows the focus ring of the one that is a button. */
+const HINTS = "-m-[3px] p-[3px] items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
 
 /**
  * A quiet word at the foot of the page: that okfs is not answering or refuses the key, for as long as it does, or
@@ -1030,9 +1030,9 @@ export function App() {
                 <span>
                   <kbd>.</kbd> {s.hidden ? "hide hidden" : "show hidden"}
                 </span>
-                <span>
+                <button class="-mx-1 rounded px-1 text-muted hover:text-fg" aria-haspopup="dialog" onClick={() => store.setHelp(true)}>
                   <kbd>?</kbd> keys
-                </span>
+                </button>
               </>
             )}
           </span>
