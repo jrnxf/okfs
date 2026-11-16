@@ -335,7 +335,7 @@ export function App() {
   const cut = slots();
 
   const scroller = useRef<HTMLDivElement>(null);
-  const main = useRef<HTMLDivElement>(null);
+  const main = useRef<HTMLElement>(null);
   // Drawn with the change, before the panes are measured for the slide: a frame later, the slide would start from
   // the layout of a file that no longer has the full width, or not yet has it.
   useLayoutEffect(() => {
@@ -822,7 +822,7 @@ export function App() {
           html={config.header}
         />
       )}
-      <div
+      <main
         class="main relative grid min-h-0 grid-cols-[repeat(var(--slots,4),minmax(0,1fr))] overflow-clip viewing:grid-cols-[minmax(0,1fr)] phone:grid-cols-[minmax(0,1fr)]"
         ref={main}
         style={`--slots: ${cut}`}
@@ -930,7 +930,7 @@ export function App() {
         {(!finding || wide) && <Side slots={finding ? cut - 1 : cut} matches={finding} />}
           </>
         )}
-      </div>
+      </main>
       <footer
         class={`flex h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
       >

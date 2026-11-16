@@ -142,6 +142,12 @@
   a {
     color: inherit;
   }
+  /* The page's heading is the name in a bar, and it looks as the bar's other names do. Prose sets its own. */
+  h1 {
+    font: inherit;
+    letter-spacing: inherit;
+    margin: 0;
+  }
   :focus {
     outline: none;
   }

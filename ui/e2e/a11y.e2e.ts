@@ -126,9 +126,6 @@ test("the palette with nothing found names no active option", async ({ page, okf
 const KNOWN = [
   "color-contrast", // text on --accent is held at 3:1, and the ported themes keep their upstream accent and syntax colors
   "label-content-name-mismatch", // a row's name adds its kind, which is shown only as an icon
-  "landmark-one-main",
-  "page-has-heading-one",
-  "region", // the list and the folder bar sit outside a landmark
 ];
 
 const brief = (v: { id: string; help: string; nodes: { target: unknown[] }[] }) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`;
@@ -138,6 +135,16 @@ test("axe finds nothing on the main view", async ({ page, okfs }) => {
   await expect(cursorName(page)).toBeVisible();
   const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
   expect(violations.map(brief)).toEqual([]);
+});
+
+test("the list sits in the main landmark, and the heading names the folder, or the file that is open", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursorName(page)).toBeVisible();
+  await expect(page.getByRole("main").getByRole("listbox", { name: "Files" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(okfs.root.split("/").pop() ?? "");
+  await page.goto(`${okfs.origin}/main.rs`);
+  await expect(page.locator(".code")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("main.rs");
 });
 
 test("the list holds rows only: a README, an empty folder, a missing address and a filter with no match pass axe", async ({ page, okfs }) => {

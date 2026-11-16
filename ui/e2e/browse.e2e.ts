@@ -106,7 +106,7 @@ test("Markdown opens rendered and r flips it to source", async ({ page, okfs }) 
   await expect(page.locator("pre.code")).toHaveCount(0);
 
   await page.keyboard.press("r");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toHaveCount(0);
   await expect(page.locator("pre.code")).toContainText("# Field notes");
   await expect(page.locator("pre.code")).toContainText("**bold**");
 
