@@ -419,3 +419,27 @@ test("a, the menu key and Shift F10 open the menu, and the changing keys need th
   // This page has no write flags on: renaming, moving and copying are not keys.
   for (const key of ["F2", "R", "m", "c", "N"]) expect(keys.keyFor(store, host, press(key))).toBeUndefined();
 });
+
+test("Delete and Cmd Backspace ask to delete as Shift D does, and Backspace alone still goes up", async () => {
+  const { config } = await import("./config");
+  const store = showing("a.txt", "b.txt");
+  const cmd = (key: string, ...matching: string[]): Press => {
+    const closest = (selector: string) => (selector.split(", ").some((one) => matching.includes(one)) ? {} : null);
+    return keys.pressOf({ key, shiftKey: false, ctrlKey: false, metaKey: true, altKey: false, target: { closest } as unknown as EventTarget });
+  };
+  const trash = config.trash;
+  Object.assign(config, { delete: true, trash: undefined });
+  try {
+    for (const each of [shifted("D"), press("Delete"), cmd("Backspace")]) {
+      keys.keyFor(store, host, each)?.();
+      expect(store.s.doomed?.path).toBe("a.txt");
+      store.cancelDelete();
+    }
+    // Backspace alone is the way up, and Cmd Backspace in a text field is the field's.
+    expect(keys.keyFor(store, host, press("Backspace"))).toBeDefined();
+    expect(keys.keyFor(store, host, cmd("Backspace", "input"))).toBeUndefined();
+    expect(store.s.doomed).toBeNull();
+  } finally {
+    Object.assign(config, { delete: false, trash });
+  }
+});

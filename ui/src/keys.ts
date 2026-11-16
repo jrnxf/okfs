@@ -37,10 +37,12 @@ const PRESSED = "button, a[href], summary, video, audio";
 export function pressOf(event: Pick<KeyboardEvent, "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "target">): Press {
   const target = event.target as Partial<Pick<Element, "closest">> | null;
   const within = (selector: string): boolean => Boolean(target?.closest?.(selector));
+  // Cmd Backspace is the Delete of a Mac, as in Finder, so it is read as Delete.
+  const macDelete = event.key === "Backspace" && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
   return {
-    key: event.key,
+    key: macDelete ? "Delete" : event.key,
     shift: event.shiftKey,
-    chord: event.ctrlKey || event.metaKey || event.altKey,
+    chord: !macDelete && (event.ctrlKey || event.metaKey || event.altKey),
     typing: within(TYPED),
     pressing: within(PRESSED),
   };
@@ -58,7 +60,7 @@ export function keyFor(store: Store, host: KeyHost, press: Press): (() => void) 
     if (press.key === "Backspace") return press.shift ? () => store.askForget(store.trashCur()) : () => store.showTrash(false);
     return trashKeys(store, host)[press.key];
   }
-  if (press.shift && press.key === "D") return () => store.askDelete();
+  if ((press.shift && press.key === "D") || press.key === "Delete") return () => store.askDelete();
   // Shift with an arrow or Space selects from the anchor: see pick.ts.
   if (press.shift && !store.s.finding && !store.s.open) {
     const by = { ArrowDown: 1, ArrowUp: -1, J: 1, K: -1 }[press.key];

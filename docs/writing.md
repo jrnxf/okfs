@@ -41,7 +41,7 @@ okfs deletes nothing until you start it with `--allow-delete`:
 okfs --allow-delete
 ```
 
-The page then shows a delete button for the file or folder under the cursor, `Shift D` does the same, and the menu and the palette have it as a command. The palette can also delete the folder you are in, and on a narrow screen such as a phone a button at the top does that. A folder goes with everything in it.
+The page then shows a delete button for the file or folder under the cursor, `Shift D`, `Delete` and `Cmd Backspace` do the same, and the menu and the palette have it as a command. The palette can also delete the folder you are in, and on a narrow screen such as a phone a button at the top does that. A folder goes with everything in it.
 
 A delete moves the entry to the Trash at once, without asking, and a note at the foot of the page offers Undo. The Trash keeps it for 30 days, or as many as `--trash-days` says, and then deletes it for good. The trash button in the top bar shows how many entries it holds and opens it in place of the list: each entry with the folder it was in, when it was deleted and how many days it has left, and beside it Put back and Delete forever. Put back returns the entry to where it was, makes its folder again when that is gone, and when its name is taken there by then, brings it back under the next free name. Delete forever and Empty Trash ask first and name what goes: those cannot be undone. In the Trash, `Shift R` puts back and `Shift Backspace` deletes for good.
 

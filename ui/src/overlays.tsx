@@ -147,7 +147,7 @@ const keys = (): Key[] => [
         [["N"], "New folder in this folder"] satisfies Key,
       ]
     : []),
-  ...(config.delete ? [[[DELETE_KEY], config.trash ? "Move to the Trash" : "Delete the file or folder"] satisfies Key] : []),
+  ...(config.delete ? [[[DELETE_KEY, "del", ...(MOD === "⌘" ? ["⌘ ⌫"] : [])], config.trash ? "Move to the Trash" : "Delete the file or folder"] satisfies Key] : []),
   ...(config.trash ? [[[`${MOD} Z`], "Undo the last change while its note is up"] satisfies Key] : []),
   [["?"], "This list"],
 ];
