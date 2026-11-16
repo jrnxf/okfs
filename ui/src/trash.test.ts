@@ -218,6 +218,20 @@ test("names are refused as okfs would refuse them", () => {
   expect(stores.freeName("New folder", new Set())).toBe("New folder");
 });
 
+test("a new file named with its extension typed gets that extension once", async () => {
+  const store = await showing();
+  // The field holds "a.txt" with "a" selected, so what is typed lands before ".txt".
+  store.s.renaming = { path: "a.txt", fresh: true };
+  await store.rename("notes.txt.txt");
+  expect(sent.pop()).toBe("POST /api/move?from=a.txt&to=notes.txt");
+  store.s.renaming = { path: "notes.txt", fresh: true };
+  await store.rename("todo.md.txt");
+  expect(sent.pop()).toBe("POST /api/move?from=notes.txt&to=todo.md");
+  expect(stores.meantName("notes.txt", "untitled.txt")).toBe("notes.txt");
+  expect(stores.meantName("v1.2.txt", "untitled.txt")).toBe("v1.2.txt");
+  expect(stores.meantName("a.txt.txt", "New folder")).toBe("a.txt.txt");
+});
+
 test("the delete key takes the selected rows, not the row under the cursor beside them", async () => {
   const store = await showing();
   // Space on a.txt and on b.txt: each step leaves the cursor one row down, on c.txt, which is not selected.

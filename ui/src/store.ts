@@ -1694,6 +1694,7 @@ export class Store {
     const dir = parentOf(renaming.path);
     const fresh = renaming.fresh === true;
     name = name?.trim() ?? null;
+    if (fresh && name !== null) name = meantName(name, was);
     if (name === null || name === was) {
       s.renaming = null;
       this.emit();
@@ -2030,6 +2031,19 @@ export function freeName(name: string, taken: ReadonlySet<string>): string {
     const tried = copy ? `${stem} (${copy})${ext}` : name;
     if (!taken.has(tried.toLowerCase())) return tried;
   }
+}
+
+/**
+ * The name meant for a new file, whose field offers `was` with all but its extension selected. A name typed with an
+ * extension okfs knows lands before the offered one, as "notes.md.txt": the offered extension is dropped, so the
+ * file is "notes.md". A name typed without one keeps the offered extension.
+ */
+export function meantName(name: string, was: string): string {
+  const dot = was.lastIndexOf(".");
+  const offered = dot > 0 ? was.slice(dot).toLowerCase() : "";
+  if (!offered || !name.toLowerCase().endsWith(offered)) return name;
+  const typed = name.slice(0, -offered.length);
+  return kindOf(typed, false) === "file" ? name : typed;
 }
 
 /**

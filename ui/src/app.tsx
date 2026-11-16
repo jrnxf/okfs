@@ -19,7 +19,7 @@ import { Aim, AIM_RECHECK } from "./aim";
 import { DENIED_FOLDER, EMPTY_FOLDER, FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
 import { slots } from "./slots";
-import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, refusedName, store } from "./store";
+import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, meantName, refusedName, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { drop, pick, uploads } from "./upload";
 import { rowId, rowName } from "./rows";
@@ -217,7 +217,8 @@ function RenameField({ entry }: { entry: Entry }) {
     const dot = entry.dir ? -1 : entry.name.lastIndexOf(".");
     input.setSelectionRange(0, dot > 0 ? dot : entry.name.length);
   }, [entry.path]);
-  const live = value === entry.name ? null : refusedName(value, s.all, entry.name);
+  const meant = s.renaming?.fresh ? meantName(value.trim(), entry.name) : value;
+  const live = meant === entry.name ? null : refusedName(meant, s.all, entry.name);
   const said = live ?? error;
   return (
     <span class="relative block w-full min-w-0">
