@@ -178,7 +178,7 @@ fn every_address_answers_only_to_plain_addresses_localhost_and_the_names_it_is_g
         let port = okfs.port;
         for host in [
             format!("127.0.0.1:{port}"),
-            format!("10.94.1.206:{port}"),
+            format!("192.168.1.20:{port}"),
             format!("[::1]:{port}"),
             format!("localhost:{port}"),
             "files.example.test".to_owned(),
