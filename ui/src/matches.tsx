@@ -12,7 +12,7 @@ import { Marked } from "./palette";
 import { MATCH_LABEL, type Match, store } from "./store";
 import type { MatchOrder } from "./api";
 import { nameOf, parentOf } from "./api";
-import { rowId, rowName } from "./rows";
+import { ageCell, rowId, rowName, sizeCell } from "./rows";
 import type { Cell } from "./vlist";
 
 /** The server is asked no oftener than this while the query is typed: see `holdBack`. */
@@ -119,7 +119,7 @@ export function MatchRow({ match, index, cell, on }: { match: Match; index: numb
   const style = { top: `${cell.top}px`, left: `${cell.left}px`, width: `${cell.width}px`, height: `${cell.height}px` };
   return (
     // A phone shows a match in two lines: its name, and the folder it is in under it.
-    <div class={`${ROW} ${MATCH_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}`} id={rowId(index)} role="option" aria-label={rowName(entry)} aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style}>
+    <div class={`${ROW} ${MATCH_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}`} id={rowId(index)} role="option" aria-label={rowName(entry, dir || "/")} aria-selected={on} data-i={index} data-dir={entry.dir ? "" : undefined} style={style}>
       <KindIcon kind={entry.kind} />
       <span class="flex min-w-0 phone:flex-col phone:leading-[1.3]">
         <span class="min-w-0 truncate">
@@ -127,16 +127,18 @@ export function MatchRow({ match, index, cell, on }: { match: Match; index: numb
             <Marked text={entry.name} idx={hit.idx} from={offset} />
           </b>
         </span>
+        {/* Each cell is its own word to a screen reader, as rowName says them: a grid draws no space between them. */}
+        {" "}
         <span class={`hidden phone:block ${FOLDER} text-xs`}>
           <bdi class="[direction:ltr]">{folder}</bdi>
         </span>
-      </span>
+      </span>{" "}
       <span class={`phone:hidden ${FOLDER} text-s`}>
         <bdi class="[direction:ltr]">{folder}</bdi>
-      </span>
-      <span class={SIZE}>{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
+      </span>{" "}
+      <span class={SIZE}>{sizeCell(entry)}</span>{" "}
       <span class={AGE} title={entry.mtime ? fmt.abs(entry.mtime) : undefined}>
-        {entry.mtime ? fmt.rel(entry.mtime) : ""}
+        {ageCell(entry)}
       </span>
     </div>
   );

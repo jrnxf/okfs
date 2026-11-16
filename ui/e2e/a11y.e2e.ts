@@ -165,7 +165,6 @@ test("the palette with nothing found names no active option", async ({ page, okf
  */
 const KNOWN = [
   "color-contrast", // text on --accent is held at 3:1, and the ported themes keep their upstream accent and syntax colors
-  "label-content-name-mismatch", // a row's name adds its kind, which is shown only as an icon
 ];
 
 const brief = (v: { id: string; help: string; nodes: { target: unknown[] }[] }) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(" ")).join("; ")})`;

@@ -22,7 +22,7 @@ import { slots } from "./slots";
 import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, meantName, refusedName, store } from "./store";
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { drop, pick, uploads } from "./upload";
-import { rowId, rowName } from "./rows";
+import { ageCell, rowId, rowName, sizeCell } from "./rows";
 import { type Cell, VList } from "./vlist";
 import { ClashDialog, NameDialog, Tray } from "./write-ui";
 import { ContextMenu, Toast } from "./menu";
@@ -722,9 +722,11 @@ export function App() {
             <b class={nameWeight(entry.dir)}>{entry.name}</b>
           </span>
         )}
-        <span class={SIZE}>{entry.dir ? (entry.count === undefined ? "" : fmt.count(entry.count)) : fmt.size(entry.size)}</span>
-        <span class={AGE} title={fmt.abs(entry.mtime)}>
-          {fmt.rel(entry.mtime)}
+        {/* Each cell is its own word to a screen reader, as rowName says them: a grid draws no space between them. */}
+        {" "}
+        <span class={SIZE}>{sizeCell(entry)}</span>{" "}
+        <span class={AGE} title={entry.mtime ? fmt.abs(entry.mtime) : undefined}>
+          {ageCell(entry)}
         </span>
       </div>
     );
@@ -766,9 +768,9 @@ export function App() {
         <TrailButton />
         <Crumbs />
         <div class="flex flex-none items-center gap-1" onMouseDown={(event) => event.preventDefault()}>
-          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto ${TOOL}`} aria-label="Find anything" onClick={() => store.setPalette(true)}>
+          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto ${TOOL}`} aria-label={`Find anything, ${MOD} K`} onClick={() => store.setPalette(true)}>
             <Icon name="search" />
-            <span class="flex-1 text-left phone:hidden">Find anything</span>
+            <span class="flex-1 text-left phone:hidden">Find anything</span>{" "}
             <kbd class="phone:hidden">{MOD} K</kbd>
           </button>
           {/* A phone has no folder bar above the list to hold these, and a tap on a folder goes in. */}
