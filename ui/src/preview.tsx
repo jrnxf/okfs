@@ -815,6 +815,9 @@ function Page({ entry, stamp }: { entry: Entry; stamp: string }) {
   useEffect(() => {
     const again = () => heard((count) => count + 1);
     verdicts.add(again);
+    // A verdict can come in between the first draw and this effect, with no one to hear it: the server answers
+    // for a damaged file in a millisecond or two. So what is known by now is read once more.
+    if (damaged.size > 0) again();
     return () => {
       verdicts.delete(again);
     };

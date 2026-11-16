@@ -134,11 +134,12 @@ test("a folder okfs may not read says so, and is not called missing or empty", a
   }
 });
 
-test("a picture and a video that cannot be shown say so and offer the file", async ({ page, okfs }) => {
+test("a picture, a video and a PDF that cannot be shown say so and offer the file", async ({ page, okfs }) => {
   const damaged = join(okfs.root, "damaged");
   mkdirSync(damaged);
   writeFileSync(join(damaged, "broken.png"), "not a picture");
   writeFileSync(join(damaged, "broken.mp4"), "not a video");
+  writeFileSync(join(damaged, "broken.pdf"), "not a pdf");
   try {
     // The page is loaded once before: with its script at hand, a file can fail before the pane's first effects run.
     // The card must still be there after them, so each check waits past them first.
@@ -146,6 +147,7 @@ test("a picture and a video that cannot be shown say so and offer the file", asy
     for (const [name, line] of [
       ["broken.png", "This image could not be shown"],
       ["broken.mp4", "This browser cannot play this file"],
+      ["broken.pdf", "This PDF could not be read"],
     ] as const) {
       await page.goto(`${okfs.origin}/damaged/${name}`);
       await page.waitForTimeout(SETTLED_MS);
