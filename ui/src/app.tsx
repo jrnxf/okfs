@@ -14,7 +14,7 @@ import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
 import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
 import { Prose, lookAhead, pagesAhead } from "./preview";
-import { NEEDS_KEY, NOT_ANSWERING, useDown } from "./reach";
+import { UNREACHED, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
 import { DENIED_FOLDER, EMPTY_FOLDER, FolderBar, Side } from "./side";
 import { useSlide } from "./slide";
@@ -266,12 +266,6 @@ function pageOf(list: HTMLElement | null): number {
 
 /** The keys the foot of the page hints at. */
 const HINTS = "items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
-
-/** What the foot of the page says for each reason okfs cannot be reached. */
-const UNREACHED = {
-  [NOT_ANSWERING]: `${NOT_ANSWERING}. Retrying…`,
-  [NEEDS_KEY]: `${NEEDS_KEY}: open the address okfs printed`,
-};
 
 /**
  * A quiet word at the foot of the page: that okfs is not answering or refuses the key, for as long as it does, or

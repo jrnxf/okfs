@@ -12,6 +12,12 @@ export const NEEDS_KEY = "This link needs its key";
 /** Why the page cannot reach okfs, while it cannot. */
 export type Unreached = typeof NOT_ANSWERING | typeof NEEDS_KEY;
 
+/** What the page says for each reason, where a whole line has room: the reason and what comes next. */
+export const UNREACHED: Record<Unreached, string> = {
+  [NOT_ANSWERING]: `${NOT_ANSWERING}. Retrying…`,
+  [NEEDS_KEY]: `${NEEDS_KEY}: open the address okfs printed`,
+};
+
 let down: Unreached | null = null;
 const listeners = new Set<() => void>();
 

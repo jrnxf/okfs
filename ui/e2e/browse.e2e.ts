@@ -65,6 +65,26 @@ test("the palette finds a file in a nested folder", async ({ page, okfs }) => {
   await expect(page.getByText("found me")).toBeVisible();
 });
 
+test("the palette says that okfs is not answering, and finds the file when okfs is heard again", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(page.getByRole("option", { name: /^main\.rs/ })).toBeVisible();
+  // Every search gets no answer at all, as from an okfs that has stopped.
+  await page.route(/\/api\/search\?/, (route) => route.abort());
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", { name: "Find anything" });
+  await page.keyboard.type("needle");
+  await expect(palette.getByText("okfs is not answering. Retrying…")).toBeVisible();
+  await expect(palette.getByRole("option")).toHaveCount(0);
+  // An Enter that got no answer is dropped: it does not open a file much later.
+  await page.keyboard.press("Enter");
+
+  // A change on disk makes the page read the folder again, and that answer says okfs is back.
+  await page.unroute(/\/api\/search\?/);
+  writeFileSync(join(okfs.root, "main.rs"), 'fn main() {\n    println!("hello from the fixture");\n}\n');
+  await expect(palette.getByText("needle-in-haystack.txt")).toBeVisible();
+  await expect(page).toHaveURL(`${okfs.origin}/`);
+});
+
 test("Markdown opens rendered and r flips it to source", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/notes.md`);
   await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toBeVisible();

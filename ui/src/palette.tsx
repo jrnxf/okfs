@@ -9,6 +9,7 @@ import { type Answer, holdBack, took, waiting } from "./find";
 import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
 import { SCRIM } from "./look";
+import { UNREACHED, useDown } from "./reach";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
 import { pick } from "./upload";
 import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
@@ -183,6 +184,7 @@ export function Palette() {
   const [recent, setRecent] = useState<Changed[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const down = useDown();
 
   // The nested list that is up, with the top list's input and highlight to go back to.
   const [nested, setNested] = useState<{ menu: Menu; value: string; selected: number } | null>(null);
@@ -208,7 +210,8 @@ export function Palette() {
     // Asked again when the first walk ends: until then the newest files are those it has read so far.
   }, [found?.ready]);
 
-  // An empty query still asks once, for the count of indexed entries shown in the footer.
+  // An empty query still asks once, for the count of indexed entries shown in the footer. A query that okfs did not
+  // answer is asked again when okfs is heard from, so its matches come with no new key.
   useEffect(() => {
     const abort = new AbortController();
     const timer = setTimeout(
@@ -222,7 +225,7 @@ export function Palette() {
       clearTimeout(timer);
       abort.abort();
     };
-  }, [asked]);
+  }, [asked, down]);
 
   // The server searches what its first walk has found so far: ask again while it goes on, for the count and the matches.
   useEffect(() => {
@@ -245,8 +248,12 @@ export function Palette() {
     if (query) matched.sort((a, b) => b.score - a.score);
     return matched;
   };
+  // The query typed has no answer and okfs cannot be reached: the list says that, in place of the last query's rows.
+  const lost = searching && down !== null && waiting(asked, answer);
   let rows: Row[];
-  if (searching) {
+  if (lost) {
+    rows = [];
+  } else if (searching) {
     rows = (found?.hits ?? []).map((hit) => ({ hit }));
     // The way to every match, below the best ones: see `Store.find`.
     if (found?.total) rows.push({ all: true });
@@ -316,6 +323,8 @@ export function Palette() {
   // query's, and the first of them need not match what was typed.
   const [entered, setEntered] = useState(false);
   useEffect(() => {
+    // An Enter that okfs never answered is dropped: its answer may land much later, when okfs is back.
+    if (entered && lost) return setEntered(false);
     if (!entered || waiting(asked, answer)) return;
     setEntered(false);
     pick(at);
@@ -326,7 +335,7 @@ export function Palette() {
     if (key === "ArrowDown" || (ctrlKey && key === "n")) setSelected(Math.min(at + 1, rows.length - 1));
     else if (key === "ArrowUp" || (ctrlKey && key === "p")) setSelected(Math.max(at - 1, 0));
     else if (key === "Enter" && (ctrlKey || event.metaKey) && searching) store.leave(() => store.find(query));
-    else if (key === "Enter" && searching && waiting(asked, answer)) setEntered(true);
+    else if (key === "Enter" && searching && waiting(asked, answer)) setEntered(!lost);
     else if (key === "Enter") pick(at);
     else if (key === "Escape" && menu) back();
     else if (key === "Escape") store.setPalette(false);
@@ -379,6 +388,7 @@ export function Palette() {
           <kbd class="pointer-coarse:hidden">esc</kbd>
         </div>
         <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-1.5" ref={list} id="palette-list" role={rows.length ? "listbox" : undefined} aria-label={rows.length ? (menu ? menu.title : "Results") : undefined} aria-owns={allAt >= 0 ? "palette-row-all" : undefined}>
+          {lost && <div class="px-3 py-7 text-center text-faint">{UNREACHED[down]}</div>}
           {rows.length === 0 && !pending && <div class="px-3 py-7 text-center text-faint">Nothing matches “{query}”.</div>}
           {rows.map((row, index) => {
             if ("all" in row) return null;
