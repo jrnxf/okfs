@@ -1404,7 +1404,9 @@ export class Store {
     // The neighbours of the folder being shown are in the folder above: ask for them while it is still there.
     const above = here ? await getJson<Listing>(urls.list(parentOf(doomed.path))).catch(() => null) : null;
     try {
-      got?.(await deleteEntry(doomed.path, doomed.forever === true || this.s.trash === null));
+      // Not inside `got?.(...)`: an optional call with no `got` skips its arguments, and so the delete.
+      const item = await deleteEntry(doomed.path, doomed.forever === true || this.s.trash === null);
+      got?.(item);
     } catch (error) {
       // Part of a folder may be gone all the same: the list, the pane and the dialog show what is there now.
       await this.showDir(s.path, { open: s.open?.name, listing: true, history: "none" }).catch(() => undefined);

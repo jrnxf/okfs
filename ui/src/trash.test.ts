@@ -139,6 +139,11 @@ test("without a Trash a delete asks first", async () => {
   store.askDelete(entry(store, "b.txt"));
   expect(store.s.doomed?.name).toBe("b.txt");
   expect(sent).toEqual([]);
+  // "Delete file" in the dialog.
+  if (store.s.doomed) await store.remove(store.s.doomed);
+  expect(sent).toEqual(["DELETE /api/entry?path=b.txt&forever=1"]);
+  expect(names(store)).toEqual(["docs", "a.txt", "c.txt"]);
+  expect(store.s.doomed).toBe(null);
 });
 
 test("the selected rows go to the Trash together, and come back together", async () => {
