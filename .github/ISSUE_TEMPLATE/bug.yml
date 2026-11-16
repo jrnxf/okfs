@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in okfs does not work as the docs say.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a security fault here. See [SECURITY.md](https://github.com/jrnxf/okfs/blob/main/SECURITY.md).
+        Remove keys and private names from what you paste.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `okfs --version`.
+      placeholder: okfs 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: The system okfs runs on, with its version. Add the browser when the fault is in the page.
+      placeholder: macOS 15.1 (Apple silicon), Firefox 132
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Homebrew
+        - Docker
+        - Release archive
+        - cargo install
+        - nix
+        - Built from a checkout
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line
+      description: The full command, and any `OKFS_*` variables that were set.
+      render: sh
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what okfs did. Paste the console output when there is any.
+    validations:
+      required: true

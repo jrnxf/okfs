@@ -17,7 +17,7 @@ nix profile install github:jrnxf/okfs   # or install it
 
 `nix profile upgrade okfs` brings an installed copy up to date.
 
-Without nix, download a release. okfs has none yet: the first is `v0.1.0-pre.1`. Until v0.1.0, releases are pre-releases, tagged `v0.1.0-pre.N`, and `gh release download` with no tag takes only a full release, so ask for the newest one by name.
+Without Homebrew or nix, download an archive from the [releases](https://github.com/jrnxf/okfs/releases). Until v0.1.0, every release is a pre-release, tagged `v0.1.0-pre.N`. `gh release download` with no tag takes only a full release, so ask for the newest one by name.
 
 Each release has an archive for Linux (x86-64 and arm64) and macOS (Apple silicon and Intel), named `okfs-<version>-<target>.tar.gz`, and a zip for Windows (x86-64), `okfs-<version>-x86_64-pc-windows-msvc.zip`, each with a `.sha256` beside it. The targets are `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`. The Linux binaries are static, so they run on any distribution whatever its C library. An archive holds the `okfs` binary, its bash, zsh and fish completions under `completions/` and the manual page `okfs.1`.
 
@@ -28,6 +28,21 @@ shasum -a 256 -c okfs-*-aarch64-apple-darwin.tar.gz.sha256
 tar -xzf okfs-*-aarch64-apple-darwin.tar.gz
 ./okfs-*-aarch64-apple-darwin/okfs --version
 ```
+
+Without `gh`, `curl` does the same. Set `version` to the newest one on the releases page, without the `v`, and `target` to yours:
+
+```sh
+version=0.1.0-pre.16
+target=x86_64-unknown-linux-musl
+base=https://github.com/jrnxf/okfs/releases/download/v$version
+curl -fsSLO "$base/okfs-$version-$target.tar.gz"
+curl -fsSLO "$base/okfs-$version-$target.tar.gz.sha256"
+sha256sum -c "okfs-$version-$target.tar.gz.sha256"
+tar -xzf "okfs-$version-$target.tar.gz"
+"./okfs-$version-$target/okfs" --version
+```
+
+On a Mac, `shasum -a 256 -c` takes the place of `sha256sum -c`.
 
 With Docker, mount the folder to serve at `/srv`:
 

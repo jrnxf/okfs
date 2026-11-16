@@ -28,8 +28,6 @@ name: release
 #   manual page okfs.1, README.md and LICENSE, so a package manager installs them as they are.
 # - okfs-<version>-x86_64-pc-windows-msvc.zip: one folder of the same name with okfs.exe,
 #   completions/_okfs.ps1 (PowerShell), README.md and LICENSE. It has no manual page.
-# - okfs-x86_64-unknown-linux-gnu: the x86-64 musl binary on its own, under the name the first
-#   releases used, so a machine that downloads that name keeps getting the newest okfs.
 # - okfs-third-party-notices.md: THIRD_PARTY.md, then the licenses of every Rust crate and syntax
 #   definition compiled in.
 on:
@@ -240,7 +238,7 @@ jobs:
           merge-multiple: true
 
       # Each archive must hold exactly the files the formula installs, with okfs executable.
-      - name: Check and add the legacy name
+      - name: Check the archives
         working-directory: assets
         run: |
           shasum -a 256 -c ./*.sha256
@@ -274,11 +272,11 @@ jobs:
               exit 1
             fi
           done
+          # The x86-64 Linux binary runs on this runner: run the one in the archive.
           set -- okfs-*-x86_64-unknown-linux-musl.tar.gz
-          tar -xzf "$1" -O "${1%.tar.gz}/okfs" > okfs-x86_64-unknown-linux-gnu
-          shasum -a 256 okfs-x86_64-unknown-linux-gnu > okfs-x86_64-unknown-linux-gnu.sha256
-          chmod +x okfs-x86_64-unknown-linux-gnu
-          ./okfs-x86_64-unknown-linux-gnu --version
+          run=$(mktemp -d)
+          tar -xzf "$1" -C "$run"
+          "$run/${1%.tar.gz}/okfs" --version
           ls -l
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

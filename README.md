@@ -2,7 +2,7 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo/okfs-dark.svg"><img src="docs/logo/okfs-light.svg" alt="okfs" width="300"></picture>
 </h1>
 
-<p align="center">An open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.</p>
+<p align="center">okfs is an open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard, each one shown beside the list as the cursor lands on it.</p>
 
 <p align="center"><a href="https://okfs.jrnxf.co/demo/">Try it in your browser</a> · <a href="https://okfs.jrnxf.co">okfs.jrnxf.co</a></p>
 
@@ -16,10 +16,12 @@ okfs ("ok file server") serves a folder as a keyboard-driven web file browser. T
 
 ```sh
 brew install jrnxf/tap/okfs     # macOS or Linux
-nix run github:jrnxf/okfs       # or run it once with nix
 docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs
-cargo install --git https://github.com/jrnxf/okfs
+cargo install okfs              # needs a Rust toolchain
+nix run github:jrnxf/okfs       # or run it once with nix
 ```
+
+Until v0.1.0 is released, the Docker line needs a tag, such as `ghcr.io/jrnxf/okfs:0.1.0-pre.16`, and the cargo line is `cargo install --git https://github.com/jrnxf/okfs`, which also needs [bun](https://bun.sh).
 
 Release archives for Linux, macOS and Windows are on the [releases page](https://github.com/jrnxf/okfs/releases). See [docs/install.md](docs/install.md) for them, Docker, building from source and platform notes.
 
@@ -32,6 +34,8 @@ okfs --help                 # every flag, with examples
 ```
 
 okfs listens on `127.0.0.1:8080` and opens the page. Press `?` in it for the keys, and `Ctrl K` or `Cmd K` to find any file in the tree. Every flag also reads from an `OKFS_*` environment variable. See [docs/usage.md](docs/usage.md) for the flags, keys and stable addresses.
+
+An agent can show you a folder the same way. [skills/okfs](skills/okfs/SKILL.md) is a skill that tells it how, and `npx skills add jrnxf/okfs` installs it.
 
 ## Features
 
