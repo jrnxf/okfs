@@ -44,7 +44,7 @@ Everything is read only unless you pass --allow-upload, --allow-edit or --allow-
 Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.
 With --allow-upload, --allow-edit or --allow-delete, the key is asked for on loopback too.";
 
-/// A web file browser. Run it in a folder and flip through every file inside.
+/// An open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard, each one shown beside the list as the cursor lands on it.
 #[derive(Parser)]
 #[command(name = "okfs", version, after_help = EXAMPLES, args_conflicts_with_subcommands = true)]
 struct Cli {
