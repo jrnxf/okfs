@@ -147,3 +147,18 @@ test("axe finds nothing on the open palette", async ({ page, okfs }) => {
   const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
   expect(violations.map(brief)).toEqual([]);
 });
+
+test("Tab stays in the list of keys and does not walk the page behind it", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  await expect(cursorName(page)).toBeVisible();
+  await page.keyboard.press("?");
+  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(help).toBeFocused();
+  await expect(help).toHaveAttribute("aria-modal", "true");
+  for (const key of ["Tab", "Tab", "Shift+Tab"]) {
+    await page.keyboard.press(key);
+    await expect(help).toBeFocused();
+  }
+  await page.keyboard.press("Escape");
+  await expect(help).toHaveCount(0);
+});

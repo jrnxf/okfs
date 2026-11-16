@@ -163,9 +163,20 @@ export function Help() {
       if (before instanceof HTMLElement && before.isConnected) before.focus();
     };
   }, []);
+  // The list holds no control, so Tab has nowhere to go: the focus stays on the list and never walks the page behind it.
+  // On the document, as in the delete dialog, so it holds wherever the focus is.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      card.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   return (
     <div class={SCRIM} onPointerDown={(event) => event.target === event.currentTarget && store.setHelp(false)}>
-      <div class={`${DIALOG} px-5 py-4.5 outline-none`} role="dialog" aria-label="Keyboard shortcuts" tabIndex={-1} ref={card}>
+      <div class={`${DIALOG} px-5 py-4.5 outline-none`} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} ref={card}>
         <h2 class={`mt-0 mb-2.5 ${DIALOG_HEAD}`}>Keyboard</h2>
         <dl class="m-0 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.75">
           {keys().map(([caps, what]) => (
