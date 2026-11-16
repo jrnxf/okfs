@@ -68,6 +68,14 @@ node web/bake.mjs target/release/okfs
 
 `build.ts` checks that every file in `demo/files/` has the size `src/tree.ts` gives it.
 
+`src/comparison.ts` is the one source of the comparison table: the site renders it, and the block between
+the markers in `docs/comparison.md` is written from it. After a change, write that block again, or the build
+fails:
+
+```sh
+npm run comparison
+```
+
 ## Deploy
 
 The Worker is `okfs-web`, at okfs.jrnxf.co (`wrangler.jsonc`). Workers Builds runs `npm run build` in `/web` on
