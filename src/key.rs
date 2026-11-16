@@ -305,22 +305,22 @@ mod tests {
     #[test]
     fn a_pass_opens_its_own_folder_and_below_and_nothing_else() {
         let passes = Passes::new().unwrap();
-        let reports = passes.of("agents/reports");
+        let reports = passes.of("site/reports");
         assert_eq!(reports.len(), 22);
-        assert!(passes.opens(&reports, "agents/reports/x.html"));
-        assert!(passes.opens(&reports, "agents/reports/img/shot.png"));
-        assert!(!passes.opens(&reports, "agents/reports"));
-        assert!(!passes.opens(&reports, "agents/other.png"));
-        assert!(!passes.opens(&reports, "agents/reports-old/x.png"));
+        assert!(passes.opens(&reports, "site/reports/x.html"));
+        assert!(passes.opens(&reports, "site/reports/img/shot.png"));
+        assert!(!passes.opens(&reports, "site/reports"));
+        assert!(!passes.opens(&reports, "site/other.png"));
+        assert!(!passes.opens(&reports, "site/reports-old/x.png"));
         assert!(!passes.opens(&reports, "secret.txt"));
         assert!(!passes.opens(&reports, ""));
-        assert!(!passes.opens(&reports[1..], "agents/reports/x.html"));
+        assert!(!passes.opens(&reports[1..], "site/reports/x.html"));
         // The top folder's pass opens every file.
         let top = passes.of("");
         assert!(passes.opens(&top, "a.txt"));
-        assert!(passes.opens(&top, "agents/reports/x.html"));
+        assert!(passes.opens(&top, "site/reports/x.html"));
         // Another start's passes open nothing.
-        assert!(!Passes::new().unwrap().opens(&reports, "agents/reports/x.html"));
+        assert!(!Passes::new().unwrap().opens(&reports, "site/reports/x.html"));
         assert_eq!(format!("{passes:?}"), "Passes(..)");
     }
 
