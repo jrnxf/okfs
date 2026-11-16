@@ -62,6 +62,8 @@ export interface Entry {
 export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "count" | "unlisted"> & {
   /** For good, past the Trash: the entry is on another disk than the Trash, or there is no Trash. */
   forever?: boolean;
+  /** The selected entries, this one among them, when the delete is asked for all of them. */
+  all?: Doomed[];
 };
 
 /** What a right click, a long press or `a` opened a menu on. */
@@ -1359,10 +1361,11 @@ export class Store {
   }
 
   /**
-   * Deletes the open file, the selected entries or the entry under the cursor unless one is given. With a Trash, at
-   * once, with a way to undo it; without one, the delete dialog asks first.
+   * Deletes the open file, the selected entries or the entry under the cursor unless one is given. One of the
+   * selected entries stands for all of them. With a Trash, at once, with a way to undo it; without one, the delete
+   * dialog asks first.
    */
-  askDelete(doomed: Doomed | null = this.s.open ?? this.cur()): void {
+  askDelete(doomed: Doomed | null = this.s.open ?? this.pickedEntries()[0] ?? null): void {
     // A match is deleted from its own folder, where the list shows what is left.
     if (!config.delete || !doomed || this.s.finding) return;
     const picked = this.pickedEntries();
@@ -1372,7 +1375,7 @@ export class Store {
       return;
     }
     this.leave(() => {
-      this.s.doomed = doomed;
+      this.s.doomed = many ? { ...doomed, all: picked } : doomed;
     });
   }
 
@@ -1385,7 +1388,8 @@ export class Store {
   async remove(doomed: Doomed): Promise<void> {
     this.removing = true;
     try {
-      await this.removeNow(doomed);
+      if (doomed.all) await this.removeAll(doomed.all);
+      else await this.removeNow(doomed);
     } finally {
       this.removing = false;
       // What other programs changed meanwhile was left waiting.
@@ -1440,6 +1444,36 @@ export class Store {
       forgetAnswers();
       this.emit();
     }
+  }
+
+  /** Deletes the selected entries for good, one by one. A failure stops it, and is said over what is left. */
+  private async removeAll(entries: Doomed[]): Promise<void> {
+    const gone = new Set<string>();
+    let failed: string | null = null;
+    for (const entry of entries) {
+      try {
+        await deleteEntry(entry.path, true);
+        gone.add(entry.path);
+      } catch (error) {
+        failed = `${entry.name}: ${reasonOf(error)}`;
+        break;
+      }
+    }
+    this.s.doomed = null;
+    await this.showWithout(entries, gone);
+    if (failed) this.say(`${gone.size ? "Stopped part way" : "Not deleted"}: ${failed}`);
+  }
+
+  /** After a delete of the selected `entries`: no selection, and the list read again with the cursor beside them. */
+  private async showWithout(entries: Doomed[], gone: Set<string>): Promise<void> {
+    const { s } = this;
+    s.picked = NONE;
+    s.selecting = false;
+    const order = s.entries.map((entry) => entry.path);
+    const last = Math.max(...entries.map((entry) => order.indexOf(entry.path)));
+    const beside = s.entries.slice(last + 1).find((entry) => !gone.has(entry.path)) ?? [...s.entries.slice(0, last)].reverse().find((entry) => !gone.has(entry.path));
+    await this.showAgain(beside?.path);
+    forgetAnswers();
   }
 
   // Selecting rows: see pick.ts.
@@ -1846,14 +1880,7 @@ export class Store {
         break;
       }
     }
-    s.picked = NONE;
-    s.selecting = false;
-    const order = s.entries.map((entry) => entry.path);
-    const gone = new Set(items.map((item) => item.path));
-    const last = Math.max(...entries.map((entry) => order.indexOf(entry.path)));
-    const beside = s.entries.slice(last + 1).find((entry) => !gone.has(entry.path)) ?? [...s.entries.slice(0, last)].reverse().find((entry) => !gone.has(entry.path));
-    await this.showAgain(beside?.path);
-    forgetAnswers();
+    await this.showWithout(entries, new Set(items.map((item) => item.path)));
     if (failed) this.say(`Not moved to the Trash: ${failed}`);
     if (items.length) this.trashed(items, `${items.length} items`);
   }

@@ -177,9 +177,14 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
       setFailure(`${stopped}: ${error instanceof Error ? error.message : String(error)}.`);
     });
   };
-  const noun = doomed.link ? "link" : doomed.dir ? "folder" : "file";
+  // The selected entries are asked about together: each is named, and the button says how many go.
+  const all = doomed.all ?? [doomed];
+  const many = all.length > 1;
+  const noun = many ? fmt.items(all.length) : doomed.link ? "link" : doomed.dir ? "folder" : "file";
   let what = "This file will be removed.";
-  if (doomed.link) {
+  if (many) {
+    what = `These ${noun} will be removed${all.some((one) => one.dir && !one.link) ? ", each folder with everything in it" : ""}.`;
+  } else if (doomed.link) {
     what = `This is a link to a ${doomed.dir ? "folder" : "file"}. Only the link will be removed: what it points at stays as it is.`;
   } else if (doomed.dir) {
     // Hidden entries go with it whether or not they are shown, so they are counted.
@@ -201,11 +206,15 @@ export function ConfirmDelete({ doomed }: { doomed: Doomed }) {
         aria-describedby="ask-what"
       >
         <h2 id="ask-title" class={`m-0 ${DIALOG_HEAD}`}>
-          {config.trash ? `Delete this ${noun} for good?` : `Delete this ${noun}?`}
+          {`Delete ${many ? "these" : "this"} ${noun}${config.trash ? " for good" : ""}?`}
         </h2>
-        <div class="flex max-h-[8.5em] gap-2.25 overflow-auto overscroll-contain rounded bg-sunken px-2.75 py-2.25 text-s wrap-anywhere">
-          <KindIcon kind={doomed.kind} class="mt-[0.14em]" />
-          <span class="num">/{doomed.path}</span>
+        <div class="grid max-h-[8.5em] gap-1 overflow-auto overscroll-contain rounded bg-sunken px-2.75 py-2.25 text-s wrap-anywhere">
+          {all.map((one) => (
+            <div key={one.path} class="flex gap-2.25">
+              <KindIcon kind={one.kind} class="mt-[0.14em]" />
+              <span class="num">/{one.path}</span>
+            </div>
+          ))}
         </div>
         <p id="ask-what" class="m-0 text-muted">
           {what} <b class="font-strong text-fg">There is no undo.</b>

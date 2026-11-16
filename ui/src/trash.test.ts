@@ -212,3 +212,32 @@ test("names are refused as okfs would refuse them", () => {
   expect(stores.freeName("untitled.txt", new Set(["untitled.txt", "untitled (1).txt"]))).toBe("untitled (2).txt");
   expect(stores.freeName("New folder", new Set())).toBe("New folder");
 });
+
+test("the delete key takes the selected rows, not the row under the cursor beside them", async () => {
+  const store = await showing();
+  // Space on a.txt and on b.txt: each step leaves the cursor one row down, on c.txt, which is not selected.
+  store.moveTo(1);
+  store.pickCursor(false);
+  store.pickCursor(false);
+  expect(store.cur()?.name).toBe("c.txt");
+  store.askDelete();
+  await settle();
+  expect(sent).toEqual(["DELETE /api/entry?path=a.txt", "DELETE /api/entry?path=b.txt"]);
+  expect(names(store)).toEqual(["docs", "c.txt"]);
+  expect(store.s.toast?.text).toBe("Moved 2 items to the Trash");
+});
+
+test("without a Trash the dialog asks about every selected row, and deletes them all", async () => {
+  const store = await showing();
+  store.s.trash = null;
+  store.moveTo(1);
+  store.pickCursor(false);
+  store.pickCursor(false);
+  store.askDelete();
+  expect(store.s.doomed?.all?.map((one) => one.name)).toEqual(["a.txt", "b.txt"]);
+  expect(sent).toEqual([]);
+  if (store.s.doomed) await store.remove(store.s.doomed);
+  expect(sent).toEqual(["DELETE /api/entry?path=a.txt&forever=1", "DELETE /api/entry?path=b.txt&forever=1"]);
+  expect(names(store)).toEqual(["docs", "c.txt"]);
+  expect([store.s.doomed, store.s.picked.sel.size]).toEqual([null, 0]);
+});
