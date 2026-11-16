@@ -218,7 +218,7 @@ function Head({ target }: { target: MenuTarget }) {
 }
 
 const ITEM =
-  "flex h-[calc(28px*var(--density))] w-full items-center gap-2.25 rounded px-2 text-left text-s whitespace-nowrap aria-selected:bg-accent-soft [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:bg-transparent phone:h-11 phone:gap-3 phone:text-base phone:[&_kbd]:hidden";
+  "flex h-[calc(28px*var(--density))] w-full items-center gap-2.25 rounded px-2 text-left text-s whitespace-nowrap data-hi:bg-accent-soft [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:bg-transparent phone:h-11 phone:gap-3 phone:text-base phone:[&_kbd]:hidden";
 const WIDTH = 248;
 
 export function ContextMenu() {
@@ -229,11 +229,27 @@ export function ContextMenu() {
   const sheet = phone();
   const { groups, off } = menu ? shown(menu.target) : { groups: [], off: [] };
   const flat = groups.flat();
+  // What the keys act on, read at the key press: a fast Down then Enter must not run the action the highlight just left.
+  const now = useRef({ hi, sub });
+  now.current = { hi, sub };
 
   // Opened from the keys, the first action starts highlighted; opened by the pointer, none is.
   useEffect(() => {
     setHi(menu?.keys ? 0 : -1);
     setSub(null);
+  }, [menu]);
+
+  // The menu takes the focus, so a screen reader is in it and hears the action the highlight is on. The focus goes
+  // back to the control it came from when the menu closes, unless an action put it elsewhere. A control the pointer
+  // had focused is left alone: a focus given back after Esc would draw a ring on it that was not there before.
+  useEffect(() => {
+    if (!menu) return;
+    const before = document.activeElement;
+    const back = before instanceof HTMLElement && before !== document.body && before.matches(":focus-visible") ? before : null;
+    pop.current?.focus({ preventScroll: true });
+    return () => {
+      if (back?.isConnected && (!document.activeElement || document.activeElement === document.body)) back.focus();
+    };
   }, [menu]);
 
   useLayoutEffect(() => {
@@ -256,18 +272,23 @@ export function ContextMenu() {
     };
     const run = (action: Action | undefined, at: number) => {
       if (!action) return;
-      if (action.sub) return setSub(sub === at ? null : at);
+      if (action.sub) return setSub(now.current.sub === at ? null : at);
       store.closeMenu();
       action.run?.();
     };
     const onKey = (event: KeyboardEvent) => {
-      const step = (by: number) => setHi((at) => (at + by + flat.length) % Math.max(1, flat.length));
+      const last = flat.length - 1;
+      // From no highlight, down starts at the first action and up at the last.
+      const step = (by: number) => setHi((at) => (at < 0 ? (by > 0 ? 0 : last) : (at + by + flat.length) % Math.max(1, flat.length)));
+      const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
       if (event.key === "Escape") store.closeMenu();
-      else if (event.key === "ArrowDown") step(1);
-      else if (event.key === "ArrowUp") step(-1);
-      else if (event.key === "ArrowRight" && flat[hi]?.sub) setSub(hi);
+      else if (event.key === "ArrowDown" || (plain && event.key === "j")) step(1);
+      else if (event.key === "ArrowUp" || (plain && event.key === "k")) step(-1);
+      else if (event.key === "Home") setHi(0);
+      else if (event.key === "End") setHi(last);
+      else if (event.key === "ArrowRight" && flat[now.current.hi]?.sub) setSub(now.current.hi);
       else if (event.key === "ArrowLeft") setSub(null);
-      else if (event.key === "Enter" || event.key === " ") run(flat[hi], hi);
+      else if (event.key === "Enter" || event.key === " ") run(flat[now.current.hi], now.current.hi);
       else if (event.key === "Tab") store.closeMenu();
       else return;
       event.preventDefault();
@@ -295,7 +316,8 @@ export function ContextMenu() {
         <button
           class={`${ITEM} ${action.danger ? "text-accent [&_.ic]:text-accent" : "text-fg [&_.ic]:text-muted"}`}
           role="menuitem"
-          aria-selected={index === hi}
+          id={`menu-action-${index}`}
+          data-hi={index === hi ? "" : undefined}
           aria-haspopup={action.sub ? "menu" : undefined}
           aria-expanded={action.sub ? sub === index : undefined}
           onPointerEnter={() => setHi(index)}
@@ -313,6 +335,7 @@ export function ContextMenu() {
           <div
             class={`absolute top-[-5px] left-[calc(100%+4px)] z-1 w-[170px] rounded-lg bg-surface p-1.25 shadow ${POP_IN} phone:static phone:w-auto phone:p-0 phone:pl-6 phone:shadow-none`}
             role="menu"
+            aria-label={action.label}
           >
             {action.sub.map((choice) => (
               <button
@@ -352,14 +375,18 @@ export function ContextMenu() {
       {group.map(row)}
     </Fragment>
   ));
+  const { target } = menu;
+  const name = target.kind === "trash" ? nameOf(target.item.path) : target.kind === "folder" ? target.name : target.entries.length === 1 && target.entries[0] ? target.entries[0].name : `${fmt.items(target.entries.length)} selected`;
+  // Named for what it is about, and it points at the highlighted action: the focus is on the menu, not on a row of it.
+  const said = { role: "menu" as const, "aria-label": name, "aria-activedescendant": hi >= 0 && hi < flat.length ? `menu-action-${hi}` : undefined, tabIndex: -1 };
   if (sheet) {
     return (
       <div class="fixed inset-0 z-60" onContextMenu={(event) => event.preventDefault()}>
         <div class="absolute inset-0 bg-scrim transition-opacity duration-150 starting:opacity-0" />
         <div
           ref={pop}
-          class="absolute right-0 bottom-0 left-0 max-h-[82vh] overflow-auto overscroll-contain rounded-t-[14px] bg-surface px-2 pt-1.5 pb-[calc(10px+env(safe-area-inset-bottom))] shadow transition-transform duration-260 ease-out starting:translate-y-full motion-reduce:transition-none"
-          role="menu"
+          class="absolute right-0 bottom-0 left-0 max-h-[82vh] overflow-auto overscroll-contain rounded-t-[14px] bg-surface px-2 pt-1.5 pb-[calc(10px+env(safe-area-inset-bottom))] shadow transition-transform duration-260 ease-out starting:translate-y-full outline-none motion-reduce:transition-none"
+          {...said}
         >
           <div class="mx-auto mt-0.5 mb-2 h-1 w-9 rounded-[99px] bg-line-strong" />
           <div class="mb-1 flex items-center gap-2.5 border-b border-b-line px-2 pt-1 pb-2.5">
@@ -372,7 +399,7 @@ export function ContextMenu() {
     );
   }
   return (
-    <div ref={pop} class={`fixed z-60 rounded-lg bg-surface p-1.25 shadow ${POP_IN}`} style={{ width: `${WIDTH}px` }} role="menu" onContextMenu={(event) => event.preventDefault()}>
+    <div ref={pop} class={`fixed z-60 rounded-lg bg-surface p-1.25 shadow outline-none ${POP_IN}`} style={{ width: `${WIDTH}px` }} {...said} onContextMenu={(event) => event.preventDefault()}>
       {menu.target.kind !== "entries" || menu.target.entries.length > 1 ? (
         <div class="label truncate px-2 pt-1.5 pb-1">
           {menu.target.kind === "trash"

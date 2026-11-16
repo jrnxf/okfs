@@ -162,3 +162,28 @@ test("Tab stays in the list of keys and does not walk the page behind it", async
   await page.keyboard.press("Escape");
   await expect(help).toHaveCount(0);
 });
+
+test("the row menu is named, takes the focus and tells which action the keys are on", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/photos/`);
+  await expect(cursorName(page)).toHaveText("photo-00.png");
+  await page.keyboard.press("a");
+  const menu = page.getByRole("menu", { name: "photo-00.png" });
+  await expect(menu).toBeFocused();
+  const active = () => menu.evaluate((box) => document.getElementById(box.getAttribute("aria-activedescendant") ?? "")?.textContent ?? null);
+  const items = await menu.getByRole("menuitem").allTextContents();
+  await expect.poll(active).toBe(items[0]);
+  // j and k move as the arrows do, and Home and End go to the ends.
+  for (const [key, at] of [["ArrowDown", 1], ["j", 2], ["k", 1], ["End", items.length - 1], ["Home", 0]] as const) {
+    await page.keyboard.press(key);
+    await expect.poll(active).toBe(items[at]);
+  }
+  const { violations } = await new AxeBuilder({ page }).include('[role="menu"]').disableRules(KNOWN).analyze();
+  expect(violations.map(brief)).toEqual([]);
+  // The action is the one the highlight is on at the key press, however fast Enter follows the arrow.
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(active).toBe(items[1]);
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await expect(page).toHaveURL(/photo-00\.png/);
+});
