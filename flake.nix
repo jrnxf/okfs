@@ -2,9 +2,17 @@
   description = "okfs - a web file browser";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+  # Builds the dependencies as a derivation of their own, which depends only on Cargo.toml and
+  # Cargo.lock: a change to okfs's own code reuses them from the store.
+  inputs.crane.url = "github:ipetkov/crane/v0.24.0";
 
   outputs =
-    { self, nixpkgs, ... }:
+    {
+      self,
+      nixpkgs,
+      crane,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -53,45 +61,50 @@
               outputHashAlgo = "sha256";
               outputHash = "sha256-5m9/nitOBzLb5b/5c7MV1MQk5GLnadraSHmTpnfCrwg=";
             };
+            craneLib = crane.mkLib pkgs;
+            common = {
+              pname = cargoToml.package.name;
+              inherit (cargoToml.package) version;
+              src = pkgs.lib.fileset.toSource {
+                root = ./.;
+                fileset = pkgs.lib.fileset.unions [
+                  ./Cargo.toml
+                  ./Cargo.lock
+                  ./THIRD_PARTY.md
+                  ./build.rs
+                  ./src
+                  ./themes
+                  ./ui
+                ];
+              };
+              strictDeps = true;
+              # The workflow in .github/workflows runs the tests.
+              doCheck = false;
+            };
           in
-          pkgs.rustPlatform.buildRustPackage {
-            pname = cargoToml.package.name;
-            inherit (cargoToml.package) version;
+          craneLib.buildPackage (
+            common
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly common;
 
-            src = pkgs.lib.fileset.toSource {
-              root = ./.;
-              fileset = pkgs.lib.fileset.unions [
-                ./Cargo.toml
-                ./Cargo.lock
-                ./THIRD_PARTY.md
-                ./build.rs
-                ./src
-                ./themes
-                ./ui
-              ];
-            };
-            cargoLock.lockFile = ./Cargo.lock;
+              nativeBuildInputs = [ pkgs.bun ];
 
-            nativeBuildInputs = [ pkgs.bun ];
+              # build.rs would run `bun install`, which needs the network. Build the page here from
+              # the modules above and have build.rs embed it as it is.
+              preBuild = ''
+                cp -r --no-preserve=mode ${uiModules} ui/node_modules
+                (cd ui && bun run build)
+                export OKFS_SKIP_UI_BUILD=1
+              '';
 
-            # build.rs would run `bun install`, which needs the network. Build the page here from
-            # the modules above and have build.rs embed it as it is.
-            preBuild = ''
-              cp -r --no-preserve=mode ${uiModules} ui/node_modules
-              (cd ui && bun run build)
-              export OKFS_SKIP_UI_BUILD=1
-            '';
-
-            # The workflow in .github/workflows runs the tests.
-            doCheck = false;
-
-            meta = {
-              inherit (cargoToml.package) description;
-              homepage = "https://github.com/jrnxf/okfs";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = cargoToml.package.name;
-            };
-          };
+              meta = {
+                inherit (cargoToml.package) description;
+                homepage = "https://github.com/jrnxf/okfs";
+                license = pkgs.lib.licenses.mit;
+                mainProgram = cargoToml.package.name;
+              };
+            }
+          );
       });
 
       apps = forAllSystems (pkgs: {
@@ -106,6 +119,7 @@
         default = pkgs.mkShell {
           packages = with pkgs; [
             cargo
+            cargo-nextest
             rustc
             clippy
             rustfmt
