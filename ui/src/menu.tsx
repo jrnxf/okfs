@@ -226,17 +226,27 @@ export function ContextMenu() {
   const pop = useRef<HTMLDivElement>(null);
   const [hi, setHi] = useState(-1);
   const [sub, setSub] = useState<number | null>(null);
+  // The choice the keys are on in the list that opened beside an action, or -1.
+  const [subHi, setSubHi] = useState(-1);
   const sheet = phone();
   const { groups, off } = menu ? shown(menu.target) : { groups: [], off: [] };
   const flat = groups.flat();
   // What the keys act on, read at the key press: a fast Down then Enter must not run the action the highlight just left.
-  const now = useRef({ hi, sub });
-  now.current = { hi, sub };
+  const now = useRef({ hi, sub, subHi });
+  now.current = { hi, sub, subHi };
+  // Opens the list beside an action with the keys on the ticked choice, or closes it.
+  const openSub = (at: number | null) => {
+    setSub(at);
+    setSubHi(at === null ? -1 : Math.max(0, flat[at]?.sub?.findIndex((choice) => choice.on) ?? 0));
+  };
+  const opens = useRef(openSub);
+  opens.current = openSub;
 
   // Opened from the keys, the first action starts highlighted; opened by the pointer, none is.
   useEffect(() => {
     setHi(menu?.keys ? 0 : -1);
     setSub(null);
+    setSubHi(-1);
   }, [menu]);
 
   // The menu takes the focus, so a screen reader is in it and hears the action the highlight is on. The focus goes
@@ -272,22 +282,31 @@ export function ContextMenu() {
     };
     const run = (action: Action | undefined, at: number) => {
       if (!action) return;
-      if (action.sub) return setSub(now.current.sub === at ? null : at);
+      if (action.sub) return opens.current(now.current.sub === at ? null : at);
       store.closeMenu();
       action.run?.();
     };
     const onKey = (event: KeyboardEvent) => {
-      const last = flat.length - 1;
+      // While a list is open beside an action, the keys move in that list, and Esc and the left arrow close only it.
+      const open = now.current.sub;
+      const choices = open === null ? undefined : flat[open]?.sub;
+      const count = choices ? choices.length : flat.length;
+      const last = count - 1;
+      const set = choices ? setSubHi : setHi;
       // From no highlight, down starts at the first action and up at the last.
-      const step = (by: number) => setHi((at) => (at < 0 ? (by > 0 ? 0 : last) : (at + by + flat.length) % Math.max(1, flat.length)));
+      const step = (by: number) => set((at) => (at < 0 ? (by > 0 ? 0 : last) : (at + by + count) % Math.max(1, count)));
       const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
-      if (event.key === "Escape") store.closeMenu();
+      if (event.key === "Escape") {
+        if (choices) opens.current(null);
+        else store.closeMenu();
+      }
       else if (event.key === "ArrowDown" || (plain && event.key === "j")) step(1);
       else if (event.key === "ArrowUp" || (plain && event.key === "k")) step(-1);
-      else if (event.key === "Home") setHi(0);
-      else if (event.key === "End") setHi(last);
-      else if (event.key === "ArrowRight" && flat[now.current.hi]?.sub) setSub(now.current.hi);
-      else if (event.key === "ArrowLeft") setSub(null);
+      else if (event.key === "Home") set(0);
+      else if (event.key === "End") set(last);
+      else if (event.key === "ArrowRight" && !choices && flat[now.current.hi]?.sub) opens.current(now.current.hi);
+      else if (event.key === "ArrowLeft") opens.current(null);
+      else if ((event.key === "Enter" || event.key === " ") && choices) run(choices[now.current.subHi], -1);
       else if (event.key === "Enter" || event.key === " ") run(flat[now.current.hi], now.current.hi);
       else if (event.key === "Tab") store.closeMenu();
       else return;
@@ -322,7 +341,11 @@ export function ContextMenu() {
           aria-expanded={action.sub ? sub === index : undefined}
           onPointerEnter={() => setHi(index)}
           onClick={() => {
-            if (action.sub) return setSub(sub === index ? null : index);
+            if (action.sub) {
+              // Opened by the pointer, no choice starts highlighted.
+              setSub(sub === index ? null : index);
+              return setSubHi(-1);
+            }
             store.closeMenu();
             action.run?.();
           }}
@@ -337,11 +360,14 @@ export function ContextMenu() {
             role="menu"
             aria-label={action.label}
           >
-            {action.sub.map((choice) => (
+            {action.sub.map((choice, i) => (
               <button
                 class={`${ITEM} text-fg`}
                 role="menuitemradio"
+                id={`menu-choice-${i}`}
+                data-hi={i === subHi ? "" : undefined}
                 aria-checked={choice.on === true}
+                onPointerEnter={() => setSubHi(i)}
                 onClick={() => {
                   store.closeMenu();
                   choice.run?.();
@@ -377,8 +403,9 @@ export function ContextMenu() {
   ));
   const { target } = menu;
   const name = target.kind === "trash" ? nameOf(target.item.path) : target.kind === "folder" ? target.name : target.entries.length === 1 && target.entries[0] ? target.entries[0].name : `${fmt.items(target.entries.length)} selected`;
+  const active = sub !== null && subHi >= 0 ? `menu-choice-${subHi}` : hi >= 0 && hi < flat.length ? `menu-action-${hi}` : undefined;
   // Named for what it is about, and it points at the highlighted action: the focus is on the menu, not on a row of it.
-  const said = { role: "menu" as const, "aria-label": name, "aria-activedescendant": hi >= 0 && hi < flat.length ? `menu-action-${hi}` : undefined, tabIndex: -1 };
+  const said = { role: "menu" as const, "aria-label": name, "aria-activedescendant": active, tabIndex: -1 };
   if (sheet) {
     return (
       <div class="fixed inset-0 z-60" onContextMenu={(event) => event.preventDefault()}>
