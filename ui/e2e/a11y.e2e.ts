@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
+import { type Served, serve } from "./serve";
 import { expect, test } from "./test";
 
 const list = (page: Page) => page.locator('[role="listbox"][aria-label="Files"]');
@@ -346,4 +347,31 @@ test("the keys move into the list that opens beside a menu action, and Escape cl
   await expect(menu.getByRole("menuitem", { name: "Show hidden files" })).toBeVisible();
   await menu.getByRole("menuitem", { name: "Sort by" }).click();
   await expect(menu.getByRole("menuitemradio", { name: "Modified" })).toHaveAttribute("aria-checked", "true");
+});
+
+test.describe("with --allow-edit", () => {
+  let editable: Served;
+  test.beforeAll(async () => {
+    editable = await serve(["--allow-edit"]);
+  });
+  test.afterAll(() => editable.stop());
+
+  test("the rename field is not inside an option, and the renamed row is the active row again", async ({ page }) => {
+    await page.goto(editable.link);
+    await expect(cursorName(page)).toBeVisible();
+    for (let i = 0; i < 20 && (await cursorName(page).textContent()) !== "notes.md"; i++) await page.keyboard.press("ArrowDown");
+    await expect(cursorName(page)).toHaveText("notes.md");
+    await page.keyboard.press("F2");
+    const field = page.getByRole("textbox", { name: "New name for notes.md" });
+    await expect(field).toBeFocused();
+    // An option may hold no control: the row with the field is drawn beside the listbox while the name is typed.
+    await expect(list(page).getByRole("textbox")).toHaveCount(0);
+    const { violations } = await new AxeBuilder({ page }).disableRules(KNOWN).analyze();
+    expect(violations.map(brief)).toEqual([]);
+    await page.keyboard.type("log");
+    await page.keyboard.press("Enter");
+    await expect(field).toHaveCount(0);
+    await expect(cursorName(page)).toHaveText("log.md");
+    expect(await announced(page)).toMatchObject(named("log.md"));
+  });
 });

@@ -687,14 +687,17 @@ export function App() {
     const chosen = s.picked.sel.has(entry.path);
     const renaming = s.renaming?.path === entry.path;
     const menued = s.menu?.target.kind === "entries" && s.menu.target.entries.length === 1 && s.menu.target.entries[0]?.path === entry.path;
-    const marks = `${chosen ? " bg-accent-soft" : ""}${picking && on && !s.selecting ? " shadow-[inset_3px_0_0_var(--accent)]" : ""}${menued ? " outline-[1.5px] outline-accent -outline-offset-[1.5px] rounded" : ""}`;
+    const marks = `${renaming ? " data-renaming:bg-accent-soft data-renaming:shadow-[inset_3px_0_0_var(--accent)]" : ""}${chosen ? " bg-accent-soft" : ""}${picking && on && !s.selecting ? " shadow-[inset_3px_0_0_var(--accent)]" : ""}${menued ? " outline-[1.5px] outline-accent -outline-offset-[1.5px] rounded" : ""}`;
     return (
       <div
         class={`${ROW} ${ROW_GRID} ${ROW_REST} ${ROW_ON} ${LIST_ROW}${entry.dir && uploads.target === entry.path ? ` ${DROP_ROW}` : ""}${marks}`}
         id={rowId(index)}
-        role="option"
-        aria-label={rowName(entry)}
-        aria-selected={on && !picking}
+        // While its name is typed the row holds a field, and an option may hold no control: it is drawn outside the
+        // listbox then (see `apart` in vlist.tsx), with the cursor's look by its own mark, and the field names it.
+        role={renaming ? undefined : "option"}
+        aria-label={renaming ? undefined : rowName(entry)}
+        aria-selected={renaming ? undefined : on && !picking}
+        data-renaming={renaming ? "" : undefined}
         data-i={index}
         data-cursor={on ? "" : undefined}
         data-dir={entry.dir ? "" : undefined}
@@ -913,6 +916,7 @@ export function App() {
             caught={s.caught}
             listKey={finding ? `find\n${s.matches?.q}\n${s.matches?.sort.key}${s.matches?.sort.rev}` : `${s.path}\n${s.sort.key}${s.sort.dir}\n${s.filter}`}
             render={renderCell}
+            apart={!finding && s.renaming ? s.entries.findIndex((entry) => entry.path === s.renaming?.path) : undefined}
             empty={finding ? <MatchesEmpty /> : <Empty />}
             onShown={finding ? (last) => store.more(last) : undefined}
           >
