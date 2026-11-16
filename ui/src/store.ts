@@ -456,10 +456,10 @@ export class Store {
     return hasSource(file) && sourceFirst(file) !== this.s.flipped.includes(formOf(file));
   }
 
-  /** The file on show, when it has a second form to flip to: see `hasSource`. */
+  /** The file on show, when it has a second form to flip to: see `hasSource`. A file of no bytes has neither. */
   flippable(): Entry | null {
     const file = this.shown();
-    return file && hasSource(file) ? file : null;
+    return file && hasSource(file) && file.size > 0 ? file : null;
   }
 
   /** Whether the source of `file` wraps at the edge of the pane: prose does until its kind is flipped, code never. */
@@ -467,10 +467,10 @@ export class Store {
     return isProse(file) && !this.s.unwrapped.includes(file.kind);
   }
 
-  /** The file on show, when it is prose shown as its source, which has lines to wrap. */
+  /** The file on show, when it is prose shown as its source, which has lines to wrap: a file of no bytes has none. */
   wrappable(): Entry | null {
     const file = this.shown();
-    return file && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
+    return file && file.size > 0 && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
   }
 
   /** The folder whose columns are beside the list: the one under the cursor, while no file has the full width. */

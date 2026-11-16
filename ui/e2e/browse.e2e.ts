@@ -195,6 +195,27 @@ test("a picture, a video and a PDF that cannot be shown say so and offer the fil
   }
 });
 
+test("a file of no bytes says it is empty, whatever its kind", async ({ page, okfs }) => {
+  const empty = join(okfs.root, "nothing");
+  mkdirSync(empty);
+  const names = ["empty.txt", "empty.md", "empty.png"];
+  for (const name of names) writeFileSync(join(empty, name), "");
+  try {
+    for (const name of names) {
+      await page.goto(`${okfs.origin}/nothing/${name}`);
+      await page.waitForTimeout(SETTLED_MS);
+      await expect(page.getByText("This file is empty")).toBeVisible();
+      await expect(page.getByText("0 lines")).toHaveCount(0);
+      await expect(page.getByText("could not be shown")).toHaveCount(0);
+      // There is no source to show and no line to wrap, so neither is offered.
+      await expect(page.getByRole("button", { name: "Show the source" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Wrap long lines" })).toHaveCount(0);
+    }
+  } finally {
+    rmSync(empty, { recursive: true });
+  }
+});
+
 test("the theme menu keeps the keys and the focus, and Esc gives the focus back to its button", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/`);
   await expect(cursor(page)).toHaveText("deep");

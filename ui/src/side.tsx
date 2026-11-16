@@ -420,7 +420,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
         <button class={`btn ${BAR_BTN} ${OPEN_ONLY} phone:viewing:hidden`} aria-label="Next file" onClick={() => store.step(1)}>
           <Icon name="down" />
         </button>
-        {hasSource(file) && (
+        {hasSource(file) && file.size > 0 && (
           <button class={`btn ${BAR_BTN}`} aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw(file)}>
             <Icon name="code" />
           </button>
