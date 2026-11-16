@@ -406,6 +406,12 @@ export async function lookUp(path: string): Promise<Clash | undefined> {
   };
 }
 
+/** The tag of the file as it is on disk now, or `null` when it is gone. */
+export async function tagOf(path: string): Promise<string | null> {
+  const response = await call(urls.raw(path), { method: "HEAD", cache: "no-store" });
+  return response.ok ? (response.headers.get("etag") ?? "") : null;
+}
+
 /** The served path an address of the server asks about, or `null` when it names none. */
 export const pathOf = (url: string): string | null => {
   const query = new URL(url, location.href).searchParams;
