@@ -85,6 +85,21 @@ test("the palette says that okfs is not answering, and finds the file when okfs 
   await expect(page).toHaveURL(`${okfs.origin}/`);
 });
 
+test("an open file that is removed on disk closes with a notice that says so", async ({ page, okfs }) => {
+  const file = join(okfs.root, "short-lived.txt");
+  writeFileSync(file, "here for a moment\n");
+  try {
+    await page.goto(`${okfs.origin}/short-lived.txt`);
+    await expect(page.getByText("here for a moment")).toBeVisible();
+    // okfs tells of a change once the folder has settled. A file made and removed inside that time was never there for it.
+    await page.waitForTimeout(SETTLED_MS);
+  } finally {
+    rmSync(file, { force: true });
+  }
+  await expect(page.getByRole("status").filter({ hasText: "“short-lived.txt” is no longer in this folder" })).toBeVisible();
+  await expect(page).toHaveURL(`${okfs.origin}/`);
+});
+
 test("Markdown opens rendered and r flips it to source", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/notes.md`);
   await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toBeVisible();

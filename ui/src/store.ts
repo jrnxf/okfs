@@ -830,6 +830,7 @@ export class Store {
 
     const order = s.entries.map((entry) => entry.name);
     const at = s.cursor;
+    let left: string | null = null;
     this.take(listing);
     this.compute();
     const now = new Map(s.all.map((entry) => [entry.name, entry]));
@@ -843,6 +844,8 @@ export class Store {
       // A file that is edited stays open when it is gone, and the editor says so: what it holds is not lost.
       else if (s.editing?.path === s.open.path) this.restamp(s.open.path);
       else {
+        // Deleted, renamed or moved by something other than this page: the view closes, and the notice says why.
+        left = s.open.name;
         s.open = null;
         // The address of a file that is gone gives way to its folder's.
         this.setUrl("replace", s.path, true, { listing: this.hasIndex() });
@@ -851,7 +854,8 @@ export class Store {
 
     if (all) this.distrust();
     s.caught++;
-    this.emit();
+    if (left === null) this.emit();
+    else this.say(`“${left}” is no longer in this folder`);
   }
 
   /**
