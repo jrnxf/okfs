@@ -1024,6 +1024,15 @@ fn the_trash_is_said_at_start_and_its_days_are_set_or_it_is_turned_off() {
         let (_tmp, okfs) = site(args);
         assert!(!okfs.said.contains("trash"), "{args:?}: {}", okfs.said);
     }
+    // Without deleting on, the Trash's options do nothing, and the lines at start say so.
+    for (args, given) in [
+        (&["--no-trash"][..], "--no-trash"),
+        (&["--trash-days", "7"][..], "--trash-days"),
+    ] {
+        let (_tmp, okfs) = site(args);
+        let warning = format!("trash    {given} does nothing without --allow-delete");
+        assert!(okfs.said.contains(&warning), "{args:?}: {}", okfs.said);
+    }
     for wrong in [
         &["--trash-days", "0", "."][..],
         &["--no-trash", "--trash-days", "3", "."][..],

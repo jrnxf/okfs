@@ -594,6 +594,9 @@ fn serve(args: Serve) -> Result<(), String> {
                 trash.days(),
                 crate::paths::TRASH
             );
+        } else if !args.allow_delete && (args.no_trash || args.trash_days.is_some()) {
+            let given = if args.no_trash { "--no-trash" } else { "--trash-days" };
+            say!("  trash    {given} does nothing without --allow-delete");
         }
         if let Follow::Rescan(every) = follow {
             say!("  rescan   every {}", every::spoken(every));
