@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  # The four commands under "Develop" in the README, run in the flake's dev shell.
+  # The tests, in the flake's dev shell, with and without the PDF preview.
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -27,8 +27,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # `target` is not cached: it grew past 2 GB compressed, and restoring it
-      # next to the nix store filled the runner's disk ("No space left on device").
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
@@ -37,37 +35,79 @@ jobs:
           restore-prefixes-first-match: nix-checks-${{ runner.os }}-
           gc-max-store-size-linux: 3G
 
+      # rust-cache asks cargo and rustc for the key, so the dev shell's ones go on PATH first.
+      - name: Put the dev shell's Rust on PATH
+        run: nix develop -c which cargo rustc | xargs -n1 dirname >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.bun/install/cache
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ui/bun.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Test
+        run: nix develop -c cargo nextest run --locked
+
+      # nextest does not run doctests.
+      - name: Doctests
+        run: nix develop -c cargo test --locked --doc
+
+      - name: Test without the PDF preview
+        run: nix develop -c cargo nextest run --locked --no-default-features
+
+  # The format, clippy and type checks under "Develop" in the README, in the flake's dev shell.
+  # The format check comes first, as it fails in seconds.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      # The same store as checks: one dev shell, one cache.
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-checks-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-checks-${{ runner.os }}-
+          gc-max-store-size-linux: 3G
+          save: false
+
+      - name: Format
+        run: nix develop -c cargo fmt --check
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       - name: Install the page's dependencies
         run: nix develop -c bun install --frozen-lockfile
         working-directory: ui
 
-      - name: Test
-        run: nix develop -c cargo test --locked
+      - name: Type check the page
+        run: nix develop -c bun run check
+        working-directory: ui
 
-      - name: Test without the PDF preview
-        run: nix develop -c cargo test --locked --no-default-features
+      - name: Put the dev shell's Rust on PATH
+        run: nix develop -c which cargo rustc | xargs -n1 dirname >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
         run: nix develop -c cargo clippy --locked --all-targets -- -D warnings
 
       - name: Clippy without the PDF preview
         run: nix develop -c cargo clippy --locked --all-targets --no-default-features -- -D warnings
-
-      - name: Format
-        run: nix develop -c cargo fmt --check
-
-      - name: Type check the page
-        run: nix develop -c bun run check
-        working-directory: ui
 
   # RustSec advisories for both lockfiles. A vulnerability fails the job; warnings (unmaintained,
   # unsound) are listed and do not.
@@ -106,8 +146,10 @@ jobs:
           restore-prefixes-first-match: nix-package-${{ runner.os }}-
           gc-max-store-size-linux: 3G
 
+      # The compiled dependencies are built by name too, so they are a root the garbage collection
+      # before the cache save keeps: the next run with the same Cargo.lock builds only okfs.
       - name: Build
-        run: nix build --print-build-logs
+        run: nix build --print-build-logs .#default .#default.cargoArtifacts
 
       - name: Run
         run: ./result/bin/okfs --version
@@ -130,18 +172,24 @@ jobs:
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.bun/install/cache
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ui/bun.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       - name: Install the Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
+      # The compiled dependencies. Only main saves them, so a pull request does not fill the cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-nextest
+
       - name: Test
-        run: cargo test --locked
+        run: cargo nextest run --locked
 
   # The release ships a Windows binary: okfs builds and its tests pass there too.
   windows:
@@ -158,15 +206,21 @@ jobs:
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.bun/install/cache
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ui/bun.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       - name: Install the Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # The compiled dependencies. Only main saves them, so a pull request does not fill the cache.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-nextest
 
       # The release stamps a tag's version into Cargo.toml and Cargo.lock, then builds with --locked.
       # Here the same stamp runs on this runner's own checkout (CRLF line endings included): a lock
@@ -180,7 +234,7 @@ jobs:
           git checkout -- Cargo.toml Cargo.lock
 
       - name: Test
-        run: cargo test --locked
+        run: cargo nextest run --locked
 
   # The built okfs in a real browser: the keys, the palette, the zip, the key gate, and a held arrow key that must
   # paint every preview in time. Unit tests cannot see any of it (ui/e2e).
@@ -198,12 +252,9 @@ jobs:
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.bun/install/cache
-          key: e2e-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'ui/bun.lock') }}
-          restore-keys: e2e-cargo-${{ runner.os }}-
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
 
       # Chromium is keyed by the Playwright that wants it: bun.lock changes when the version does.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -213,6 +264,11 @@ jobs:
 
       - name: Install the Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # A release build, so the held arrow key test sees okfs's real speed.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build okfs
         run: cargo build --release --locked

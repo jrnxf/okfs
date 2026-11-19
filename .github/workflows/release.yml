@@ -322,13 +322,15 @@ jobs:
           bun install --frozen-lockfile
           bun run build
 
-      # --allow-dirty: the version above is not committed. The check build runs in the package's
-      # own folder, which has no ui/package.json, so it proves the page is packaged in.
+      # --allow-dirty: the version above is not committed. --no-verify: the container below builds
+      # the package, so cargo's own check build would only build it a second time. The crate is
+      # unpacked as crates.io serves it, with no ui/package.json, which proves the page is packaged in.
       - name: Package
         run: |
-          cargo package --allow-dirty --locked
+          cargo package --allow-dirty --locked --no-verify
           crate=target/package/okfs-$VERSION
           ls -l "$crate.crate"
+          tar -xzf "$crate.crate" -C target/package
           tar -tzf "$crate.crate" | grep -E '/ui/dist/index.html$'
           if tar -tzf "$crate.crate" | grep -E '/(web|docs|tests|examples|ui/node_modules)/'; then
             echo "the crate holds files it should leave out" >&2

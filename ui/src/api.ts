@@ -400,16 +400,32 @@ export async function lookUp(path: string): Promise<Clash | undefined> {
   const modified = Date.parse(response.headers.get("last-modified") ?? "");
   return {
     error,
-    etag: response.headers.get("etag") ?? undefined,
+    etag: tagIn(response) ?? undefined,
     s: size === null ? undefined : Number(size),
     m: Number.isNaN(modified) ? undefined : Math.floor(modified / 1000),
   };
 }
 
+/**
+ * The content codings a proxy that compresses okfs's answers adds to their tags: Caddy's `encode` and Apache's
+ * `mod_deflate` send `"tag"` as `"tag-zstd"` or `"tag-gzip"`. A proxy may also make the tag weak.
+ */
+const CODINGS = /-(?:gzip|zstd|br|deflate)"$/;
+
+/**
+ * The tag an answer carries, as okfs sent it: without `W/`, and without a coding a proxy added. A write answers with
+ * okfs's own tag, so a tag read through a proxy must be this to compare with one. okfs's own tags are two hex
+ * numbers, so a coding's name never ends one. `null` when the answer has none.
+ */
+export function tagIn(response: Response): string | null {
+  const tag = response.headers.get("etag");
+  return tag === null ? null : tag.trim().replace(/^W\//, "").replace(CODINGS, '"');
+}
+
 /** The tag of the file as it is on disk now, or `null` when it is gone. */
 export async function tagOf(path: string): Promise<string | null> {
   const response = await call(urls.raw(path), { method: "HEAD", cache: "no-store" });
-  return response.ok ? (response.headers.get("etag") ?? "") : null;
+  return response.ok ? (tagIn(response) ?? "") : null;
 }
 
 /** The served path an address of the server asks about, or `null` when it names none. */
