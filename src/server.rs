@@ -784,8 +784,17 @@ fn list_folder(
 
 /// Whether the account okfs runs as may make and remove names in the folder `dir`, as every write
 /// does: a write lands as a part beside its file, then takes its name. The disk is not touched.
+#[cfg(unix)]
 fn may_write(dir: &std::path::Path) -> bool {
     rustix::fs::access(dir, rustix::fs::Access::WRITE_OK | rustix::fs::Access::EXEC_OK).is_ok()
+}
+
+/// Windows decides a write by the folder's access list, which no cheap call reads ahead, and the
+/// read-only mark on a folder does not stop a write in it. So every folder looks writable, and a
+/// refused write answers for itself.
+#[cfg(not(unix))]
+fn may_write(_dir: &std::path::Path) -> bool {
+    true
 }
 
 async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Response {
