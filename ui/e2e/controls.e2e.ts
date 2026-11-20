@@ -1,6 +1,6 @@
 // With --allow-edit, a page in the preview keeps what its controls show in its own file, and is not loaded again
 // for it. The page uses the snippet from docs/writing.md, as a page someone writes would.
-import { readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Page, expect, test } from "@playwright/test";
 import { type Served, serve } from "./serve";
@@ -30,7 +30,7 @@ ${SNIPPET}
 
 const COPY = `<!doctype html><button onclick="navigator.clipboard.writeText('copied text').then(() => (document.title = 'done'), (e) => (document.title = e.name))">Copy</button>`;
 
-const PAGES = { "list.html": PAGE, "outside.html": PAGE, "copy.html": COPY };
+const PAGES = { "list.html": PAGE, "outside.html": PAGE, "proxied.html": PAGE, "copy.html": COPY };
 
 let okfs: Served;
 test.beforeAll(async () => {
@@ -71,6 +71,26 @@ test("a box ticked, a field typed in and a section opened are kept in the page's
   await expect(frame.locator("#note")).toBeFocused();
 });
 
+test("behind a proxy that compresses, a page's own save does not load it again", async ({ page }) => {
+  // Caddy's encode adds the coding to the tag of each file it compresses: "tag" comes as "tag-zstd".
+  await page.route("**/raw/**", async (route) => {
+    const response = await route.fetch();
+    const headers = response.headers();
+    if (headers.etag) headers.etag = headers.etag.replace(/"$/, '-zstd"');
+    await route.fulfill({ response, headers });
+  });
+  const file = join(okfs.root, "proxied.html");
+  await open(page, okfs, "proxied.html");
+  const frame = page.frameLocator("iframe.pv-frame:not(.pv-ahead)");
+  await expect(frame.getByText("milk")).toBeVisible();
+  await frame.locator("body").evaluate(() => ((window as unknown as { mark: number }).mark = 1));
+
+  await frame.getByLabel("milk").check();
+  await expect.poll(() => readFileSync(file, "utf8")).toContain('id="milk" checked>');
+  await page.waitForTimeout(1000);
+  expect(await frame.locator("body").evaluate(() => (window as unknown as { mark?: number }).mark)).toBe(1);
+});
+
 test("a write from outside okfs still loads the page again", async ({ page }) => {
   const file = join(okfs.root, "outside.html");
   await open(page, okfs, "outside.html");
@@ -92,6 +112,27 @@ test("without --allow-edit nothing is written", async ({ page }) => {
     expect(readFileSync(file, "utf8")).toBe(PAGE);
   } finally {
     reader.stop();
+  }
+});
+
+test("in a folder okfs may not write in, the page says why and nothing is sent", async ({ page }) => {
+  const shut = join(okfs.root, "shut");
+  mkdirSync(shut);
+  writeFileSync(join(shut, "list.html"), PAGE);
+  chmodSync(shut, 0o555);
+  const puts: string[] = [];
+  page.on("request", (request) => void (request.method() === "PUT" && puts.push(request.url())));
+  try {
+    await open(page, okfs, "shut/list.html");
+    const frame = page.frameLocator("iframe.pv-frame:not(.pv-ahead)");
+    await frame.getByLabel("milk").check();
+    await expect(page.getByText("Not saved: the account okfs runs as cannot write in this folder")).toBeVisible();
+    await frame.getByLabel("eggs").uncheck();
+    await page.waitForTimeout(1000);
+    expect(puts).toEqual([]);
+    expect(readFileSync(join(shut, "list.html"), "utf8")).toBe(PAGE);
+  } finally {
+    chmodSync(shut, 0o755);
   }
 });
 

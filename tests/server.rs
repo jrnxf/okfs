@@ -1499,6 +1499,32 @@ async fn a_folder_okfs_may_not_read_is_listed_as_denied_not_as_missing() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_okfs_may_not_write_is_listed_as_locked_when_okfs_writes() {
+    use std::os::unix::fs::PermissionsExt;
+    let site = Site::new();
+    let shut = site.served.join("sub");
+    fs::set_permissions(&shut, fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes in any folder: there is nothing to see then.
+    let refused = fs::write(shut.join("probe"), "").is_err();
+    let writing = site.writing();
+    let listing = json(&writing, "/api/list?path=sub").await;
+    let levels = json(&writing, "/api/list?path=&limit=40&depth=1&follow=sub").await;
+    let top = json(&writing, "/api/list?path=").await;
+    let reading = json(&site.router(), "/api/list?path=sub").await;
+    fs::set_permissions(&shut, fs::Permissions::from_mode(0o755)).unwrap();
+    if !refused {
+        return;
+    }
+    assert_eq!(listing["locked"], true);
+    assert_eq!(levels["under"]["locked"], true);
+    // A folder okfs may write in says nothing, and nor does one served to read.
+    assert_eq!(top["locked"], Value::Null);
+    assert_eq!(levels["locked"], Value::Null);
+    assert_eq!(reading["locked"], Value::Null);
+}
+
 #[tokio::test]
 async fn search_finds_names_across_the_tree_and_follows_changes() {
     let site = Site::new();
@@ -2026,7 +2052,7 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
         file,
         (
             StatusCode::FORBIDDEN,
-            serde_json::json!({ "error": "permission denied" })
+            serde_json::json!({ "error": "the account okfs runs as cannot write in this folder" })
         )
     );
     assert_eq!(fs::read_to_string(locked.join("kept.txt")).unwrap(), "kept");
@@ -2034,7 +2060,8 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
     assert_eq!(folder.1["partial"], true);
     let why = folder.1["error"].as_str().unwrap();
     assert!(
-        why.contains("permission denied") && why.contains("part of the folder may already be gone"),
+        why.contains("the account okfs runs as cannot write in this folder")
+            && why.contains("part of the folder may already be gone"),
         "{why}"
     );
     assert_eq!(fs::read_dir(locked.join("proj")).unwrap().count(), 0);

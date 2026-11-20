@@ -2,10 +2,10 @@
 // `--allow-edit`. A page says what its controls show as they change; okfs waits for a pause, then reads the file,
 // changes what the controls say in it (see `setControls`) and writes it over the version it read.
 
-import { WriteError, putFile, urls } from "./api";
+import { WriteError, parentOf, putFile, tagIn, urls } from "./api";
 import { type Control, setControls } from "./controls";
 import { NoAnswer, call } from "./reach";
-import { store } from "./store";
+import { CANNOT_WRITE, store } from "./store";
 import { MAX_EDIT, readText } from "./text";
 
 /** How long a page's controls must rest before they are written, in ms: typing in a field is one write, not one a key. */
@@ -21,12 +21,21 @@ interface Due {
 }
 
 const due = new Map<string, Due>();
+/** The pages already told they cannot keep their controls, so the page says so once, not at each tick. */
+const told = new Set<string>();
 
 const reasonOf = (error: unknown): string =>
   error instanceof NoAnswer ? error.why : error instanceof Error ? error.message : String(error);
 
 /** Keeps what a page's controls show in its file, once they have rested. The newest word from the page wins. */
 export function saveControls(path: string, controls: Control[]): void {
+  // A folder okfs may not write in takes no write: the page is told why once, and nothing is sent.
+  if (store.locked(parentOf(path))) {
+    if (!told.has(path)) store.say(`Not saved: ${CANNOT_WRITE}`);
+    told.add(path);
+    return;
+  }
+  told.delete(path);
   let one = due.get(path);
   if (!one) {
     one = { controls, timer: undefined, busy: false, again: false };
@@ -68,7 +77,7 @@ async function write(path: string, controls: Control[], tries = 2): Promise<void
   if (bytes.length > MAX_EDIT) throw new Error("the page is too large to keep its controls");
   const read = readText(bytes);
   if (!read) throw new Error("the page is not UTF-8 text");
-  const etag = response.headers.get("etag");
+  const etag = tagIn(response);
   if (!etag) throw new Error("the server did not say which version of the page it sent");
   const next = setControls(read.found, controls, read.form.crlf ? "\r\n" : "\n");
   if (next === read.found) return;

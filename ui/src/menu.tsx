@@ -12,7 +12,7 @@ import { Icon, KindIcon } from "./icons";
 import { kindOf } from "./kinds";
 import { POP_IN } from "./look";
 import { DELETE_KEY, MOD } from "./palette";
-import { type Entry, type MenuTarget, SORT_KEYS, SORT_LABEL, store } from "./store";
+import { type Entry, LOCKED, type MenuTarget, SORT_KEYS, SORT_LABEL, store } from "./store";
 import { pick } from "./upload";
 
 /** The flag an action needs, and what is off without it. */
@@ -27,6 +27,8 @@ interface Action {
   /** It deletes: set apart at the foot, in the accent color. */
   danger?: boolean;
   need?: Need;
+  /** It writes in the target's own folder, so a folder okfs may not write in has it off. */
+  here?: boolean;
   run?: () => void;
   /** A list that opens beside it, in place of running. */
   sub?: Action[];
@@ -74,14 +76,14 @@ function groupsOf(target: MenuTarget): Action[][] {
     ];
   }
   if (target.kind === "folder") {
-    const adds = store.addsTo() !== null;
+    const adds = store.addsTo(true) !== null;
     const trash = s.trash;
     return [
       adds
         ? [
-            { label: "New file", icon: "plus", key: "n", need: "upload", run: () => void store.newHere("file") },
-            { label: "New folder", icon: "folder-plus", key: "N", need: "upload", run: () => void store.newHere("folder") },
-            { label: "Upload files…", icon: "upload", key: "u", need: "upload", run: () => pick(target.path) },
+            { label: "New file", icon: "plus", key: "n", need: "upload", run: () => void store.newHere("file"), here: true },
+            { label: "New folder", icon: "folder-plus", key: "N", need: "upload", run: () => void store.newHere("folder"), here: true },
+            { label: "Upload files…", icon: "upload", key: "u", need: "upload", run: () => pick(target.path), here: true },
           ]
         : [],
       [
@@ -106,11 +108,11 @@ function groupsOf(target: MenuTarget): Action[][] {
     const n = `${fmt.count(entries.length)} items`;
     return [
       [
-        { label: `Move ${n} to…`, icon: "move", key: "m", need: "edit", run: () => store.startPicking("move", entries, target.dir) },
+        { label: `Move ${n} to…`, icon: "move", key: "m", need: "edit", run: () => store.startPicking("move", entries, target.dir), here: true },
         { label: `Copy ${n} to…`, icon: "copy", key: "c", need: "upload", run: () => store.startPicking("copy", entries, target.dir) },
       ],
       [{ label: "Copy paths", icon: "path", key: "Y", run: () => void copy(entries.map((entry) => `/${entry.path}`).join("\n"), `${n}' paths`) }],
-      [{ label: s.trash ? `Move ${n} to Trash` : `Delete ${n}…`, icon: "trash", key: DELETE_KEY, need: "delete", danger: true, run: () => store.askDelete(entries[0] ?? null) }],
+      [{ label: s.trash ? `Move ${n} to Trash` : `Delete ${n}…`, icon: "trash", key: DELETE_KEY, need: "delete", danger: true, run: () => store.askDelete(entries[0] ?? null), here: true }],
       [{ label: "Clear selection", icon: "close", key: "esc", run: () => store.clearPicks() }],
     ];
   }
@@ -144,30 +146,42 @@ function groupsOf(target: MenuTarget): Action[][] {
   return [
     opening,
     [
-      { label: "Rename", icon: "rename", key: "F2", need: "edit", run: () => store.startRename(entry) },
-      { label: "Move to…", icon: "move", key: "m", need: "edit", run: () => store.startPicking("move", [entry], target.dir) },
+      { label: "Rename", icon: "rename", key: "F2", need: "edit", run: () => store.startRename(entry), here: true },
+      { label: "Move to…", icon: "move", key: "m", need: "edit", run: () => store.startPicking("move", [entry], target.dir), here: true },
       { label: "Copy to…", icon: "copy", key: "c", need: "upload", run: () => store.startPicking("copy", [entry], target.dir) },
-      { label: "Duplicate", icon: "dup", need: "upload", run: () => void store.duplicate(entry) },
+      { label: "Duplicate", icon: "dup", need: "upload", run: () => void store.duplicate(entry), here: true },
     ],
     sharing,
     small ? [{ label: "Select", icon: "select", run: () => store.startSelecting([entry]) }] : [],
-    [{ label: trashing, icon: "trash", key: DELETE_KEY, need: "delete", danger: true, run: () => store.askDelete(entry) }],
+    [{ label: trashing, icon: "trash", key: DELETE_KEY, need: "delete", danger: true, run: () => store.askDelete(entry), here: true }],
   ];
 }
 
-/** The groups with what the server does not allow left out, and what was left out, for a line at the foot. */
-function shown(target: MenuTarget): { groups: Action[][]; off: Need[] } {
+/**
+ * The groups with what the server does not allow left out, and what was left out, for a line at the foot: off by a
+ * flag, or `locked` because okfs may not write in the target's folder.
+ */
+function shown(target: MenuTarget): { groups: Action[][]; off: Need[]; locked: boolean } {
   const off = new Set<Need>();
+  const dir = target.kind === "entries" ? target.dir : target.kind === "folder" ? target.path : null;
+  const shut = dir !== null && store.locked(dir);
+  let locked = false;
   const groups = groupsOf(target)
     .map((group) =>
       group.filter((action) => {
-        if (can(action.need)) return true;
-        if (action.need) off.add(action.need);
-        return false;
+        if (!can(action.need)) {
+          if (action.need) off.add(action.need);
+          return false;
+        }
+        if (shut && action.here) {
+          locked = true;
+          return false;
+        }
+        return true;
       }),
     )
     .filter((group) => group.length);
-  return { groups, off: [...off] };
+  return { groups, off: [...off], locked };
 }
 
 /** What a menu is about, at the top of a sheet: the entry, the selection or the folder. */
@@ -229,7 +243,7 @@ export function ContextMenu() {
   // The choice the keys are on in the list that opened beside an action, or -1.
   const [subHi, setSubHi] = useState(-1);
   const sheet = phone();
-  const { groups, off } = menu ? shown(menu.target) : { groups: [], off: [] };
+  const { groups, off, locked } = menu ? shown(menu.target) : { groups: [], off: [], locked: false };
   const flat = groups.flat();
   // What the keys act on, read at the key press: a fast Down then Enter must not run the action the highlight just left.
   const now = useRef({ hi, sub, subHi });
@@ -383,19 +397,25 @@ export function ContextMenu() {
       </div>
     );
   };
-  const foot = off.length ? (
-    <div class="mx-0.5 mt-1 border-t border-t-line px-1.5 pt-1.75 pb-0.75 text-xs leading-[1.4] whitespace-normal text-faint">
-      Off on this server:{" "}
-      {off.map((need, i) => (
-        <Fragment key={need}>
-          {i > 0 && ", "}
-          {/* A flag never breaks at its hyphens, and its brackets stay with it. */}
-          {OFF[need]} <span class="whitespace-nowrap">(<code class="font-mono">{FLAG[need]}</code>)</span>
-        </Fragment>
-      ))}
-      .
-    </div>
-  ) : null;
+  const foot =
+    off.length || locked ? (
+      <div class="mx-0.5 mt-1 border-t border-t-line px-1.5 pt-1.75 pb-0.75 text-xs leading-[1.4] whitespace-normal text-faint">
+        {off.length > 0 && (
+          <p>
+            Off on this server:{" "}
+            {off.map((need, i) => (
+              <Fragment key={need}>
+                {i > 0 && ", "}
+                {/* A flag never breaks at its hyphens, and its brackets stay with it. */}
+                {OFF[need]} <span class="whitespace-nowrap">(<code class="font-mono">{FLAG[need]}</code>)</span>
+              </Fragment>
+            ))}
+            .
+          </p>
+        )}
+        {locked && <p>{LOCKED}.</p>}
+      </div>
+    ) : null;
   const body = groups.map((group, i) => (
     <Fragment key={i}>
       {i > 0 && <div class="mx-0.5 my-1 h-(--line-w) bg-line" />}

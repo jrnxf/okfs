@@ -1,7 +1,7 @@
 // The keys that work on the list and on an open file. The palette, the dialogs and the filter take their own.
 
 import { config } from "./config";
-import type { Store } from "./store";
+import { LOCKED, type Store } from "./store";
 import { pick } from "./upload";
 
 /** What the keys need from the page around the list. */
@@ -173,10 +173,12 @@ function trashKeys(store: Store, host: KeyHost): Record<string, () => void> {
  * screen and make a new file in it, while adding is on.
  */
 function adding(store: Store): Record<string, () => void> {
-  const dir = store.addsTo();
+  // In a folder okfs may not write in, the keys still answer, to say why nothing is made.
+  const dir = store.addsTo(true);
   const edits: Record<string, () => void> = store.editable(store.s.open ?? store.cur()) ? { e: () => store.edit() } : {};
   if (dir === null || store.s.open) return edits;
-  return { ...edits, u: () => pick(dir), n: () => void store.newHere("file"), N: () => void store.newHere("folder") };
+  const up = () => (store.locked(dir) ? store.say(LOCKED) : pick(dir));
+  return { ...edits, u: up, n: () => void store.newHere("file"), N: () => void store.newHere("folder") };
 }
 
 /** The keys on the matches: as on a folder, except that the ways out of the folder go back to it, and `s` sorts the matches. */

@@ -5,7 +5,7 @@
 
 import type { ComponentChildren, RefObject } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { type Item, type Listing, urls } from "./api";
+import { type Item, type Listing, parentOf, urls } from "./api";
 import { Aim, AIM_RECHECK } from "./aim";
 import { config } from "./config";
 import * as fmt from "./fmt";
@@ -234,7 +234,7 @@ function More({ file, wrappable }: { file: Entry; wrappable: boolean }) {
             <Icon name="download" />
             <span class={MORE_NAME}>Download</span>
           </a>
-          {config.delete && (
+          {config.delete && !store.locked(parentOf(file.path)) && (
             <button class={MORE_ROW} role="menuitem" onClick={() => store.askDelete(file)}>
               <Icon name="trash" />
               <span class={MORE_NAME}>{deleteLabel()}</span>
@@ -455,7 +455,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
         <a class={`btn ${BAR_BTN} phone:hidden`} href={urls.raw(file.path)} download="" aria-label="Download" title="Download">
           <Icon name="download" />
         </a>
-        {config.delete && (
+        {config.delete && !store.locked(parentOf(file.path)) && (
           <button class={`btn ${BAR_BTN} phone:hidden`} aria-label={deleteLabel()} title={`${deleteLabel()} (${DELETE_KEY})`} onClick={() => store.askDelete(file)}>
             <Icon name="trash" />
           </button>

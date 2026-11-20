@@ -651,6 +651,10 @@ struct Listing {
     /// entries, so the page can say why it shows none.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     denied: bool,
+    /// okfs may change the served folder, but not this one: the account it runs as may not write
+    /// in it. The page then offers no write in it and keeps no page's controls, and says why.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    locked: bool,
     readme: Option<Readme>,
     /// The listing of the first entry, when it is a folder and levels were asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -772,9 +776,25 @@ fn list_folder(
         hidden,
         unreadable,
         denied,
+        locked: app.options.writes() && !may_write(&found.abs),
         readme,
         under,
     })
+}
+
+/// Whether the account okfs runs as may make and remove names in the folder `dir`, as every write
+/// does: a write lands as a part beside its file, then takes its name. The disk is not touched.
+#[cfg(unix)]
+fn may_write(dir: &std::path::Path) -> bool {
+    rustix::fs::access(dir, rustix::fs::Access::WRITE_OK | rustix::fs::Access::EXEC_OK).is_ok()
+}
+
+/// Windows decides a write by the folder's access list, which no cheap call reads ahead, and the
+/// read-only mark on a folder does not stop a write in it. So every folder looks writable, and a
+/// refused write answers for itself.
+#[cfg(not(unix))]
+fn may_write(_dir: &std::path::Path) -> bool {
+    true
 }
 
 async fn list(State(app): State<Arc<App>>, Query(query): Query<ListQuery>) -> Response {
@@ -1163,7 +1183,7 @@ fn remove_entry(app: &App, path: &str, forever: bool) -> Response {
         Err(Kept::Holds(why)) => holds(why),
         Err(Kept::Failed(error)) => disk_failed(&error),
         Err(Kept::Partly(error)) => {
-            let message = format!("{}, and part of the folder may already be gone", error.kind());
+            let message = format!("{}, and part of the folder may already be gone", disk_words(&error));
             let answer = serde_json::json!({ "error": message, "partial": true });
             (disk_status(&error), Json(answer)).into_response()
         }
@@ -1186,7 +1206,16 @@ fn disk_status(error: &std::io::Error) -> StatusCode {
 /// The answer to a write the disk refused. The kind reads as plain words, such as "no storage
 /// space", and names no path.
 fn disk_failed(error: &std::io::Error) -> Response {
-    fail(disk_status(error), &error.kind().to_string())
+    fail(disk_status(error), &disk_words(error))
+}
+
+/// What the disk's refusal means, in words that say what to fix and name no path. A refused
+/// permission is nearly always the folder's owner: okfs runs as an account that may only read it.
+fn disk_words(error: &std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => "the account okfs runs as cannot write in this folder".to_owned(),
+        kind => kind.to_string(),
+    }
 }
 
 /// Deletes one entry of the served folder: a file, a link, or a folder with everything in it.
