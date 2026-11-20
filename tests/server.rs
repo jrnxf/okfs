@@ -2026,7 +2026,7 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
         file,
         (
             StatusCode::FORBIDDEN,
-            serde_json::json!({ "error": "permission denied" })
+            serde_json::json!({ "error": "the account okfs runs as cannot write in this folder" })
         )
     );
     assert_eq!(fs::read_to_string(locked.join("kept.txt")).unwrap(), "kept");
@@ -2034,7 +2034,8 @@ async fn a_folder_delete_that_stops_part_way_says_so_and_shows_what_is_left() {
     assert_eq!(folder.1["partial"], true);
     let why = folder.1["error"].as_str().unwrap();
     assert!(
-        why.contains("permission denied") && why.contains("part of the folder may already be gone"),
+        why.contains("the account okfs runs as cannot write in this folder")
+            && why.contains("part of the folder may already be gone"),
         "{why}"
     );
     assert_eq!(fs::read_dir(locked.join("proj")).unwrap().count(), 0);

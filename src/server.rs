@@ -1163,7 +1163,7 @@ fn remove_entry(app: &App, path: &str, forever: bool) -> Response {
         Err(Kept::Holds(why)) => holds(why),
         Err(Kept::Failed(error)) => disk_failed(&error),
         Err(Kept::Partly(error)) => {
-            let message = format!("{}, and part of the folder may already be gone", error.kind());
+            let message = format!("{}, and part of the folder may already be gone", disk_words(&error));
             let answer = serde_json::json!({ "error": message, "partial": true });
             (disk_status(&error), Json(answer)).into_response()
         }
@@ -1186,7 +1186,16 @@ fn disk_status(error: &std::io::Error) -> StatusCode {
 /// The answer to a write the disk refused. The kind reads as plain words, such as "no storage
 /// space", and names no path.
 fn disk_failed(error: &std::io::Error) -> Response {
-    fail(disk_status(error), &error.kind().to_string())
+    fail(disk_status(error), &disk_words(error))
+}
+
+/// What the disk's refusal means, in words that say what to fix and name no path. A refused
+/// permission is nearly always the folder's owner: okfs runs as an account that may only read it.
+fn disk_words(error: &std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => "the account okfs runs as cannot write in this folder".to_owned(),
+        kind => kind.to_string(),
+    }
 }
 
 /// Deletes one entry of the served folder: a file, a link, or a folder with everything in it.

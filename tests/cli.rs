@@ -1258,3 +1258,31 @@ fn a_folder_okfs_may_not_read_is_refused_at_the_start_and_says_why() {
     assert!(!ended.success());
     assert!(error.contains("okfs has no permission to read this folder"), "{error}");
 }
+
+/// A folder okfs may not write in, served with writes on, says so before any write fails. Served
+/// to read, or writable, it says nothing.
+#[cfg(unix)]
+#[test]
+fn a_folder_okfs_cannot_write_is_named_at_start() {
+    use std::os::unix::fs::PermissionsExt;
+    let warning = "  warning  the account okfs runs as cannot write in this folder";
+    let (_tmp, okfs) = site(&["--allow-edit"]);
+    assert!(!okfs.said.contains(warning), "{}", okfs.said);
+
+    let tmp = TempDir::new().unwrap();
+    let served = tmp.path().join("served");
+    fs::create_dir_all(&served).unwrap();
+    fs::set_permissions(&served, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::write(served.join("probe"), "").is_ok() {
+        // Whoever runs this is let past the permission, as root is: nothing can be refused.
+        return fs::set_permissions(&served, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let cache = tmp.path().join("cache");
+    let writing = start(&served, &cache, &["--allow-edit"]);
+    let reading = start(&served, &cache, &[]);
+    fs::set_permissions(&served, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(writing.said.contains(warning), "{}", writing.said);
+    assert!(!reading.said.contains(warning), "{}", reading.said);
+    // The check leaves nothing behind.
+    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
+}
