@@ -122,7 +122,7 @@ const keys = (): Key[] => [
   [["space"], "Select or unselect the row"],
   [["⇧", "↑ ↓"], "Select from the anchor, as Shift and a click do"],
   [[`${MOD} A`], "Select every row of the folder"],
-  ...(store.flippable() ? [[["r"], "Rendered or source"] satisfies Key] : []),
+  ...(store.flippable() ? [[["r"], "The code, or what is made from it"] satisfies Key] : []),
   ...(store.wrappable() ? [[["w"], "Wrap long lines or not"] satisfies Key] : []),
   [["⌫", "-"], "Up one folder"],
   [["h", "←"], "Out of the folder, or from a file back to its list"],

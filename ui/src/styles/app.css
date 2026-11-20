@@ -59,6 +59,8 @@
 @custom-variant dark (:root[data-scheme="dark"] &);
 /* A file has the full width, or a phone's whole screen. */
 @custom-variant viewing (body.open &);
+/* An open file alone on the page, with nothing around it: see view.ts. */
+@custom-variant full (body.full &);
 /* A copy of a pane, sliding out: see slide.ts. */
 @custom-variant ghost (&.ghost);
 /* The cursor's highlight is travelling with a slide: see glide.ts. */
@@ -116,6 +118,10 @@
   }
   body.has-note {
     grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+  /* Only the file is left: its pane takes the whole page. */
+  body.full {
+    grid-template-rows: minmax(0, 1fr);
   }
   button,
   input {

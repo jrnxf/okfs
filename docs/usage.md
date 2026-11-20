@@ -6,7 +6,7 @@ These are the details behind the list above.
 
 - A dense list on the left, and beside it what is under the cursor: a file is shown as soon as the cursor is on it, in the same pane. Hold `j` to flip through a folder: every file shows as the cursor passes it.
 - A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too. A phone has no space bar: there a tap opens the file over the list, with previous and next in a bar at its foot and download and delete behind a `...` button.
-- Markdown opens rendered, an HTML page opens as the page, and a CSV table opens as a table, from the list and from a link to the file alike; `r` flips each to its source, as it is written, colored and never run. An SVG drawing and JSON open as their source, and `r` flips them to what is made from them. The choice holds for the files of that kind that follow, until you flip it back or leave the page. Pictures, PDFs, video and audio have no source and are always shown as themselves. There is a button for it beside the file's name. The source of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
+- A file with code opens as what is made from it, from the list and from a link alike: Markdown as a preview, an HTML page as the page, a CSV table as a table, an SVG drawing as an image and JSON as a tree. `r` flips it to its code, as it is written, colored and never run, and back. The choice holds for the files of that kind that follow, until you flip it back or leave the page. Pictures, PDFs, video and audio have no code and are always shown as themselves. A switch beside the file's name shows both forms, such as `Preview | Code`, with the one on show filled. The code of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
 - A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the inside of its first entry in the next, or of the entry you were on when you last left it, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file. The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file, and a key that moves the cursor takes over until the pointer moves again. Going into the folder puts the cursor on the entry its column leads on to, whatever the sort. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out, with the cursor's highlight travelling from the row it was on to the row it lands on, so the eye can follow it.
 - Hidden files stay out of the way: dotfiles, and the folders left out of the search, such as `node_modules` and what a `.gitignore` names (see [A big folder](#a-big-folder)). `.`, or the eye button at the top, shows them and hides them again, and the browser remembers the choice. The counts beside each folder are of what is shown, so a folder says how many entries you will find in it, and the bar at the foot says how many are hidden. The search hides the same ones.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`. `Ctrl Enter` or `Cmd Enter`, or the row under its matches, lists every match in place of the folder: ranked, with the folder each is in, sortable by name, folder, size and time, and loaded a page at a time as you scroll. The query is in the address (`?find=`), so back, a reload and a shared link all work, and a folder or a file opened from the matches leads back to them.
@@ -78,8 +78,9 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | --- | --- |
 | `j` `k`, arrows | Move down and up |
 | `Enter` | Open the folder, or give the file the full width |
-| `r` | Rendered or source, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
-| `w` | Wrap long lines or not, for prose shown as its source: Markdown, HTML, text, logs |
+| `r` | The code, or what is made from it, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
+| `w` | Wrap long lines or not, for prose shown as its code: Markdown, HTML, text, logs |
+| `f` | Show the open file alone, at the screen's full size, or the page around it again |
 | `Backspace`, `-` | Up one folder |
 | `h` `l`, left and right arrows | Out of a folder and into one. With a file open, left goes back to the list it was opened from. |
 | `Home` `End` | First and last in the folder |
@@ -90,7 +91,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
-| `Esc` | Let the selection go, or close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `Esc` | Leave the full screen, let the selection go, or close the open file or the filter. In a folder entered from the matches, go back to them. |
 | `a`, `Shift F10`, the menu key | The menu of the row under the cursor, or of the selection: the same menu a right click opens |
 | `Space` | Select the row and step down. With `Shift`, select from the anchor to the row. |
 | `Shift` and the arrows | Select from the anchor, growing and shrinking as `Shift` and a click do |
@@ -115,6 +116,10 @@ These addresses are stable. Scripts, bookmarks and `curl` can use them:
 | `/raw/<path>` | The file's bytes, with ranges. |
 | `/zip/<path>` | A folder as a zip stream. |
 | `/?find=<query>` | The page with the search for that query open. |
+| `/<path>?code` | The file as its code. Without it, a file opens as what is made from it. A file with no code ignores it. |
+| `/<path>?full` | The file alone, with nothing of the page around it. `Esc` or the button in the corner brings the page back. |
+
+The two go together: `/notes.md?code&full` shows the code of `notes.md` alone. A key keeps the address in step: `r` writes `?code=1` while a file is open, and `f` writes `?full=1`. A link copied with `y` carries both. A folder's address drops them. A page cannot fill the screen by itself, so `?full` shows the file across the whole window. `f` also fills the screen. `/raw/<path>` is a different thing: the file's exact bytes, outside okfs.
 
 ```sh
 curl -O http://127.0.0.1:8080/notes/todo.md

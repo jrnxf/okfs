@@ -16,6 +16,12 @@ export interface KeyHost {
   menu: () => void;
   /** Copies the path of the selection, or of the row under the cursor. */
   copyPath: () => void;
+  /** Flips the file on show between its code and what is made from it: see view.ts. */
+  flip: () => void;
+  /** The open file is shown alone: see view.ts. */
+  full: () => boolean;
+  /** Shows the open file alone at the screen's full size, or the page around it again. */
+  setFull: (on: boolean) => void;
 }
 
 /** All that the keys ask about a press. */
@@ -92,12 +98,15 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     Enter: () => store.activate(),
     ".": () => store.setHidden(),
     // Only a file with two forms has the key: on any other it does nothing, and is not offered.
-    ...(store.flippable() ? { r: () => store.flipRaw() } : {}),
+    ...(store.flippable() ? { r: host.flip } : {}),
     ...(store.wrappable() ? { w: () => store.flipWrap() } : {}),
     Backspace: () => store.up(),
     "-": () => store.up(),
+    // An open file alone on the screen, and the way back to the page around it.
+    ...(modal ? { f: () => host.setFull(!host.full()) } : {}),
     Escape: () => {
-      if (s.open) store.close();
+      if (host.full()) host.setFull(false);
+      else if (s.open) store.close();
       else if (store.clearPicks()) return;
       else if (s.filter) store.setFilter("");
       else if (store.trail()) store.toMatches();

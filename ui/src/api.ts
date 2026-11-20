@@ -174,6 +174,19 @@ export function withFind(search: string, find?: string): string {
   const params = new URLSearchParams(search);
   params.delete("find");
   if (find !== undefined) params.set("find", find);
+  // `?full` as typed is written `?full=1`, as view.ts writes it: a word with no value would come back as `?full=`.
+  for (const name of FILE_PARAMS) if (params.get(name) === "") params.set(name, "1");
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+/** The parts of a query that are about the open file: its code, and the page around it. See view.ts. */
+export const FILE_PARAMS = ["code", "full"] as const;
+
+/** An address's query without what it says about an open file, for an address that shows none. */
+export function withoutFile(search: string): string {
+  const params = new URLSearchParams(search);
+  for (const name of FILE_PARAMS) params.delete(name);
   const query = params.toString();
   return query ? `?${query}` : "";
 }

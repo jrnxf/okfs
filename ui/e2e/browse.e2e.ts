@@ -100,7 +100,7 @@ test("an open file that is removed on disk closes with a notice that says so", a
   await expect(page).toHaveURL(`${okfs.origin}/`);
 });
 
-test("Markdown opens rendered and r flips it to source", async ({ page, okfs }) => {
+test("Markdown opens rendered and r flips it to its code", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/notes.md`);
   await expect(page.getByRole("heading", { level: 1, name: "Field notes" })).toBeVisible();
   await expect(page.locator("pre.code")).toHaveCount(0);
@@ -207,8 +207,8 @@ test("a file of no bytes says it is empty, whatever its kind", async ({ page, ok
       await expect(page.getByText("This file is empty")).toBeVisible();
       await expect(page.getByText("0 lines")).toHaveCount(0);
       await expect(page.getByText("could not be shown")).toHaveCount(0);
-      // There is no source to show and no line to wrap, so neither is offered.
-      await expect(page.getByRole("button", { name: "Show the source" })).toHaveCount(0);
+      // There is no code to show and no line to wrap, so neither is offered.
+      await expect(page.getByRole("group", { name: "Show as" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Wrap long lines" })).toHaveCount(0);
     }
   } finally {

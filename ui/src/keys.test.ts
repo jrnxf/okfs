@@ -41,6 +41,10 @@ beforeEach(() => {
   asked.length = 0;
 });
 
+/** The store `showing` made last: the page's flip goes to it, as the page's goes to the one store. */
+let latest: { flipCode(): void } | null = null;
+let full = false;
+
 const host: KeyHost = {
   filter: () => undefined,
   closeMenu: () => undefined,
@@ -48,6 +52,11 @@ const host: KeyHost = {
   page: () => 4,
   menu: () => undefined,
   copyPath: () => undefined,
+  flip: () => latest?.flipCode(),
+  full: () => full,
+  setFull: (on) => {
+    full = on;
+  },
 };
 
 /** A store showing a folder that holds `names`, in that order, with the cursor on the first. A name ending in `/` is a folder. */
@@ -55,6 +64,8 @@ function showing(...names: string[]) {
   const store = new stores.Store();
   const entries = names.map((name, rank) => stores.toEntry({ n: name.replace(/\/$/, ""), d: name.endsWith("/"), s: 10, m: 1 }, "", rank));
   Object.assign(store.s, { status: "ready", all: entries, entries, cursor: 0 });
+  latest = store;
+  full = false;
   return store;
 }
 
@@ -67,7 +78,7 @@ function press(key: string, ...matching: string[]): Press {
 test("a file under the cursor is shown, and asked for ahead, with the columns of a folder ahead", () => {
   const store = showing("photo.jpg", "notes.md", "main.rs", "data.json", "inner/", "page.html", "paper.pdf", "pack.zip");
   const stamp = (entry: import("./store").Entry) => store.stamp(entry);
-  const source = (entry: import("./store").Entry) => store.isRaw(entry);
+  const source = (entry: import("./store").Entry) => store.isCode(entry);
   expect(store.shown()?.name).toBe("photo.jpg");
   preview.lookAhead(store.s.entries, 0, 1, stamp, (path) => store.leftIn(path), source);
   expect(asked.some((url) => url === preview.columnsUrl("inner"))).toBe(true);
@@ -82,38 +93,37 @@ test("a file under the cursor is shown, and asked for ahead, with the columns of
   expect(asked.some((url) => url.includes("inner"))).toBe(false);
 });
 
-test("Markdown and a page open rendered, a drawing and JSON as their source, and the flip holds for their kind", () => {
+test("every file with code opens as what is made from it, and the flip holds for its kind", () => {
   const store = showing("a.md", "b.md", "page.html", "shape.svg", "t.csv", "d.json", "main.rs");
   const [a, b, page, shape, csv, json, rs] = store.s.entries;
-  for (const file of [shape, json]) expect(store.isRaw(file!)).toBe(true);
-  // Markdown, a page and a table open as what is made from them, and code has no second form.
-  for (const file of [a, b, page, csv, rs]) expect(store.isRaw(file!)).toBe(false);
+  // Code has no second form, and the rest open as a page, a picture, a table or a tree.
+  for (const file of [a, b, page, shape, csv, json, rs]) expect(store.isCode(file!)).toBe(false);
 
-  // The rendered form is the one asked for ahead.
+  // What is made from them is the form asked for ahead. A drawing is a picture, asked for as one.
   asked.length = 0;
   preview.forgetAnswers();
-  preview.lookAhead(store.s.entries, 0, 1, (entry) => store.stamp(entry), null, (entry) => store.isRaw(entry));
-  expect(asked).toContain("/api/previews?lines=80&p=b.md&p=t.csv&p=main.rs");
-  expect(asked).toContain("/api/previews?lines=80&raw=1&p=shape.svg&p=d.json");
+  preview.lookAhead(store.s.entries, 0, 1, (entry) => store.stamp(entry), null, (entry) => store.isCode(entry));
+  expect(asked).toContain("/api/previews?lines=80&p=b.md&p=t.csv&p=d.json&p=main.rs");
+  expect(asked.some((url) => url.includes("raw=1"))).toBe(false);
 
-  // The flip is the page's: Markdown goes to its source, and the Markdown that follows with it.
+  // The flip is the page's: Markdown goes to its code, and the Markdown that follows with it.
   keys.keyFor(store, host, press("r"))?.();
-  expect(store.isRaw(a!)).toBe(true);
-  expect(store.isRaw(b!)).toBe(true);
+  expect(store.isCode(a!)).toBe(true);
+  expect(store.isCode(b!)).toBe(true);
   // Another kind is left as it was.
-  expect(store.isRaw(page!)).toBe(false);
+  expect(store.isCode(page!)).toBe(false);
   keys.keyFor(store, host, press("r"))?.();
-  expect(store.isRaw(a!)).toBe(false);
+  expect(store.isCode(a!)).toBe(false);
 
-  // A table flips to its source, and holds it for the tables that follow.
+  // A table flips to its code, and JSON is left as its tree.
   store.moveTo(4);
   keys.keyFor(store, host, press("r"))?.();
-  expect(store.isRaw(csv!)).toBe(true);
-  expect(store.isRaw(json!)).toBe(true);
-  // JSON flips to its tree.
-  store.moveTo(5);
+  expect(store.isCode(csv!)).toBe(true);
+  expect(store.isCode(json!)).toBe(false);
+  // A drawing flips to its code too.
+  store.moveTo(3);
   keys.keyFor(store, host, press("r"))?.();
-  expect(store.isRaw(json!)).toBe(false);
+  expect(store.isCode(shape!)).toBe(true);
 });
 
 test("space selects the row and steps down on the list, and is left alone where it types or presses", () => {
@@ -194,18 +204,17 @@ test("r flips only a file that has two forms", () => {
     const flip = keys.keyFor(store, host, press("r"));
     expect(flip !== undefined).toBe(twoForms.includes(name));
     flip?.();
-    expect(store.s.flipped.length).toBe(twoForms.includes(name) ? 1 : 0);
+    expect(store.s.asCode.length).toBe(twoForms.includes(name) ? 1 : 0);
   }
 });
 
-test("a page and Markdown open rendered, a drawing and JSON open as their source, and r flips each", () => {
-  const opens = { "page.html": false, "page.htm": false, "table.csv": false, "notes.md": false, "notes.markdown": false, "shape.svg": true, "data.json": true };
-  for (const [name, raw] of Object.entries(opens)) {
+test("each file with code opens as what is made from it, and r always goes to its code first", () => {
+  for (const name of ["page.html", "page.htm", "table.csv", "notes.md", "notes.markdown", "shape.svg", "data.json"]) {
     const store = showing(name, "other.md");
     const file = store.s.entries.find((entry) => entry.name === name)!;
-    expect(store.isRaw(file)).toBe(raw);
+    expect(store.isCode(file)).toBe(false);
     keys.keyFor(store, host, press("r"))?.();
-    expect(store.isRaw(file)).toBe(!raw);
+    expect(store.isCode(file)).toBe(true);
   }
 });
 
@@ -442,4 +451,19 @@ test("Delete and Cmd Backspace ask to delete as Shift D does, and Backspace alon
   } finally {
     Object.assign(config, { delete: false, trash });
   }
+});
+
+test("f shows an open file alone, and Esc brings the page back before it closes the file", () => {
+  const store = showing("notes.md", "other.md");
+  // On the list there is no file to show alone.
+  expect(keys.keyFor(store, host, press("f"))).toBeUndefined();
+  store.s.open = store.s.entries[0] ?? null;
+  keys.keyFor(store, host, press("f"))?.();
+  expect(full).toBe(true);
+  keys.keyFor(store, host, press("Escape"))?.();
+  expect(full).toBe(false);
+  expect(store.s.open?.name).toBe("notes.md");
+  keys.keyFor(store, host, press("f"))?.();
+  keys.keyFor(store, host, press("f"))?.();
+  expect(full).toBe(false);
 });
