@@ -588,6 +588,11 @@ fn serve(args: Serve) -> Result<(), String> {
             ),
         };
         say!("  serving  {} ({writes})", shown(root.dir()));
+        if can != "read" && !crate::write::can_write(root.dir()) {
+            say!(
+                "  warning  the account okfs runs as cannot write in this folder, so writes in it fail. Folders in it may differ"
+            );
+        }
         if let Some(trash) = app.trash() {
             say!(
                 "  trash    a delete is kept {} days in {}, then goes for good",

@@ -8,6 +8,8 @@ cargo fmt --check
 cd ui && bun run check                      # type check the page and test it
 ```
 
+CI runs the tests with `cargo nextest run`, which the dev shell also has. It runs each test in its own process. It does not run doctests, so CI also runs `cargo test --doc`.
+
 The server is Rust (axum, tokio). The page is TypeScript, Preact and Tailwind CSS in `ui/`, built by `build.rs` into the binary. To work on the page without rebuilding the binary each time, run a debug build with `OKFS_UI_DIR=ui/dist` and rebuild the page with `cd ui && bun run build`.
 
 The pictures in `docs/screenshots/` are shot again with one command, from a release build and a folder to serve. It needs `chrome-devtools-axi` and nix. The script says which files the folder must hold:

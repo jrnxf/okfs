@@ -13,6 +13,12 @@ use crate::paths::PART;
 /// Names tried after the one asked for, when a file is kept beside one of the same name, at most.
 const MAX_COPIES: u32 = 999;
 
+/// Whether okfs may write in the folder `dir`: it makes a part there and drops it at once, so
+/// nothing is left behind and no listing ever shows it.
+pub fn can_write(dir: &Path) -> bool {
+    Part::new(dir).is_ok()
+}
+
 /// A file that a write is putting together, beside where it goes. It is removed when it is dropped,
 /// unless it was put in place: when the write fails, when the request is dropped part way, and once
 /// a link has given it its name. Its name starts with a dot and is never shown, even with
