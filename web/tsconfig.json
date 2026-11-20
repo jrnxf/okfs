@@ -4,7 +4,9 @@
     "allowImportingTsExtensions": true,
     "jsxImportSource": "react",
     "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
-    "typeRoots": ["../ui/node_modules/@types"]
+    "typeRoots": ["../ui/node_modules/@types"],
+    // The site is React: the Preact stand-in that ui/tsconfig.json sets up for nuqs is only for okfs's page.
+    "paths": {}
   },
   "include": ["src", "build.ts", "../ui/css.ts"],
   "exclude": ["src/demo-boot.ts", "src/demo-main.tsx", "src/frame-address.ts", "src/frame-host.ts", "src/wait-for-host.ts"]

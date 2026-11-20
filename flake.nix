@@ -59,7 +59,7 @@
               '';
               outputHashMode = "recursive";
               outputHashAlgo = "sha256";
-              outputHash = "sha256-5m9/nitOBzLb5b/5c7MV1MQk5GLnadraSHmTpnfCrwg=";
+              outputHash = "sha256-aYzCO1fsz4go2z9a8RJlIAdTHUMAQGIhAlD8sEj6wGs=";
             };
             craneLib = crane.mkLib pkgs;
             common = {

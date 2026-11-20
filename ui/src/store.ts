@@ -1,5 +1,6 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
+import { addressMoved } from "./address";
 import {
   DeleteError,
   type Found,
@@ -573,9 +574,10 @@ export class Store {
     const pushing = mode === "push" && url !== location.pathname + location.search;
     const trail = state.trail ?? this.trailTo(path, pushing);
     const marked = trail ? { ...state, trail } : state;
-    if (pushing) return history.pushState(marked, "", url);
     // A replaced file entry keeps what it remembered; a folder's entry takes only the mark it is given.
-    history.replaceState(mode === "push" || dir ? marked : history.state, "", url);
+    if (pushing) history.pushState(marked, "", url);
+    else history.replaceState(mode === "push" || dir ? marked : history.state, "", url);
+    addressMoved();
   }
 
   /** The way back to the matches from `path`, while it is at or below the folder entered from them. */
@@ -1053,6 +1055,7 @@ export class Store {
     s.open = null;
     s.palette = false;
     history.pushState({ found: true } satisfies Mark, "", this.matchesUrl());
+    addressMoved();
     this.emit();
     if (!s.matches.ready) void this.askMatches(false);
   }
@@ -1064,6 +1067,7 @@ export class Store {
     if (!s.finding || !s.matches || !q || q === s.matches.q) return;
     s.matches.q = q;
     history.replaceState(history.state, "", this.matchesUrl());
+    addressMoved();
     this.emit();
     void this.askMatches(false);
   }
