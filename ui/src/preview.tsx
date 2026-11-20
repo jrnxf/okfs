@@ -369,12 +369,12 @@ export function lookAhead(
       if (columns && flights.size < FLIGHTS) ask(columnsUrl(entry.path, [], columns)).catch(() => undefined);
       continue;
     }
-    const raw = source(entry);
-    const url = addressOf(entry, raw);
-    if (url !== null && url === startUrl(entry.path, raw && hasSource(entry))) {
+    const code = source(entry);
+    const url = addressOf(entry, code);
+    if (url !== null && url === startUrl(entry.path, code && hasSource(entry))) {
       if (answers.get(url) !== undefined || flights.has(url)) continue;
       if (!unknown.length) nearest = i;
-      unknown.push({ url, path: entry.path, source: raw && hasSource(entry) });
+      unknown.push({ url, path: entry.path, source: code && hasSource(entry) });
     } else if (url) {
       if (flights.size < FLIGHTS) ask(url).catch(() => undefined);
     } else if (entry.kind === "video") {
@@ -1315,17 +1315,17 @@ interface Shown {
   entry: Entry;
   stamp: string;
   report: Report;
-  /** Show the file's source in place of what is made from it. Only a file with both has it: see `hasSource`. */
-  raw?: boolean;
+  /** Show the file's code in place of what is made from it. Only a file with both has it: see `hasSource`. */
+  code?: boolean;
   /** Wrap the lines of a source at the edge of the pane. */
   wrap?: boolean;
 }
 
-function Kind({ entry, stamp, report, raw, wrap, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
+function Kind({ entry, stamp, report, code, wrap, waiting, left, onReady }: Shown & { waiting: boolean; left?: boolean; onReady: () => void }) {
   // A file of no bytes has nothing to show of any kind, and is said to be empty, not shown as a blank pane.
   if (entry.kind !== "folder" && entry.size === 0) return <Card entry={entry} line="This file is empty" />;
   // The bytes as they are, colored and never run: the same answer for a page, a drawing, a table.
-  if (raw && hasSource(entry)) return <Text entry={entry} report={report} source wrap={wrap} />;
+  if (code && hasSource(entry)) return <Text entry={entry} report={report} source wrap={wrap} />;
   switch (entry.kind) {
     case "folder":
       // A folder has columns of its own beside the list: see `Side`.

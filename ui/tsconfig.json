@@ -14,7 +14,13 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["bun"]
+    "types": ["bun"],
+    // nuqs is written for React: Preact's compat layer stands in for it, in the build and in the types.
+    "paths": {
+      "react": ["./node_modules/preact/compat"],
+      "react-dom": ["./node_modules/preact/compat"],
+      "react/jsx-runtime": ["./node_modules/preact/jsx-runtime"]
+    }
   },
   "include": ["src", "build.ts", "css.ts"]
 }

@@ -88,7 +88,7 @@ export const LABEL: Record<Kind, string> = {
 
 /**
  * True for a file that is shown as something made from its text: a page, rendered Markdown, a drawing, a
- * table, a tree. Such a file has a second form, its source as it is written.
+ * table, a tree. Such a file has a second form, its code: the text as it is written.
  */
 export function hasSource(file: { kind: Kind; ext: string }): boolean {
   return file.kind === "html" || file.kind === "md" || file.kind === "csv" || file.kind === "json" || file.ext === "svg";
@@ -100,11 +100,15 @@ export function formOf(file: { kind: Kind; ext: string }): string {
 }
 
 /**
- * True for a file with a source that is shown as its source when it is opened: a drawing and JSON. Markdown, a
- * page and a table open as what is made from them.
+ * The name of what a file with code is shown as when it is not its code: see `hasSource`. Every such file opens as
+ * this, and `c` flips it to its code.
  */
-export function sourceFirst(file: { kind: Kind; ext: string }): boolean {
-  return file.ext === "svg" || file.kind === "json";
+export function madeName(file: { kind: Kind; ext: string }): string {
+  if (file.ext === "svg") return "Image";
+  if (file.kind === "csv") return "Table";
+  if (file.kind === "json") return "Tree";
+  if (file.kind === "html") return "Page";
+  return "Preview";
 }
 
 /** True for a file whose source is prose, which wraps by default: Markdown, a page, a text or a log. */

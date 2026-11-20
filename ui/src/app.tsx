@@ -23,6 +23,8 @@ import { type Entry, type MenuTarget, SORT_LABEL, type SortKey, meantName, refus
 import { isDark, onThemeChange, setScheme } from "./theme";
 import { drop, pick, uploads } from "./upload";
 import { ageCell, rowId, rowName, sizeCell } from "./rows";
+import { useView, useViewSync } from "./view";
+import { madeName } from "./kinds";
 import { type Cell, VList } from "./vlist";
 import { ClashDialog, NameDialog, Tray } from "./write-ui";
 import { ContextMenu, Toast } from "./menu";
@@ -343,6 +345,11 @@ export function App() {
     document.body.classList.toggle("open", s.open !== null);
   }, [s.open]);
   useSlide(main, s.path, s.open !== null);
+  const view = useView();
+  useViewSync(view);
+  // The keys are heard from the first render on, and act on the address as it is when they are pressed.
+  const viewNow = useRef(view);
+  viewNow.current = view;
   const filterInput = useRef<HTMLInputElement>(null);
   const queryInput = useRef<HTMLInputElement>(null);
   const [filtering, setFiltering] = useState(false);
@@ -384,7 +391,7 @@ export function App() {
     const step = at >= cursorWas.current ? 1 : -1;
     cursorWas.current = at;
     if (s.status !== "ready") return;
-    const source = (entry: Entry) => store.isRaw(entry);
+    const source = (entry: Entry) => store.isCode(entry);
     lookAhead(list, at, step, (entry) => store.stamp(entry), columns ? (path) => store.leftIn(path) : null, source);
     pagesAhead(list, at, step, (entry) => store.stamp(entry), source);
   }, [at, s.entries, s.matches?.list, finding, s.status, columns, cut, s.hidden]);
@@ -456,6 +463,9 @@ export function App() {
           const box = row?.getBoundingClientRect();
           store.menuForCursor(box ? { x: box.left + 36, y: box.bottom - 4 } : { x: innerWidth / 3, y: innerHeight / 3 });
         },
+        flip: () => viewNow.current.flip(),
+        full: () => viewNow.current.full,
+        setFull: (on: boolean) => viewNow.current.setFull(on, true),
         copyPath: () => {
           const paths = store.pickedEntries().map((entry) => `/${entry.path}`);
           if (!paths.length) return;
@@ -755,7 +765,7 @@ export function App() {
     <>
       <Sprite />
       <header
-        class={`flex h-[calc(46px*var(--density))] min-w-0 items-center gap-3.5 border-b border-b-line ${LIST_PAD}`}
+        class={`flex h-[calc(46px*var(--density))] min-w-0 items-center gap-3.5 border-b border-b-line ${LIST_PAD} full:hidden`}
         onDragOver={(event) => carriesRows(event) && onDragOver(event)}
         onDrop={(event) => carriesRows(event) && onDrop(event)}
       >
@@ -941,7 +951,7 @@ export function App() {
         )}
       </main>
       <footer
-        class={`flex h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
+        class={`flex full:hidden h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
       >
         <span
           class={`inline-flex flex-none items-center font-mono text-[length:calc(var(--text)*0.72)] font-medium tracking-[0] uppercase before:size-1.5 before:rounded-[50%] before:bg-accent before:content-[''] phone:hidden ${
@@ -1011,7 +1021,12 @@ export function App() {
             )}
             {flippable && (
               <span>
-                <kbd>r</kbd> {store.isRaw(flippable) ? "rendered" : "source"}
+                <kbd>r</kbd> {store.isCode(flippable) ? madeName(flippable).toLowerCase() : "code"}
+              </span>
+            )}
+            {s.open && !s.editing && (
+              <span>
+                <kbd>f</kbd> full screen
               </span>
             )}
             {wrappable && (
@@ -1129,6 +1144,17 @@ export function App() {
           {finding ? "Refine" : "Filter"}
         </button>
       </footer>
+      {view.full && (
+        // The one way back on a screen with no keys, as a phone's.
+        <button
+          class="btn fixed top-2 right-2 z-30 bg-surface/80 text-muted opacity-40 shadow-[0_0_0_var(--line-w)_var(--line)] backdrop-blur-sm transition-opacity hover:text-fg hover:opacity-100 focus-visible:opacity-100"
+          aria-label="Leave full screen"
+          title="Leave full screen (esc)"
+          onClick={() => view.setFull(false, true)}
+        >
+          <Icon name="unscreen" />
+        </button>
+      )}
       <Notice />
       {s.palette && <Palette />}
       {s.help && <Help />}

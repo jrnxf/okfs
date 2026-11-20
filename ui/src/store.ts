@@ -1,5 +1,6 @@
 // The app's state and every action on it: where we are, what is listed, where the cursor is.
 
+import { addressMoved } from "./address";
 import {
   DeleteError,
   type Found,
@@ -28,11 +29,13 @@ import {
   parseLocation,
   urls,
   withFind,
+  withoutFile,
+  FILE_PARAMS,
 } from "./api";
 import { copyText } from "./clip";
 import { type Config, config, locate } from "./config";
 import { setShowsHidden, showsHidden } from "./hidden";
-import { type Kind, extension, formOf, hasSource, isProse, kindOf, sourceFirst } from "./kinds";
+import { type Kind, extension, formOf, hasSource, isProse, kindOf } from "./kinds";
 import { NONE, type Picked, check, everything, extend, only, toggle, within as stillIn } from "./pick";
 import { prefs } from "./prefs";
 import { NoAnswer } from "./reach";
@@ -192,10 +195,10 @@ export interface State {
   /** Hidden entries are listed: see `showsHidden`. */
   hidden: boolean;
   /**
-   * The kinds of file the reader flipped away from the form they open in: see `formOf` and `sourceFirst`.
-   * It starts empty on every visit.
+   * The kinds of file the reader shows as their code, not as what is made from it: see `formOf`. It starts empty on
+   * every visit.
    */
-  flipped: string[];
+  asCode: string[];
   /** The kinds of prose the reader turned wrapping off for: see `isProse`. */
   unwrapped: string[];
   sort: Sort;
@@ -338,7 +341,7 @@ export class Store {
     entries: [],
     cursor: 0,
     hidden: showsHidden(),
-    flipped: [],
+    asCode: [],
     unwrapped: [],
     sort: savedSort(),
     filter: "",
@@ -466,9 +469,9 @@ export class Store {
     return s.open ?? (cur && !cur.dir ? cur : null);
   }
 
-  /** Whether `file` is shown as its source: a drawing and JSON are until their kind is flipped, Markdown and a page once it is. */
-  isRaw(file: Entry): boolean {
-    return hasSource(file) && sourceFirst(file) !== this.s.flipped.includes(formOf(file));
+  /** Whether `file` is shown as its code. Every file with code opens as what is made from it, until its kind is flipped. */
+  isCode(file: Entry): boolean {
+    return hasSource(file) && this.s.asCode.includes(formOf(file));
   }
 
   /** The file on show, when it has a second form to flip to: see `hasSource`. A file of no bytes has neither. */
@@ -482,10 +485,10 @@ export class Store {
     return isProse(file) && !this.s.unwrapped.includes(file.kind);
   }
 
-  /** The file on show, when it is prose shown as its source, which has lines to wrap: a file of no bytes has none. */
+  /** The file on show, when it is prose shown as its code, which has lines to wrap: a file of no bytes has none. */
   wrappable(): Entry | null {
     const file = this.shown();
-    return file && file.size > 0 && isProse(file) && (!hasSource(file) || this.isRaw(file)) ? file : null;
+    return file && file.size > 0 && isProse(file) && (!hasSource(file) || this.isCode(file)) ? file : null;
   }
 
   /** The folder whose columns are beside the list: the one under the cursor, while no file has the full width. */
@@ -564,15 +567,17 @@ export class Store {
     this.s.cursor = Math.max(0, at);
   }
 
-  private setUrl(mode: HistoryMode, path: string, dir: boolean, state: Mark = {}): void {
+  /** `shows`: the address shows a file, and keeps what its query says about it. A folder's index page does. */
+  private setUrl(mode: HistoryMode, path: string, dir: boolean, state: Mark = {}, shows = !dir): void {
     if (mode === "none") return;
-    const url = urls.view(path, dir) + withFind(location.search);
+    const url = urls.view(path, dir) + withFind(shows ? location.search : withoutFile(location.search));
     const pushing = mode === "push" && url !== location.pathname + location.search;
     const trail = state.trail ?? this.trailTo(path, pushing);
     const marked = trail ? { ...state, trail } : state;
-    if (pushing) return history.pushState(marked, "", url);
     // A replaced file entry keeps what it remembered; a folder's entry takes only the mark it is given.
-    history.replaceState(mode === "push" || dir ? marked : history.state, "", url);
+    if (pushing) history.pushState(marked, "", url);
+    else history.replaceState(mode === "push" || dir ? marked : history.state, "", url);
+    addressMoved();
   }
 
   /** The way back to the matches from `path`, while it is at or below the folder entered from them. */
@@ -697,7 +702,7 @@ export class Store {
     const paged = s.open !== null && index !== undefined;
     // A file opened from elsewhere gets its folder as the entry before it, so closing lands there.
     if (!s.open || paged || (mode === "push" && changed && !opts.alone)) {
-      this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex(), trail: opts.trail });
+      this.setUrl(mode, listing.path, true, { listing: !paged && this.hasIndex(), trail: opts.trail }, paged);
     }
     if (s.open && !paged) this.setUrl(mode, s.open.path, false, { opened: true });
     this.emit();
@@ -1050,6 +1055,7 @@ export class Store {
     s.open = null;
     s.palette = false;
     history.pushState({ found: true } satisfies Mark, "", this.matchesUrl());
+    addressMoved();
     this.emit();
     if (!s.matches.ready) void this.askMatches(false);
   }
@@ -1061,6 +1067,7 @@ export class Store {
     if (!s.finding || !s.matches || !q || q === s.matches.q) return;
     s.matches.q = q;
     history.replaceState(history.state, "", this.matchesUrl());
+    addressMoved();
     this.emit();
     void this.askMatches(false);
   }
@@ -1146,7 +1153,7 @@ export class Store {
 
   /** The address of the matches: the folder they are over, with `?find=` for them. */
   private matchesUrl(): string {
-    return urls.view(this.s.path, true) + withFind(location.search, this.s.matches?.q);
+    return urls.view(this.s.path, true) + withFind(withoutFile(location.search), this.s.matches?.q);
   }
 
   /** Counts the asks for the first page of the matches, so an answer for a query or a sort since left is dropped. */
@@ -1220,16 +1227,21 @@ export class Store {
   }
 
   /**
-   * Flips the file on show between its source and what is made from it. The choice holds for the files of
+   * Flips the file on show between its code and what is made from it. The choice holds for the files of
    * its kind that follow. A file with one form stays as it is. `shown` is a file other than the cursor's, such
    * as one the pointer rests on in a column.
    */
-  flipRaw(shown?: Entry): void {
-    const { s } = this;
+  flipCode(shown?: Entry): void {
     const file = shown ?? this.flippable();
-    if (!file || !hasSource(file)) return;
+    if (file) this.setCode(file, !this.isCode(file));
+  }
+
+  /** Shows `file` as its code, or as what is made from it. The choice holds for the files of its kind that follow. */
+  setCode(file: Entry, code: boolean): void {
+    const { s } = this;
+    if (!hasSource(file) || this.isCode(file) === code) return;
     const form = formOf(file);
-    s.flipped = s.flipped.includes(form) ? s.flipped.filter((kept) => kept !== form) : [...s.flipped, form];
+    s.asCode = code ? [...s.asCode, form] : s.asCode.filter((kept) => kept !== form);
     this.emit();
   }
 
@@ -1295,6 +1307,14 @@ export class Store {
   linkTo(entry: Pick<Entry, "path" | "dir"> | null = this.s.open ?? this.cur()): string | null {
     if (!entry) return null;
     const link = new URL(urls.view(entry.path, entry.dir), location.href);
+    // The open file's link shows it the way it is shown here: see view.ts.
+    if (entry.path === this.s.open?.path) {
+      const here = new URLSearchParams(location.search);
+      for (const name of FILE_PARAMS) {
+        const value = here.get(name);
+        if (value !== null) link.searchParams.set(name, value);
+      }
+    }
     if (config.key) link.searchParams.set("key", config.key);
     return link.href;
   }

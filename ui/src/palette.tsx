@@ -7,12 +7,13 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { type Answer, holdBack, took, waiting } from "./find";
 import { Icon, KindIcon } from "./icons";
-import { kindOf } from "./kinds";
+import { kindOf, madeName } from "./kinds";
 import { SCRIM } from "./look";
 import { UNREACHED, useDown } from "./reach";
 import { SORT_KEYS, SORT_LABEL, store } from "./store";
 import { pick } from "./upload";
 import { active, isDark, previewTheme, setScheme, setTheme } from "./theme";
+import { type View, useView } from "./view";
 
 /** The server is asked no oftener than this while typing goes on. The first key after a pause is asked at once. */
 const SETTLE = 40;
@@ -64,7 +65,7 @@ function themeMenu(): Menu {
   };
 }
 
-function commands(): Entry[] {
+function commands(view: View): Entry[] {
   const { s } = store;
   const under = s.open ?? store.cur();
   const here = store.here();
@@ -109,7 +110,8 @@ function commands(): Entry[] {
   const editable = store.editable(s.open ?? store.cur()) && !s.finding && !s.editing ? (s.open ?? store.cur()) : null;
   return [
     ...(editable ? [{ title: `Edit “${editable.name}”`, key: "e", run: () => store.edit(editable) }] : []),
-    ...(flippable ? [{ title: store.isRaw(flippable) ? "Show it rendered" : "Show the source", key: "r", run: () => store.flipRaw() }] : []),
+    ...(flippable ? [{ title: store.isCode(flippable) ? `Show the ${madeName(flippable).toLowerCase()}` : "Show the code", key: "r", run: () => view.flip(flippable) }] : []),
+    ...(s.open && !s.editing ? [{ title: view.full ? "Leave full screen" : "Full screen", key: "f", run: () => view.setFull(!view.full, true) }] : []),
     ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
     {
@@ -173,6 +175,7 @@ export function Marked({ text, idx, from = 0 }: { text: string; idx: number[]; f
 type Row = { command: Entry; idx: number[] } | { hit: Hit } | { recent: Changed } | { all: true };
 
 export function Palette() {
+  const view = useView();
   // Over the matches, the palette starts from their query.
   const [value, setValue] = useState(() => (store.s.finding ? (store.s.matches?.q ?? "") : ""));
   const [selected, setSelected] = useState(0);
@@ -272,7 +275,7 @@ export function Palette() {
   } else {
     // Nothing typed: the newest files first, then the commands. `>` means commands only.
     const newest: Row[] = value.trim() === "" ? recent.map((file) => ({ recent: file })) : [];
-    rows = [...newest, ...matching(commands())];
+    rows = [...newest, ...matching(commands(view))];
   }
   const at = Math.min(selected, Math.max(0, rows.length - 1));
   const under = rows[at];

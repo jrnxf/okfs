@@ -10,7 +10,7 @@ import { Aim, AIM_RECHECK } from "./aim";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
-import { hasSource } from "./kinds";
+import { hasSource, madeName } from "./kinds";
 import { AGE, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
 import { Editor } from "./editor";
@@ -20,6 +20,7 @@ import { SLIDE_MS } from "./slide";
 import { type Chain, type Left, columnsOf, focusOf, pointedAt, standIn } from "./slots";
 import { type Doomed, type Entry, type MenuTarget, store, toEntry } from "./store";
 import { pick, uploads } from "./upload";
+import { useView } from "./view";
 
 /** A click on a row of a column goes where a click in the main list would: into a folder, onto a file. */
 function visit(listing: Listing, item: Item, open: boolean): void {
@@ -62,6 +63,9 @@ const GHOST = "ghost:pointer-events-none ghost:absolute ghost:z-1";
  * kept in the page, hidden, while the panes slide: the slide shows it as it slides out. */
 const PANE = `order-1 min-h-0 min-w-0 flex-1 flex-col bg-surface ${GHOST}`;
 const PV = "pv relative flex h-full min-h-0 flex-col";
+/** The two forms of a file with code, side by side: see `madeName`. */
+const SWITCH = "flex flex-none items-center gap-px rounded border border-line p-px";
+const SWITCH_BTN = "h-[calc(20px*var(--density))] px-2 text-xs phone:h-[30px] phone:px-2.5";
 /** A button that only a file at the full width has. */
 const OPEN_ONLY = "hidden viewing:inline-flex";
 /** A row of the menu behind a phone's More button. Its names are a bar's names: see `BAR_NAME`. */
@@ -247,7 +251,7 @@ function StepBar({ file }: { file: Entry }) {
   const files = store.files();
   return (
     <nav
-      class="hidden flex-none items-center justify-between gap-2 border-t border-t-line bg-surface px-(--pad) pt-1.5 pb-[calc(6px+env(safe-area-inset-bottom))] text-s text-muted phone:viewing:flex"
+      class="hidden flex-none items-center justify-between gap-2 border-t border-t-line bg-surface px-(--pad) pt-1.5 pb-[calc(6px+env(safe-area-inset-bottom))] text-s text-muted phone:viewing:flex full:hidden!"
       aria-label="Files in this folder"
     >
       <button class={STEP} aria-label="Previous file" onClick={() => store.step(-1)}>
@@ -361,6 +365,7 @@ function useGoing(here: boolean, shown: Entry | null): Entry | null {
 
 export function Side({ slots, matches = false }: { slots: number; matches?: boolean }) {
   const { s } = store;
+  const view = useView();
   const cur = store.cur();
   const file = s.open ?? (cur && !cur.dir ? cur : null);
   const columns = !s.open && cur?.dir ? cur : null;
@@ -401,7 +406,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
     const file = drawn;
     const learned = facts.path === file.path ? facts.list : [];
     const files = s.open ? store.files() : [];
-    const raw = store.isRaw(file);
+    const code = store.isCode(file);
     const wrappable = store.wrappable();
     header = (
       <>
@@ -423,9 +428,19 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           <Icon name="down" />
         </button>
         {hasSource(file) && file.size > 0 && (
-          <button class={`btn ${BAR_BTN}`} aria-label="Show the source" aria-pressed={raw} title={raw ? "Show it rendered (r)" : "Show the source (r)"} onClick={() => store.flipRaw(file)}>
-            <Icon name="code" />
-          </button>
+          // Both forms are named, and the one on show is filled: `r` goes to the other.
+          <div role="group" aria-label="Show as" class={SWITCH}>
+            {[false, true].map((asCode) => (
+              <button
+                class={`btn ${SWITCH_BTN}`}
+                aria-pressed={code === asCode}
+                title={code === asCode ? undefined : `Show the ${asCode ? "code" : madeName(file).toLowerCase()} (r)`}
+                onClick={() => code !== asCode && view.flip(file)}
+              >
+                {asCode ? "Code" : madeName(file)}
+              </button>
+            ))}
+          </div>
         )}
         {wrappable === file && (
           <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Wrap long lines" aria-pressed={store.wraps(file)} title={store.wraps(file) ? "Stop wrapping long lines (w)" : "Wrap long lines (w)"} onClick={() => store.flipWrap()}>
@@ -446,6 +461,11 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           </button>
         )}
         <More file={file} wrappable={wrappable === file} />
+        {s.open && !ledFile && (
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Full screen" title="Full screen (f)" onClick={() => view.setFull(true, true)}>
+            <Icon name="screen" />
+          </button>
+        )}
         {!ledFile && (
           // On a phone the back arrow already does this, and the name needs the room.
           <button class={`btn ${BAR_BTN} phone:hidden`} aria-label={s.open ? "Back to the list" : "Full width"} title={s.open ? "Back to the list (esc)" : "Full width (↵)"} onClick={() => (s.open ? store.close() : store.activate())}>
@@ -479,11 +499,11 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
         <div class={`${PANE} flex`} key="pane" ref={pane} data-pane={shown?.path ?? ""}>
           {/* With nothing to preview, as in an empty folder or at a missing address, there is nothing to head. */}
           {header && (
-            <div class={BAR} onMouseDown={keepFocus}>
+            <div class={`${BAR} full:hidden`} onMouseDown={keepFocus}>
               {header}
             </div>
           )}
-          <div class={PV}>{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} raw={store.isRaw(shown)} wrap={store.wraps(shown)} />}</div>
+          <div class={PV}>{shown && <Preview entry={shown} stamp={store.stamp(shown)} report={report} code={store.isCode(shown)} wrap={store.wraps(shown)} />}</div>
           {s.open && shown && !ledFile && <StepBar file={shown} />}
         </div>
       ) : (
@@ -491,7 +511,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
           <div class={`${PANE} hidden`} key="pane" ref={pane} data-going={going.path} aria-hidden="true" inert>
             <div class={BAR}>{header}</div>
             <div class={PV}>
-              <Preview entry={going} stamp={store.stamp(going)} report={report} raw={store.isRaw(going)} wrap={store.wraps(going)} />
+              <Preview entry={going} stamp={store.stamp(going)} report={report} code={store.isCode(going)} wrap={store.wraps(going)} />
             </div>
           </div>
         )
