@@ -43,7 +43,7 @@ beforeEach(() => {
 
 /** The store `showing` made last: the page's flip goes to it, as the page's goes to the one store. */
 let latest: { flipCode(): void } | null = null;
-let full = false;
+let focusMode = false;
 
 const host: KeyHost = {
   filter: () => undefined,
@@ -53,9 +53,9 @@ const host: KeyHost = {
   menu: () => undefined,
   copyPath: () => undefined,
   flip: () => latest?.flipCode(),
-  full: () => full,
-  setFull: (on) => {
-    full = on;
+  focusMode: () => focusMode,
+  setFocusMode: (on) => {
+    focusMode = on;
   },
 };
 
@@ -65,7 +65,7 @@ function showing(...names: string[]) {
   const entries = names.map((name, rank) => stores.toEntry({ n: name.replace(/\/$/, ""), d: name.endsWith("/"), s: 10, m: 1 }, "", rank));
   Object.assign(store.s, { status: "ready", all: entries, entries, cursor: 0 });
   latest = store;
-  full = false;
+  focusMode = false;
   return store;
 }
 
@@ -453,19 +453,19 @@ test("Delete and Cmd Backspace ask to delete as Shift D does, and Backspace alon
   }
 });
 
-test("f shows an open file alone, and Esc brings the page back before it closes the file", () => {
+test("f shows only the open file, and Esc brings okfs back before it closes the file", () => {
   const store = showing("notes.md", "other.md");
-  // On the list there is no file to show alone.
+  // On the list there is no file to focus on.
   expect(keys.keyFor(store, host, press("f"))).toBeUndefined();
   store.s.open = store.s.entries[0] ?? null;
   keys.keyFor(store, host, press("f"))?.();
-  expect(full).toBe(true);
+  expect(focusMode).toBe(true);
   keys.keyFor(store, host, press("Escape"))?.();
-  expect(full).toBe(false);
+  expect(focusMode).toBe(false);
   expect(store.s.open?.name).toBe("notes.md");
   keys.keyFor(store, host, press("f"))?.();
   keys.keyFor(store, host, press("f"))?.();
-  expect(full).toBe(false);
+  expect(focusMode).toBe(false);
 });
 
 test("a folder okfs may not write in changes nothing, says why, and keeps no page's controls", async () => {

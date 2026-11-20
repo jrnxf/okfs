@@ -464,8 +464,8 @@ export function App() {
           store.menuForCursor(box ? { x: box.left + 36, y: box.bottom - 4 } : { x: innerWidth / 3, y: innerHeight / 3 });
         },
         flip: () => viewNow.current.flip(),
-        full: () => viewNow.current.full,
-        setFull: (on: boolean) => viewNow.current.setFull(on, true),
+        focusMode: () => viewNow.current.focusMode,
+        setFocusMode: (on: boolean) => viewNow.current.setFocusMode(on),
         copyPath: () => {
           const paths = store.pickedEntries().map((entry) => `/${entry.path}`);
           if (!paths.length) return;
@@ -765,7 +765,7 @@ export function App() {
     <>
       <Sprite />
       <header
-        class={`flex h-[calc(46px*var(--density))] min-w-0 items-center gap-3.5 border-b border-b-line ${LIST_PAD} full:hidden`}
+        class={`flex h-[calc(46px*var(--density))] min-w-0 items-center gap-3.5 border-b border-b-line ${LIST_PAD} focus-mode:hidden`}
         onDragOver={(event) => carriesRows(event) && onDragOver(event)}
         onDrop={(event) => carriesRows(event) && onDrop(event)}
       >
@@ -951,7 +951,7 @@ export function App() {
         )}
       </main>
       <footer
-        class={`flex full:hidden h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
+        class={`flex focus-mode:hidden h-[calc(28px*var(--density))] min-w-0 items-center gap-3.5 border-t border-t-line ${LIST_PAD} text-xs text-muted phone:h-[calc(44px*var(--density))] phone:pb-[env(safe-area-inset-bottom)] [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:border-b`}
       >
         <span
           class={`inline-flex flex-none items-center font-mono text-[length:calc(var(--text)*0.72)] font-medium tracking-[0] uppercase before:size-1.5 before:rounded-[50%] before:bg-accent before:content-[''] phone:hidden ${
@@ -1026,7 +1026,7 @@ export function App() {
             )}
             {s.open && !s.editing && (
               <span>
-                <kbd>f</kbd> full screen
+                <kbd>f</kbd> focus
               </span>
             )}
             {wrappable && (
@@ -1144,15 +1144,15 @@ export function App() {
           {finding ? "Refine" : "Filter"}
         </button>
       </footer>
-      {view.full && (
+      {view.focusMode && (
         // The one way back on a screen with no keys, as a phone's.
         <button
           class="btn fixed top-2 right-2 z-30 bg-surface/80 text-muted opacity-40 shadow-[0_0_0_var(--line-w)_var(--line)] backdrop-blur-sm transition-opacity hover:text-fg hover:opacity-100 focus-visible:opacity-100"
-          aria-label="Leave full screen"
-          title="Leave full screen (esc)"
-          onClick={() => view.setFull(false, true)}
+          aria-label="Leave focus"
+          title="Leave focus (esc)"
+          onClick={() => view.setFocusMode(false)}
         >
-          <Icon name="unscreen" />
+          <Icon name="unfocus" />
         </button>
       )}
       <Notice />

@@ -36,8 +36,8 @@ const LINE: Record<string, string> = {
     '<circle cx="8" cy="8" r="5.75"/><path d="M8 2.25v11.5"/><path d="M8 2.25a5.75 5.75 0 010 11.5z" fill="currentColor"/>',
   expand: '<path d="M9.5 2.75h3.75V6.5M6.5 13.25H2.75V9.5M13.25 2.75L9 7M2.75 13.25L7 9"/>',
   pane: `${R}<path d="M9.25 2.25v11.5"/>`,
-  screen: '<path d="M2.75 6V2.75H6M10 2.75h3.25V6M13.25 10v3.25H10M6 13.25H2.75V10"/>',
-  unscreen: '<path d="M6 2.75V6H2.75M13.25 6H10V2.75M10 13.25V10h3.25M2.75 10H6v3.25"/>',
+  focus: '<path d="M2.75 6V2.75H6M10 2.75h3.25V6M13.25 10v3.25H10M6 13.25H2.75V10"/>',
+  unfocus: '<path d="M6 2.75V6H2.75M13.25 6H10V2.75M10 13.25V10h3.25M2.75 10H6v3.25"/>',
   close: '<path d="M4 4l8 8M12 4l-8 8"/>',
   eye: '<path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z"/><circle cx="8" cy="8" r="1.75"/>',
   "eye-off":

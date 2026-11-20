@@ -80,7 +80,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `Enter` | Open the folder, or give the file the full width |
 | `r` | The code, or what is made from it, for a file that has both: HTML, Markdown, SVG, CSV, JSON |
 | `w` | Wrap long lines or not, for prose shown as its code: Markdown, HTML, text, logs |
-| `f` | Show the open file alone, at the screen's full size, or the page around it again |
+| `f` | Focus: show only the open file, with nothing of okfs around it, or okfs again |
 | `Backspace`, `-` | Up one folder |
 | `h` `l`, left and right arrows | Out of a folder and into one. With a file open, left goes back to the list it was opened from. |
 | `Home` `End` | First and last in the folder |
@@ -91,7 +91,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `s` | Change the sort |
 | `t` | Light or dark |
 | `.` | Show hidden files, or hide them again |
-| `Esc` | Leave the full screen, let the selection go, or close the open file or the filter. In a folder entered from the matches, go back to them. |
+| `Esc` | Leave focus, let the selection go, or close the open file or the filter. In a folder entered from the matches, go back to them. |
 | `a`, `Shift F10`, the menu key | The menu of the row under the cursor, or of the selection: the same menu a right click opens |
 | `Space` | Select the row and step down. With `Shift`, select from the anchor to the row. |
 | `Shift` and the arrows | Select from the anchor, growing and shrinking as `Shift` and a click do |
@@ -117,9 +117,9 @@ These addresses are stable. Scripts, bookmarks and `curl` can use them:
 | `/zip/<path>` | A folder as a zip stream. |
 | `/?find=<query>` | The page with the search for that query open. |
 | `/<path>?code` | The file as its code. Without it, a file opens as what is made from it. A file with no code ignores it. |
-| `/<path>?full` | The file alone, with nothing of the page around it. `Esc` or the button in the corner brings the page back. |
+| `/<path>?focus` | Only the file, with nothing of okfs around it. `Esc` or the button in the corner brings okfs back. |
 
-The two go together: `/notes.md?code&full` shows the code of `notes.md` alone. A key keeps the address in step: `r` writes `?code=1` while a file is open, and `f` writes `?full=1`. A link copied with `y` carries both. A folder's address drops them. A page cannot fill the screen by itself, so `?full` shows the file across the whole window. `f` also fills the screen. `/raw/<path>` is a different thing: the file's exact bytes, outside okfs.
+The two go together: `/notes.md?code&focus` shows only the code of `notes.md`. A key keeps the address in step: `r` writes `?code=1` while a file is open, and `f` writes `?focus=1`. A link copied with `y` carries both. A folder's address drops them. Focus fills the browser window, not the screen: the browser's own full screen (F11, or Ctrl-Cmd-F on a Mac) does that, and works with it. `/raw/<path>` is a different thing: the file's exact bytes, outside okfs.
 
 ```sh
 curl -O http://127.0.0.1:8080/notes/todo.md

@@ -18,10 +18,10 @@ export interface KeyHost {
   copyPath: () => void;
   /** Flips the file on show between its code and what is made from it: see view.ts. */
   flip: () => void;
-  /** The open file is shown alone: see view.ts. */
-  full: () => boolean;
-  /** Shows the open file alone at the screen's full size, or the page around it again. */
-  setFull: (on: boolean) => void;
+  /** Only the open file is shown, with nothing of okfs around it: see view.ts. */
+  focusMode: () => boolean;
+  /** Shows only the open file, or okfs around it again. */
+  setFocusMode: (on: boolean) => void;
 }
 
 /** All that the keys ask about a press. */
@@ -102,10 +102,10 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     ...(store.wrappable() ? { w: () => store.flipWrap() } : {}),
     Backspace: () => store.up(),
     "-": () => store.up(),
-    // An open file alone on the screen, and the way back to the page around it.
-    ...(modal ? { f: () => host.setFull(!host.full()) } : {}),
+    // Only the open file, and the way back to okfs around it.
+    ...(modal ? { f: () => host.setFocusMode(!host.focusMode()) } : {}),
     Escape: () => {
-      if (host.full()) host.setFull(false);
+      if (host.focusMode()) host.setFocusMode(false);
       else if (s.open) store.close();
       else if (store.clearPicks()) return;
       else if (s.filter) store.setFilter("");
