@@ -69,6 +69,11 @@ export type Doomed = Pick<Entry, "name" | "path" | "dir" | "link" | "kind" | "co
 };
 
 /** What a right click, a long press or `a` opened a menu on. */
+/** Why a write in a folder okfs may not write in is refused, in the server's own words for it. */
+export const CANNOT_WRITE = "the account okfs runs as cannot write in this folder";
+/** What the page says when something in such a folder is asked to change. */
+export const LOCKED = `Read only: ${CANNOT_WRITE}`;
+
 export type MenuTarget =
   /** One entry or the selected ones, all in the folder `dir`. */
   | { kind: "entries"; entries: Entry[]; dir: string }
@@ -206,6 +211,8 @@ export interface State {
   unreadable: number;
   /** The folder is there, but okfs has no permission to read what is in it. */
   denied: boolean;
+  /** okfs may change files, but not in this folder: the account it runs as may not write in it. */
+  locked: boolean;
   palette: boolean;
   help: boolean;
   /** The matches are on screen in place of the folder's list. */
@@ -341,6 +348,7 @@ export class Store {
     unlisted: 0,
     unreadable: 0,
     denied: false,
+    locked: false,
     palette: false,
     help: false,
     finding: false,
@@ -601,6 +609,7 @@ export class Store {
     s.unlisted = listing.hidden ?? 0;
     s.unreadable = listing.unreadable ?? 0;
     s.denied = listing.denied === true;
+    s.locked = listing.locked === true;
     s.readme = listing.readme;
     s.picked = stillIn(s.picked, s.all.map((entry) => entry.path));
   }
@@ -608,7 +617,7 @@ export class Store {
   /** Shows that nothing is at a path. */
   private lose(path: string): void {
     this.real = path;
-    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, denied: false, filter: "" });
+    Object.assign(this.s, { status: "missing", path, link: false, mtime: 0, all: [], entries: [], open: null, readme: null, bytes: 0, unlisted: 0, unreadable: 0, denied: false, locked: false, filter: "" });
   }
 
   /**
@@ -1302,10 +1311,26 @@ export class Store {
     }
   }
 
-  /** The folder new files go into: the one on screen, while one is and adding is on. Never over the matches. */
-  addsTo(): string | null {
+  /** True when okfs may not write in the folder `dir`, as far as the page knows: the one on screen said so. */
+  locked(dir: string): boolean {
     const { s } = this;
-    return config.upload && s.status === "ready" && !s.finding ? s.path : null;
+    return s.locked && s.status === "ready" && s.path === dir;
+  }
+
+  /** True, and says why, when a write in the folder `dir` would be refused: okfs may not write in it. */
+  private refused(dir: string): boolean {
+    if (!this.locked(dir)) return false;
+    this.say(LOCKED);
+    return true;
+  }
+
+  /**
+   * The folder new files go into: the one on screen, while one is and adding is on. Never over the matches, and never
+   * into a folder okfs may not write in, unless `locked` asks for it anyway: a folder in it may still take them.
+   */
+  addsTo(locked = false): string | null {
+    const { s } = this;
+    return config.upload && s.status === "ready" && !s.finding && (locked || !s.locked) ? s.path : null;
   }
 
   /** Puts up the dialog that names a new file or folder in the folder on screen, or takes it down. */
@@ -1331,7 +1356,7 @@ export class Store {
 
   /** True for a file the editor can open: text of a kind it knows, no larger than it opens, while changing files is on. */
   editable(entry: Entry | null): entry is Entry {
-    if (!config.edit || !entry || entry.dir || entry.size > MAX_EDIT) return false;
+    if (!config.edit || !entry || entry.dir || entry.size > MAX_EDIT || this.locked(parentOf(entry.path))) return false;
     return EDITED.has(entry.kind) || entry.ext === "svg" || entry.ext === "";
   }
 
@@ -1415,7 +1440,7 @@ export class Store {
    */
   askDelete(doomed: Doomed | null = this.s.open ?? this.pickedEntries()[0] ?? null): void {
     // A match is deleted from its own folder, where the list shows what is left.
-    if (!config.delete || !doomed || this.s.finding) return;
+    if (!config.delete || !doomed || this.s.finding || this.refused(parentOf(doomed.path))) return;
     const picked = this.pickedEntries();
     const many = !doomed.forever && picked.length > 1 && picked.some((entry) => entry.path === doomed.path);
     if (this.s.trash && !doomed.forever) {
@@ -1704,7 +1729,7 @@ export class Store {
   /** Puts a field in place of the entry's name, in its row. */
   startRename(entry: Entry | null = this.cur()): void {
     const { s } = this;
-    if (!config.edit || !entry || s.finding || s.trashView) return;
+    if (!config.edit || !entry || s.finding || s.trashView || this.refused(parentOf(entry.path))) return;
     if (s.open && s.open.path !== entry.path) return;
     // An entry of a column is renamed in its own folder, which is shown first.
     if (parentOf(entry.path) !== s.path) {
@@ -1778,8 +1803,8 @@ export class Store {
    */
   async newHere(kind: "file" | "folder"): Promise<void> {
     const { s } = this;
-    const dir = this.addsTo();
-    if (dir === null) return;
+    const dir = this.addsTo(true);
+    if (dir === null || this.refused(dir)) return;
     if (!config.edit) return this.setNaming(kind);
     const taken = new Set(s.all.map((entry) => entry.name.toLowerCase()));
     const name = freeName(kind === "file" ? "untitled.txt" : "New folder", taken);
@@ -1806,7 +1831,7 @@ export class Store {
   startPicking(mode: Picking["mode"], entries: Entry[] = this.pickedEntries(), from = this.s.path): void {
     const { s } = this;
     if (mode === "move" ? !config.edit : !config.upload) return;
-    if (!entries.length) return;
+    if (!entries.length || (mode === "move" && this.refused(parentOf(entries[0]!.path)))) return;
     this.leave(() => {
       s.menu = null;
       s.picking = { mode, paths: entries.map((entry) => entry.path), from };
@@ -1869,7 +1894,7 @@ export class Store {
 
   /** Copies an entry beside itself, under the next free name: `notes (1).md`. */
   async duplicate(entry: Entry): Promise<void> {
-    if (!config.upload) return;
+    if (!config.upload || this.refused(parentOf(entry.path))) return;
     try {
       const copy = await copyEntry(entry.path, entry.path, true);
       await this.showAgain(copy.path);

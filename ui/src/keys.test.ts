@@ -443,3 +443,43 @@ test("Delete and Cmd Backspace ask to delete as Shift D does, and Backspace alon
     Object.assign(config, { delete: false, trash });
   }
 });
+
+test("a folder okfs may not write in changes nothing, says why, and keeps no page's controls", async () => {
+  const { config } = await import("./config");
+  const { saveControls } = await import("./saves");
+  Object.assign(config, { edit: true, upload: true, delete: true });
+  const store = showing("notes.md", "sub/");
+  const [notes] = store.s.entries;
+  try {
+    store.s.locked = true;
+    store.askDelete(notes ?? null);
+    store.startRename(notes ?? null);
+    store.startPicking("move", notes ? [notes] : []);
+    await store.newHere("file");
+    if (notes) await store.duplicate(notes);
+    expect([store.s.doomed, store.s.renaming, store.s.picking, store.s.naming]).toEqual([null, null, null, null]);
+    expect(store.s.notice).toBe(stores.LOCKED);
+    expect(store.editable(notes ?? null)).toBe(false);
+    // A copy goes elsewhere, so it is still offered.
+    store.startPicking("copy", notes ? [notes] : []);
+    expect(store.s.picking?.mode).toBe("copy");
+
+    // The page on screen is told once that its controls are not kept, and nothing is read or written.
+    Object.assign(stores.store.s, { status: "ready", path: "", locked: true });
+    saveControls("page.html", [{ id: "a", checked: true }]);
+    saveControls("page.html", [{ id: "a", checked: false }]);
+    await new Promise((done) => setTimeout(done, 450));
+    expect(stores.store.s.notice).toBe(`Not saved: ${stores.CANNOT_WRITE}`);
+    expect(asked.filter((url) => url.includes("page.html"))).toEqual([]);
+
+    // A folder okfs may write in changes as before.
+    store.s.picking = null;
+    store.s.locked = false;
+    expect(store.editable(notes ?? null)).toBe(true);
+    store.startRename(notes ?? null);
+    expect(store.s.renaming?.path).toBe("notes.md");
+  } finally {
+    Object.assign(stores.store.s, { locked: false });
+    Object.assign(config, { edit: false, upload: false, delete: false });
+  }
+});
