@@ -111,7 +111,7 @@ function commands(view: View): Entry[] {
   return [
     ...(editable ? [{ title: `Edit “${editable.name}”`, key: "e", run: () => store.edit(editable) }] : []),
     ...(flippable ? [{ title: store.isCode(flippable) ? `Show the ${madeName(flippable).toLowerCase()}` : "Show the code", key: "r", run: () => view.flip(flippable) }] : []),
-    ...(s.open && !s.editing ? [{ title: view.full ? "Leave full screen" : "Full screen", key: "f", run: () => view.setFull(!view.full, true) }] : []),
+    ...(s.open && !s.editing ? [{ title: view.focusMode ? "Leave focus" : "Enter focus", key: "f", run: () => view.setFocusMode(!view.focusMode) }] : []),
     ...(wrappable ? [{ title: store.wraps(wrappable) ? "Stop wrapping long lines" : "Wrap long lines", key: "w", run: () => store.flipWrap() }] : []),
     ...SORT_KEYS.map((key) => ({ title: `Sort by ${SORT_LABEL[key].toLowerCase()}`, run: () => store.setSort(key) })),
     {

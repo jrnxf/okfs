@@ -251,7 +251,7 @@ function StepBar({ file }: { file: Entry }) {
   const files = store.files();
   return (
     <nav
-      class="hidden flex-none items-center justify-between gap-2 border-t border-t-line bg-surface px-(--pad) pt-1.5 pb-[calc(6px+env(safe-area-inset-bottom))] text-s text-muted phone:viewing:flex full:hidden!"
+      class="hidden flex-none items-center justify-between gap-2 border-t border-t-line bg-surface px-(--pad) pt-1.5 pb-[calc(6px+env(safe-area-inset-bottom))] text-s text-muted phone:viewing:flex focus-mode:hidden!"
       aria-label="Files in this folder"
     >
       <button class={STEP} aria-label="Previous file" onClick={() => store.step(-1)}>
@@ -462,8 +462,8 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
         )}
         <More file={file} wrappable={wrappable === file} />
         {s.open && !ledFile && (
-          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Full screen" title="Full screen (f)" onClick={() => view.setFull(true, true)}>
-            <Icon name="screen" />
+          <button class={`btn ${BAR_BTN} phone:hidden`} aria-label="Focus" title="Focus: only the file (f)" onClick={() => view.setFocusMode(true)}>
+            <Icon name="focus" />
           </button>
         )}
         {!ledFile && (
@@ -499,7 +499,7 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
         <div class={`${PANE} flex`} key="pane" ref={pane} data-pane={shown?.path ?? ""}>
           {/* With nothing to preview, as in an empty folder or at a missing address, there is nothing to head. */}
           {header && (
-            <div class={`${BAR} full:hidden`} onMouseDown={keepFocus}>
+            <div class={`${BAR} focus-mode:hidden`} onMouseDown={keepFocus}>
               {header}
             </div>
           )}

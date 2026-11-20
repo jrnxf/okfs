@@ -1,4 +1,4 @@
-// What a file's address says about how it is shown: `?code` shows its code, `?full` shows it alone.
+// What a file's address says about how it is shown: `?code` shows its code, `?focus` shows only it.
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
@@ -54,11 +54,11 @@ test("a drawing, JSON and a table open as what is made from them, each named for
   }
 });
 
-test("?full shows the file alone, and Esc brings the page back before it closes the file", async ({ page, okfs }) => {
-  await page.goto(`${okfs.origin}/notes.md?full`);
+test("?focus shows only the file, and Esc brings okfs back before it closes the file", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/notes.md?focus`);
   await expect(heading(page)).toBeVisible();
   // A word as typed is written the one way the page writes it.
-  await expect(page).toHaveURL(`${okfs.origin}/notes.md?full=1`);
+  await expect(page).toHaveURL(`${okfs.origin}/notes.md?focus=1`);
   await expect(banner(page)).toBeHidden();
   await expect(footer(page)).toBeHidden();
   await expect(pane(page).getByRole("button", { name: "Back to the list" })).toBeHidden();
@@ -75,18 +75,18 @@ test("?full shows the file alone, and Esc brings the page back before it closes 
   await expect(page).toHaveURL(`${okfs.origin}/`);
 });
 
-test("the two go together, and the button leaves the full screen", async ({ page, okfs }) => {
-  await page.goto(`${okfs.origin}/notes.md?code&full`);
+test("the two go together, and the button leaves focus", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/notes.md?code&focus`);
   await expect(pane(page)).toContainText("# Field notes");
   await expect(banner(page)).toBeHidden();
-  await page.getByRole("button", { name: "Leave full screen" }).click();
+  await page.getByRole("button", { name: "Leave focus" }).click();
   await expect(page).toHaveURL(`${okfs.origin}/notes.md?code=1`);
   await expect(banner(page)).toBeVisible();
 });
 
-test("f shows the open file alone, and a file opened in its code says so in its address", async ({ page, okfs }) => {
+test("f shows only the open file, never the browser's full screen, and a file opened in its code says so in its address", async ({ page, okfs }) => {
   await page.goto(`${okfs.origin}/`);
-  // On the list there is nothing to show alone.
+  // On the list there is nothing to focus on.
   await page.keyboard.press("f");
   await expect(page).toHaveURL(`${okfs.origin}/`);
   await page.getByRole("option", { name: /^notes\.md/ }).click();
@@ -96,8 +96,10 @@ test("f shows the open file alone, and a file opened in its code says so in its 
   await expect(page).toHaveURL(`${okfs.origin}/notes.md?code=1`);
 
   await page.keyboard.press("f");
-  await expect(page).toHaveURL(`${okfs.origin}/notes.md?code=1&full=1`);
+  await expect(page).toHaveURL(`${okfs.origin}/notes.md?code=1&focus=1`);
   await expect(banner(page)).toBeHidden();
+  // The browser's own full screen is a separate thing.
+  expect(await page.evaluate(() => document.fullscreenElement)).toBeNull();
 
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
@@ -107,7 +109,7 @@ test("f shows the open file alone, and a file opened in its code says so in its 
 });
 
 test("a folder's address drops what is only about a file", async ({ page, okfs }) => {
-  await page.goto(`${okfs.origin}/deep/?full=1&code&theme=nord`);
+  await page.goto(`${okfs.origin}/deep/?focus=1&code&theme=nord`);
   await expect(page.getByRole("option", { name: /^readme\.txt/ })).toBeVisible();
   await expect(page).toHaveURL(`${okfs.origin}/deep/?theme=nord`);
   await expect(banner(page)).toBeVisible();
