@@ -79,3 +79,15 @@ test("a table larger than the server reads whole is shown as its code, and the t
   await expect(shown.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
   await expect(shown.getByRole("button", { name: "Table" })).toBeEnabled();
 });
+
+test("the tab's title says what was searched for while the matches are shown", async ({ page, okfs }) => {
+  await page.goto(`${okfs.origin}/`);
+  const title = await page.title();
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("needle");
+  await page.getByRole("option", { name: /^Show all/ }).click();
+  await expect(page).toHaveTitle(`Find “needle” - ${title}`);
+  // Back from the matches, it is the folder's again.
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveTitle(title);
+});

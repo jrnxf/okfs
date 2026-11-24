@@ -460,8 +460,10 @@ export function App() {
 
   useEffect(() => {
     const name = s.open?.name ?? (s.path ? s.path.slice(s.path.lastIndexOf("/") + 1) : "");
-    document.title = name ? `${name} - ${config.title}` : config.title;
-  }, [s.open, s.path]);
+    const where = name ? `${name} - ${config.title}` : config.title;
+    // Over the matches of a search, the tab says what was searched for.
+    document.title = s.finding && s.matches ? `Find “${s.matches.q}” - ${where}` : where;
+  }, [s.open, s.path, s.finding, s.matches?.q]);
 
   // Listening from the first render, not after the first paint: a key pressed as the page appears is not lost.
   useLayoutEffect(() => {
