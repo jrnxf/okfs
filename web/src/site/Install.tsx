@@ -71,9 +71,9 @@ export function Install() {
         <div className="way" data-way="docker" hidden={way !== "docker"}>
           <div className="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2">
             <code className="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">
-              docker run -p 8080:8080 -v &quot;$PWD:/srv:ro&quot; ghcr.io/jrnxf/okfs:0.1.0-pre.16
+              docker run -p 8080:8080 -v &quot;$PWD:/srv:ro&quot; ghcr.io/jrnxf/okfs:0.1.0-pre.26
             </code>
-            <CopyButton className="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" text={'docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs:0.1.0-pre.16'} />
+            <CopyButton className="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" text={'docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs:0.1.0-pre.26'} />
           </div>
           <p className="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">
             It serves the folder you are in, read only, and prints links with a key. Open the one that starts with http://127.0.0.1:8080. The tag after the colon is a release&apos;s version; put the one you want there. The tag latest follows full releases only, from v0.1.0.

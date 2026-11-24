@@ -11,7 +11,7 @@
 
 - Homebrew, on macOS or Linux: `brew install jrnxf/tap/okfs`
 - nix: `nix run github:jrnxf/okfs`
-- Docker: `docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs:<version>`. The tag is a release's version without the `v`, such as `0.1.0-pre.16`. `latest` follows full releases only, from v0.1.0.
+- Docker: `docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs:<version>`. The tag is a release's version without the `v`, such as `0.1.0-pre.26`. `latest` follows full releases only, from v0.1.0.
 - From source, with a Rust toolchain and bun: `cargo install --git https://github.com/jrnxf/okfs`
 - Release archives for Linux, macOS and Windows, each with a `.sha256`: https://github.com/jrnxf/okfs/releases
 

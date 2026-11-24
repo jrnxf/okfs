@@ -32,7 +32,7 @@ tar -xzf okfs-*-aarch64-apple-darwin.tar.gz
 Without `gh`, `curl` does the same. Set `version` to the newest one on the releases page, without the `v`, and `target` to yours:
 
 ```sh
-version=0.1.0-pre.16
+version=0.1.0-pre.26
 target=x86_64-unknown-linux-musl
 base=https://github.com/jrnxf/okfs/releases/download/v$version
 curl -fsSLO "$base/okfs-$version-$target.tar.gz"
