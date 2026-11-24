@@ -3,7 +3,7 @@ import { type Served, serve } from "./serve";
 
 let okfs: Served;
 test.beforeAll(async () => {
-  okfs = await serve(["--key"]);
+  okfs = await serve(["--require-key"]);
 });
 test.afterAll(() => okfs.stop());
 
