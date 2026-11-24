@@ -1283,10 +1283,16 @@ async fn the_page_knows_what_its_address_points_at() {
         serde_json::json!({ "path": "api", "kind": "dir" })
     );
 
-    let (response, body) = get(&app, "/nope/%3C%2Fscript%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E").await;
+    let (response, body) = browse(&app, "/nope/%3C%2Fscript%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E").await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(config(&body)["target"]["kind"], "missing");
     assert!(!String::from_utf8_lossy(&body).contains("<script>alert(1)"));
+
+    // A program such as curl gets a short answer for a missing path, not the page.
+    let (response, body) = get(&app, "/nope.txt").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.headers()[header::VARY], "accept");
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"], "not found");
 }
 
 #[tokio::test]
@@ -2583,7 +2589,7 @@ async fn a_folder_answers_with_its_index_page_only_behind_the_flag() {
 
     // The served folder itself: /raw/ is its index page once it holds one, and only behind the flag.
     let missing = serde_json::json!({ "path": "raw", "kind": "missing" });
-    let (response, body) = get(&app, "/raw/").await;
+    let (response, body) = browse(&app, "/raw/").await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(config(&body)["target"], missing);
     fs::write(site.served.join("index.html"), "<h1>top</h1>").unwrap();
@@ -2591,7 +2597,7 @@ async fn a_folder_answers_with_its_index_page_only_behind_the_flag() {
     assert_eq!(top.status(), StatusCode::OK);
     assert_eq!(body, b"<h1>top</h1>");
     assert_eq!(top.headers(), get(&app, "/raw/index.html").await.0.headers());
-    let (response, body) = get(&off, "/raw/").await;
+    let (response, body) = browse(&off, "/raw/").await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(config(&body)["target"], missing);
 }

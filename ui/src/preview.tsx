@@ -1208,12 +1208,31 @@ function JsonNode({ value, name, depth }: { value: unknown; name?: string; depth
   );
 }
 
-/** Links in rendered Markdown that lead elsewhere open in a new tab; the rest stay in okfs. */
+/**
+ * Links in rendered Markdown that lead elsewhere open in a new tab; the rest stay in okfs. A link
+ * within the file, such as a footnote's, scrolls to its target and leaves the address as it is.
+ */
 function onProseClick(event: MouseEvent): void {
   const link = (event.target as Element).closest("a");
-  if (!link || link.host === location.host) return;
+  if (!link) return;
+  const href = link.getAttribute("href") ?? "";
+  if (href.startsWith("#")) {
+    event.preventDefault();
+    const id = decodeHash(href.slice(1));
+    (event.currentTarget as Element).querySelector(`[id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start" });
+    return;
+  }
+  if (link.host === location.host) return;
   event.preventDefault();
   window.open(link.href, "_blank", "noopener");
+}
+
+function decodeHash(hash: string): string {
+  try {
+    return decodeURIComponent(hash);
+  } catch {
+    return hash;
+  }
 }
 
 export function Prose({ html, class: extra }: { html: string; class?: string }) {

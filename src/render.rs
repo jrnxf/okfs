@@ -347,6 +347,9 @@ fn relative_target(base_dir: &str, url: &str) -> Option<String> {
     Some(format!("{}{slash}{tail}", parts.join("/")))
 }
 
+/// The prefix of every id in rendered Markdown.
+const ID_PREFIX: &str = "md-";
+
 fn cleaner(base_dir: &str) -> ammonia::Builder<'static> {
     let base_dir = base_dir.to_owned();
     let mut builder = ammonia::Builder::default();
@@ -354,6 +357,11 @@ fn cleaner(base_dir: &str) -> ammonia::Builder<'static> {
         .add_tags(["input"])
         .add_tag_attributes("input", ["type", "checked", "disabled"])
         .add_allowed_classes("span", ["tk-c", "tk-k", "tk-s", "tk-n", "tk-t"])
+        // A footnote's reference links to the id of its note. Every id gets a prefix, so that no id
+        // in a served file can take the place of one of the page's own, and a link within the file
+        // gets the same prefix.
+        .add_generic_attributes(["id"])
+        .id_prefix(Some(ID_PREFIX))
         .url_relative(ammonia::UrlRelative::PassThrough)
         .link_rel(Some("noopener noreferrer"))
         .attribute_filter(move |element, attribute, value| match (element, attribute) {
@@ -362,6 +370,7 @@ fn cleaner(base_dir: &str) -> ammonia::Builder<'static> {
                 Some(target) => format!("/raw/{target}").into(),
                 None => value.into(),
             }),
+            ("a", "href") if value.starts_with('#') => Some(format!("#{ID_PREFIX}{}", &value[1..]).into()),
             ("a", "href") => Some(match relative_target(&base_dir, value) {
                 Some(target) => view_url(&target).into(),
                 None => value.into(),
@@ -412,6 +421,18 @@ pub fn is_readme(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_footnote_reference_links_to_its_note() {
+        let html = markdown("Text[^1].\n\n[^1]: The note.\n", "");
+        assert!(html.contains(r##"href="#md-1""##), "{html}");
+        assert!(html.contains(r#"id="md-1""#), "{html}");
+        let html = markdown(r##"<a id="config">x</a> <a href="#config">y</a>"##, "");
+        assert!(
+            html.contains(r#"id="md-config""#) && html.contains(r##"href="#md-config""##),
+            "{html}"
+        );
+    }
 
     #[test]
     fn markdown_never_lets_script_through() {

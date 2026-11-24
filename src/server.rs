@@ -2408,6 +2408,14 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
                 .insert(header::VARY, HeaderValue::from_static("accept"));
             return response;
         }
+        // A program that does not ask for HTML gets a short answer for a missing path, not the page.
+        None if !wants_html(&headers) => {
+            let mut response = not_found();
+            response
+                .headers_mut()
+                .insert(header::VARY, HeaderValue::from_static("accept"));
+            return response;
+        }
         found => found,
     };
 
