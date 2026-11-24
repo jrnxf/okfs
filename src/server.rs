@@ -404,8 +404,9 @@ fn refuse_host(app: &App, request: &Request) -> Option<Response> {
     let host = request_host(request.headers(), request.uri());
     if app.options.check_host && !host_allowed(host, &app.options.allow_hosts) {
         let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
-        let message =
-            format!("okfs does not answer to the name {name:?}.\nTo allow it, start okfs with: --allow-host {name}\n");
+        let message = format!(
+            "okfs does not answer to the name {name:?}.\nTo allow it, start okfs with: --allow-host {name}\n{HELP_HOST}\n"
+        );
         return Some((StatusCode::FORBIDDEN, message).into_response());
     }
     None
@@ -550,7 +551,11 @@ fn needs_key(headers: &HeaderMap) -> Response {
         .into_response()
 }
 
-const NEEDS_KEY_TEXT: &str = "This link needs its key. Use an address okfs printed when it started: it ends in ?key=\n";
+/// Where the 403 for an unknown host name is explained.
+const HELP_HOST: &str =
+    "See https://github.com/jrnxf/okfs/blob/main/docs/troubleshooting.md#403-okfs-does-not-answer-to-the-name";
+
+const NEEDS_KEY_TEXT: &str = "This link needs its key. Use an address okfs printed when it started: it ends in ?key=\nSee https://github.com/jrnxf/okfs/blob/main/docs/troubleshooting.md#401-this-link-needs-its-key\n";
 
 const NEEDS_KEY_PAGE: &str = r#"<!doctype html>
 <html lang="en">
@@ -565,6 +570,7 @@ const NEEDS_KEY_PAGE: &str = r#"<!doctype html>
   h1 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
   p { margin: 0; color: #5f5f5c; }
   code { font: 13px ui-monospace, monospace; }
+  a { color: inherit; }
   @media (prefers-color-scheme: dark) {
     body { background: #161616; color: #ececea; }
     p { color: #a3a3a0; }
@@ -573,7 +579,7 @@ const NEEDS_KEY_PAGE: &str = r#"<!doctype html>
 <main>
   <h1>This link needs its key</h1>
   <p>Open an address okfs printed when it started, which ends in <code>?key=</code>, or scan its code again. A key from
-  an earlier start no longer works.</p>
+  an earlier start no longer works. <a href="https://github.com/jrnxf/okfs/blob/main/docs/troubleshooting.md#401-this-link-needs-its-key">More help</a>.</p>
 </main>
 </html>
 "#;
