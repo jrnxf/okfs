@@ -106,11 +106,35 @@ test("only a message made right is read", () => {
     { id: "c", open: false },
   ];
   expect(readMessage({ type: "okfs:save", controls: good })).toEqual(good);
+  expect(readMessage({ type: "okfs:save", v: 1, controls: good })).toEqual(good);
   expect(readMessage({ type: "other", controls: good })).toBeNull();
-  expect(readMessage({ type: "okfs:save", controls: [{ id: "a" }] })).toBeNull();
-  expect(readMessage({ type: "okfs:save", controls: [{ id: "a", checked: true, open: true }] })).toBeNull();
-  expect(readMessage({ type: "okfs:save", controls: [{ id: "", checked: true }] })).toBeNull();
-  expect(readMessage({ type: "okfs:save", controls: [{ id: "a", checked: "yes" }] })).toBeNull();
+  expect(readMessage({ type: "okfs:save", controls: "a" })).toBeNull();
   expect(readMessage("okfs:save")).toBeNull();
   expect(readMessage(null)).toBeNull();
+});
+
+test("a message of a later version is not read at all", () => {
+  const good: Control[] = [{ id: "a", checked: true }];
+  expect(readMessage({ type: "okfs:save", v: 2, controls: good })).toBeNull();
+  expect(readMessage({ type: "okfs:save", v: "1", controls: good })).toBeNull();
+  expect(readMessage({ type: "okfs:save", v: 0, controls: good })).toBeNull();
+});
+
+test("a control that cannot be read is left out, and the others are kept", () => {
+  const good: Control[] = [
+    { id: "a", checked: true },
+    { id: "b", value: "x" },
+  ];
+  const wrong = [
+    { id: "c" },
+    { id: "d", checked: true, open: true },
+    { id: "", checked: true },
+    { id: "e", checked: "yes" },
+    { id: "f", range: [1, 2] },
+    { id: "x".repeat(300), checked: true },
+    "g",
+    null,
+  ];
+  expect(readMessage({ type: "okfs:save", controls: [good[0], ...wrong, good[1]] })).toEqual(good);
+  expect(readMessage({ type: "okfs:save", controls: wrong })).toEqual([]);
 });

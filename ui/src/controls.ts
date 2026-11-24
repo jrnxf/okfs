@@ -13,25 +13,31 @@ const LONGEST_VALUE = 100_000;
 /** The kind of message a page sends to have its controls kept. */
 export const SAVE = "okfs:save";
 
+/** The version of the message that this okfs reads. A page may leave it out, which means 1. */
+export const SAVE_VERSION = 1;
+
 /**
- * The controls a message from a page names, or `null` when it is no message of this kind or is not made right:
- * `{ type: "okfs:save", controls: [{ id, checked } | { id, value } | { id, open }] }`.
+ * The controls a message from a page names, or `null` when it is no message of this kind:
+ * `{ type: "okfs:save", v: 1, controls: [{ id, checked } | { id, value } | { id, open }] }`.
+ *
+ * A message with a later `v` is not read at all: okfs does not know what it means. In a message it reads, a
+ * control that is not made right, or is of a kind this okfs does not know, is left out and the others are kept.
  */
 export function readMessage(data: unknown): Control[] | null {
   if (typeof data !== "object" || data === null) return null;
-  const { type, controls } = data as { type?: unknown; controls?: unknown };
+  const { type, v, controls } = data as { type?: unknown; v?: unknown; controls?: unknown };
   if (type !== SAVE || !Array.isArray(controls) || controls.length > MOST_CONTROLS) return null;
+  if (v !== undefined && v !== SAVE_VERSION) return null;
   const out: Control[] = [];
   for (const item of controls as unknown[]) {
-    if (typeof item !== "object" || item === null) return null;
+    if (typeof item !== "object" || item === null) continue;
     const { id, checked, value, open } = item as Record<string, unknown>;
-    if (typeof id !== "string" || id === "" || id.length > LONGEST_ID) return null;
+    if (typeof id !== "string" || id === "" || id.length > LONGEST_ID) continue;
     const said = [checked, value, open].filter((part) => part !== undefined).length;
-    if (said !== 1) return null;
+    if (said !== 1) continue;
     if (typeof checked === "boolean") out.push({ id, checked });
     else if (typeof open === "boolean") out.push({ id, open });
     else if (typeof value === "string" && value.length <= LONGEST_VALUE) out.push({ id, value });
-    else return null;
   }
   return out;
 }

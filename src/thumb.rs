@@ -89,7 +89,14 @@ impl Thumbs {
 
     fn slot(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Option<PathBuf> {
         let modified = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
-        let key = format!("{}\0{w}\0{modified}\0{}", abs.display(), meta.len());
+        // The version is in the key: a later okfs may draw a picture another way, and must not
+        // be handed the one an earlier okfs kept.
+        let key = format!(
+            "{}\0{}\0{w}\0{modified}\0{}",
+            env!("CARGO_PKG_VERSION"),
+            abs.display(),
+            meta.len()
+        );
         // FNV-1a: stable across builds, which a cache key has to be.
         let hash = key.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
