@@ -10,7 +10,7 @@ import { Aim, AIM_RECHECK } from "./aim";
 import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
-import { hasSource, madeName } from "./kinds";
+import { hasSource, madeName, tooLargeToMake } from "./kinds";
 import { AGE, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MORE_NAME, MORE_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
 import { Editor } from "./editor";
@@ -431,7 +431,15 @@ export function Side({ slots, matches = false }: { slots: number; matches?: bool
               <button
                 class={`btn ${SWITCH_BTN}`}
                 aria-pressed={code === asCode}
-                title={code === asCode ? undefined : `Show the ${asCode ? "code" : madeName(file).toLowerCase()} (r)`}
+                // A file larger than the server reads whole is shown as the code of its start, and has no other form.
+                disabled={!asCode && tooLargeToMake(file)}
+                title={
+                  !asCode && tooLargeToMake(file)
+                    ? `Too large to show as a ${madeName(file).toLowerCase()}: ${fmt.size(file.size)}, and only the start is read`
+                    : code === asCode
+                      ? undefined
+                      : `Show the ${asCode ? "code" : madeName(file).toLowerCase()} (r)`
+                }
                 onClick={() => code !== asCode && view.flip(file)}
               >
                 {asCode ? "Code" : madeName(file)}

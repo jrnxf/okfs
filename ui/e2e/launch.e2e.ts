@@ -53,3 +53,29 @@ test("a code file in the default theme has no contrast violation, light and dark
     expect(found).toEqual([]);
   }
 });
+
+test("a table larger than the server reads whole is shown as its code, and the tab says so", async ({ page, okfs }) => {
+  // 100,000 rows, over 2 MiB: the server shows the start of it as code.
+  const rows = Array.from({ length: 100_000 }, (_, i) => `${i},name number ${i},${(i * 7) % 1000}`);
+  const csv = `id,name,score\n${rows.join("\n")}\n`;
+  expect(csv.length).toBeGreaterThan(2 * 1024 * 1024);
+  writeFileSync(join(okfs.root, "big.csv"), csv);
+  await page.goto(`${okfs.origin}/big.csv`);
+  const shown = page.getByRole("group", { name: "Show as" });
+  // What the pane draws is code, and the tab that is selected is the one for code.
+  await expect(page.locator(".pv-scroll")).toContainText("id,name,score");
+  await expect(page.locator(".pv-scroll table")).toHaveCount(0);
+  await expect(shown.getByRole("button", { name: "Code" })).toHaveAttribute("aria-pressed", "true");
+  const table = shown.getByRole("button", { name: "Table" });
+  await expect(table).toHaveAttribute("aria-pressed", "false");
+  await expect(table).toBeDisabled();
+  await expect(table).toHaveAttribute("title", /Too large to show as a table/);
+  // `r` has no other form to go to: the pane stays as it was.
+  await page.keyboard.press("r");
+  await expect(shown.getByRole("button", { name: "Code" })).toHaveAttribute("aria-pressed", "true");
+  // A small table beside it still opens as a table, and keeps both tabs.
+  await page.goto(`${okfs.origin}/table.csv`);
+  await expect(page.locator(".pv-scroll table")).toHaveCount(1);
+  await expect(shown.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+  await expect(shown.getByRole("button", { name: "Table" })).toBeEnabled();
+});

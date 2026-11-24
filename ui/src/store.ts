@@ -35,7 +35,7 @@ import {
 import { copyText } from "./clip";
 import { type Config, config, locate } from "./config";
 import { setShowsHidden, showsHidden } from "./hidden";
-import { type Kind, extension, formOf, hasSource, isProse, kindOf } from "./kinds";
+import { type Kind, extension, formOf, hasSource, isProse, kindOf, tooLargeToMake } from "./kinds";
 import { NONE, type Picked, check, everything, extend, only, toggle, within as stillIn } from "./pick";
 import { prefs } from "./prefs";
 import { NoAnswer } from "./reach";
@@ -471,13 +471,13 @@ export class Store {
 
   /** Whether `file` is shown as its code. Every file with code opens as what is made from it, until its kind is flipped. */
   isCode(file: Entry): boolean {
-    return hasSource(file) && this.s.asCode.includes(formOf(file));
+    return hasSource(file) && (tooLargeToMake(file) || this.s.asCode.includes(formOf(file)));
   }
 
   /** The file on show, when it has a second form to flip to: see `hasSource`. A file of no bytes has neither. */
   flippable(): Entry | null {
     const file = this.shown();
-    return file && hasSource(file) && file.size > 0 ? file : null;
+    return file && hasSource(file) && file.size > 0 && !tooLargeToMake(file) ? file : null;
   }
 
   /** Whether the source of `file` wraps at the edge of the pane: prose does until its kind is flipped, code never. */
@@ -1239,7 +1239,8 @@ export class Store {
   /** Shows `file` as its code, or as what is made from it. The choice holds for the files of its kind that follow. */
   setCode(file: Entry, code: boolean): void {
     const { s } = this;
-    if (!hasSource(file) || this.isCode(file) === code) return;
+    // A file too large to be made is its code whatever is asked, and the asking is not kept for the files that follow.
+    if (!hasSource(file) || tooLargeToMake(file) || this.isCode(file) === code) return;
     const form = formOf(file);
     s.asCode = code ? [...s.asCode, form] : s.asCode.filter((kept) => kept !== form);
     this.emit();

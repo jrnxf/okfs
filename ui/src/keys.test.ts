@@ -511,3 +511,25 @@ test("a folder okfs may not write in changes nothing, says why, and keeps no pag
     Object.assign(config, { edit: false, upload: false, delete: false });
   }
 });
+
+test("a table, a tree or a document larger than the server reads whole is its code, and has no other form to flip to", () => {
+  const store = showing("small.csv", "big.csv", "big.json", "big.md", "big.html");
+  const entries = store.s.entries;
+  const [small, big, tree, doc, page] = entries;
+  for (const file of [big, tree, doc]) Object.assign(file!, { size: 2 * 1024 * 1024 + 1 });
+  // A page is drawn from the file itself, which no cut touches.
+  Object.assign(page!, { size: 5 * 1024 * 1024 });
+  expect(store.isCode(small!)).toBe(false);
+  for (const file of [big, tree, doc]) expect(store.isCode(file!)).toBe(true);
+  expect(store.isCode(page!)).toBe(false);
+  // Its flip is gone, and asking for the table does not keep a choice for the tables that follow.
+  store.s.cursor = 1;
+  expect(store.flippable()).toBe(null);
+  store.setCode(big!, false);
+  expect(store.isCode(big!)).toBe(true);
+  store.setCode(big!, true);
+  expect(store.s.asCode).toEqual([]);
+  expect(store.isCode(small!)).toBe(false);
+  store.s.cursor = 0;
+  expect(store.flippable()?.name).toBe("small.csv");
+});
