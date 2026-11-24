@@ -100,8 +100,36 @@ export function heard(status: number, scheme: () => string | null): NoAnswer | n
   }
   if (status === 401 && scheme() === KEY_SCHEME) {
     setDown(NEEDS_KEY);
+    reloadForKey();
     return new NoAnswer(NEEDS_KEY);
   }
   setDown(null);
+  forgetReload();
   return null;
+}
+
+/** Set in the tab once the page has reloaded itself for a refused key, and cleared by the first answer that lets it in. */
+const RELOADED = "okfs-reloaded-for-key";
+
+/**
+ * The key this page holds is no longer the server's: okfs started again with a new one. The page is replaced by
+ * a new load of the same address, and the server answers that with its full page for a link without the key. A tab
+ * does this once until a request gets in, so a server that keeps refusing cannot make the page reload in a loop.
+ */
+function reloadForKey(): void {
+  try {
+    if (sessionStorage.getItem(RELOADED)) return;
+    sessionStorage.setItem(RELOADED, "1");
+    location.reload();
+  } catch {
+    // No storage means no guard, and no reload: the page keeps saying that the link needs its key.
+  }
+}
+
+function forgetReload(): void {
+  try {
+    sessionStorage.removeItem(RELOADED);
+  } catch {
+    // Nothing was kept.
+  }
 }

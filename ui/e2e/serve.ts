@@ -15,27 +15,31 @@ export interface Served {
   origin: string;
   /** The folder served. */
   root: string;
-  stop: () => void;
+  /** Stops okfs and removes the folder, unless `keep` says it starts again. */
+  stop: (keep?: boolean) => void;
 }
 
 /**
  * Runs okfs on a fresh fixture folder. `args` are okfs's own, such as `--key`. `files` are more files to put in it,
  * by name, before okfs starts: one written after would be named as changed while a test looks at it.
  */
-export async function serve(args: string[] = [], files: Record<string, string> = {}): Promise<Served> {
-  const home = mkdtempSync(join(tmpdir(), "okfs-e2e-"));
+export async function serve(args: string[] = [], files: Record<string, string> = {}, again?: { root: string; port: number }): Promise<Served> {
+  // A server started again on the folder and the port of one that stopped: it holds a new key.
+  const home = again ? resolve(again.root, "..") : mkdtempSync(join(tmpdir(), "okfs-e2e-"));
   const root = join(home, "files");
-  mkdirSync(root);
-  build(root);
+  if (!again) {
+    mkdirSync(root);
+    build(root);
+  }
   for (const [name, text] of Object.entries(files)) writeFileSync(join(root, name), text);
-  const child: ChildProcess = spawn(BIN, [root, "--port", "0", "--no-open", ...args], {
+  const child: ChildProcess = spawn(BIN, [root, "--port", String(again?.port ?? 0), "--no-open", ...args], {
     // Thumbnails are cached under the home's cache folder: a run starts with none, as a visitor's first visit does.
     env: { ...process.env, HOME: home, XDG_CACHE_HOME: join(home, "cache"), XDG_DATA_HOME: join(home, "data") },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  const stop = () => {
+  const stop = (keep = false) => {
     child.kill();
-    rmSync(home, { recursive: true, force: true });
+    if (!keep) rmSync(home, { recursive: true, force: true });
   };
   const link = await new Promise<string>((done, fail) => {
     let seen = "";
