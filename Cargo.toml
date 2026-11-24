@@ -2,6 +2,8 @@
 name = "okfs"
 version = "0.1.0-dev.1"
 edition = "2024"
+# The oldest Rust that builds okfs: the newest that any dependency asks for. CI builds with it.
+rust-version = "1.92"
 description = "An open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard, each one shown beside the list as the cursor lands on it."
 readme = "README.md"
 repository = "https://github.com/jrnxf/okfs"
