@@ -15,6 +15,7 @@ use crate::index::{Follow, Index};
 use crate::key::{self, Key, Once};
 use crate::lan::{self, Scan};
 use crate::paths::Root;
+use crate::serve;
 use crate::server::{self, App, Options, ThemeChoice};
 use crate::theme;
 use crate::tls;
@@ -673,14 +674,9 @@ fn serve(args: Serve) -> Result<(), String> {
             // An open page holds a stream that would never end by itself.
             index.feed().close();
         };
-        match tls {
-            Some(config) => {
-                let listener = tls::Listener::new(listener, config)
-                    .map_err(|error| format!("cannot listen on {address}: {error}"))?;
-                axum::serve(listener, router).with_graceful_shutdown(shutdown).await
-            }
-            None => axum::serve(listener, router).with_graceful_shutdown(shutdown).await,
-        }
+        let tls = tls.map(tokio_rustls::TlsAcceptor::from);
+        serve::serve(listener, tls, router, serve::Limits::standard(), shutdown)
+            .await
         .map_err(|error| format!("the server stopped: {error}"))
     })
 }

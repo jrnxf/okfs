@@ -54,7 +54,12 @@ impl Skip {
         let mut any = false;
         let files = if served { &[GIT, OWN][..] } else { &[GIT][..] };
         for name in files {
-            let Ok(bytes) = fs::read(abs.join(name)) else { continue };
+            let path = abs.join(name);
+            // Only a file: a pipe of that name would be waited on for good.
+            if !fs::metadata(&path).is_ok_and(|meta| meta.is_file()) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(path) else { continue };
             let text = String::from_utf8_lossy(&bytes);
             for line in text.trim_start_matches('\u{feff}').lines() {
                 // A line that is not a pattern is not a rule, and the others still are.
