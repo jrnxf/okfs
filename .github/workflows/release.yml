@@ -14,11 +14,10 @@ name: release
 #   Running the workflow by hand (workflow_dispatch) does the same.
 #
 # - The crate job packages okfs for crates.io and installs it in a clean container with no bun, so
-#   `cargo install okfs` is proven on every run. Nothing here publishes it: `publish = false` in
-#   Cargo.toml holds until the first release, and `cargo publish` is run by hand.
-# - The image job builds the container image from the binaries the build jobs made and runs it. The
-#   image-push job, after the release is published, pushes it to ghcr.io/jrnxf/okfs as <version>, and
-#   also as latest on a full release. A pull request builds the image and pushes nothing.
+#   `cargo install okfs` is proven on every run. The crates-io job publishes it for a full release,
+#   and does nothing while Cargo.toml says `publish = false`.
+# - The image job builds the container image from the binaries the build jobs made and runs it. A
+#   pull request builds the image and pushes nothing. The order of the jobs that push is below.
 #
 # The release's assets, each with a `.sha256`:
 # - okfs-<version>-<target>.tar.gz for x86_64-unknown-linux-musl, aarch64-unknown-linux-musl,
@@ -34,10 +33,16 @@ name: release
 #   definition compiled in. Each archive holds the same text as THIRD_PARTY.md, and the image as
 #   /THIRD_PARTY.md, so the notices travel with every copy of the binary.
 #
-# The order of a release: the image is pushed under its version, then the release is published with
-# a build provenance attestation for each file, then latest moves to the image (full releases only),
-# then the tap is bumped, and last the image is run as a user would run it. A step that fails stops
-# the ones after it, so a release is never out without an image that works.
+# The order of a release:
+# 1. image-push pushes the image to ghcr.io/jrnxf/okfs under its version, then pulls it signed out
+#    and runs it. A release is never published without an image that runs.
+# 2. publish makes the release, then a build provenance attestation for each archive.
+# 3. tap bumps the Homebrew formula, and image-latest moves latest to the image (full releases
+#    only). Both need publish, so a release that fails moves neither.
+# 4. image-check runs the image with no tag, as the README says to (full releases only), and
+#    crates-io publishes the crate (full releases only, while Cargo.toml allows it).
+# A job in step 3 or 4 that fails turns the run red after the release is out: the release is then
+# not usable as documented, and the checklist for a release says to look at the run.
 on:
   push:
     tags: ["v*"]
@@ -45,6 +50,7 @@ on:
     paths:
       - .cargo/**
       - .github/workflows/release.yml
+      - README.md
       - scripts/archive-readme.sh
       - scripts/image-context.sh
       - about.hbs
@@ -182,9 +188,14 @@ jobs:
         run: |
           cp LICENSE "$ASSET/"
           cp notices/okfs-third-party-notices.md "$ASSET/THIRD_PARTY.md"
-          scripts/archive-readme.sh README.md > "$ASSET/README.md"
-          if grep -nE '(\]\(|(src|srcset|href)=")(docs|skills|themes|web|ui|src)/' "$ASSET/README.md"; then
-            echo "the archive's README still links into the repository" >&2
+          # A release's README points at its own tag, so it describes the binary beside it.
+          ref=main
+          [ "$GITHUB_REF_TYPE" = tag ] && ref=$GITHUB_REF_NAME
+          scripts/archive-readme.sh README.md "$ref" > "$ASSET/README.md"
+          # Every link left must be whole, to a place in the page, or to a file in the archive.
+          if grep -noE '(\]\(|(src|srcset|href)=")[^)" ]+' "$ASSET/README.md" \
+            | grep -vE '(\]\(|=")(https?://|#|mailto:|LICENSE[)"]?$|THIRD_PARTY\.md[)"]?$)'; then
+            echo "the archive's README links to a file the archive does not hold" >&2
             exit 1
           fi
           if [ "$RUNNER_OS" = Windows ]; then
@@ -221,6 +232,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # A full release is published with notes written by hand. Checked in the job every other
+      # one waits for: a tag without its notes stops in the first minute, with nothing built.
+      - name: Check the notes of a full release
+        if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+        run: test -s ".github/release-notes/$GITHUB_REF_NAME.md"
 
       # The syntax notices come from an example that links okfs, whose build runs bun.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -406,12 +423,6 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           scripts/image-context.sh assets "$version" context
 
-      # A full release is published with notes written by hand. Checked here, before anything is
-      # pushed: a tag without its notes stops with nothing out.
-      - name: Check the notes of a full release
-        if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
-        run: test -s ".github/release-notes/$GITHUB_REF_NAME.md"
-
       - name: Set up buildx
         run: docker buildx create --name okfs --driver docker-container --use
 
@@ -491,7 +502,8 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           # The labels are on each platform's image. The registry reads its page for an image of
           # more than one platform from the index, so the same facts go there too.
-          about="An open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard."
+          about=$(sed -n 's/.*org\.opencontainers\.image\.description="\(.*\)".*/\1/p' Dockerfile)
+          test -n "$about"
           docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile \
             --label "org.opencontainers.image.version=$version" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
@@ -500,6 +512,15 @@ jobs:
             --annotation "index:org.opencontainers.image.licenses=MIT" \
             --annotation "index:org.opencontainers.image.version=$version" \
             --tag "$IMAGE:$version" --push context
+
+      # Signed out, as a user is: the image that was just pushed is pulled from the registry and
+      # run. The release is published only when this passes.
+      - name: Run the pushed image as a user would
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          docker logout ghcr.io
+          docker run --rm --pull always "$IMAGE:$version" --version | tee pushed.txt
+          grep -Fx "okfs $version" pushed.txt
 
   publish:
     if: github.event_name == 'push'
@@ -526,14 +547,6 @@ jobs:
           name: release
           path: assets
 
-      # Says that these files were built by this workflow from this commit. Check one with:
-      #   gh attestation verify <file> --repo jrnxf/okfs
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            assets/*.tar.gz
-            assets/*.zip
-
       # A full release has notes written by hand, which say what okfs is. A pre-release lists the
       # pull requests since the one before it.
       - name: Publish the release
@@ -543,6 +556,16 @@ jobs:
             *) flags=(--notes-file ".github/release-notes/$TAG.md" --title "okfs ${TAG#v}") ;;
           esac
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" assets/*
+
+      # After the release, so that a fault here leaves a release without attestations and a red
+      # run, not an image with no release.
+      # Says that these files were built by this workflow from this commit. Check one with:
+      #   gh attestation verify <file> --repo jrnxf/okfs
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            assets/*.tar.gz
+            assets/*.zip
 
   # A tag with a hyphen is a pre-release: its image keeps its version tag and never becomes latest.
   # Runs only after the release is published, so a release that fails never moves latest. It points
@@ -566,36 +589,28 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$version"
 
-  # The last word on a release: the image is run from the registry as a user runs it, signed out.
-  # For a full release that is the command in the README, with no tag. When this fails the run
-  # fails, and the release is not usable as documented.
+  # The last word on a full release: the image is run with no tag, as the README says to, signed
+  # out. When this fails the run fails, and the release is not usable as documented.
   image-check:
-    if: always() && github.event_name == 'push' && needs.publish.result == 'success'
-    needs: [publish, image-latest]
+    if: github.event_name == 'push' && !contains(github.ref_name, '-')
+    needs: image-latest
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions: {}
     env:
       IMAGE: ghcr.io/jrnxf/okfs
     steps:
-      - name: Run the image as a user would
-        env:
-          LATEST: ${{ needs.image-latest.result }}
+      - name: Run the image as the README says
         run: |
           version=${GITHUB_REF_NAME#v}
-          docker run --rm "$IMAGE:$version" --version | tee tagged.txt
-          grep -Fx "okfs $version" tagged.txt
-          case "$version" in *-*) exit 0 ;; esac
-          if [ "$LATEST" != success ]; then
-            echo "::error::latest was not moved to $version: docker run $IMAGE fails or runs an older okfs"
-            exit 1
-          fi
-          docker run --rm "$IMAGE" --version | tee latest.txt
+          docker run --rm --pull always "$IMAGE" --version | tee latest.txt
           grep -Fx "okfs $version" latest.txt
 
   # Publishes the crate to crates.io, for a full release only. It cannot run yet: Cargo.toml says
-  # publish = false, and this job stops there. To turn it on, remove that line, and on crates.io
-  # add this repository and this workflow as a trusted publisher of okfs (no token is stored here).
+  # publish = false, and this job stops there. To turn it on: publish the first version by hand,
+  # as crates.io takes a trusted publisher only for a crate that exists. Then add this repository
+  # and this workflow as a trusted publisher of okfs there (no token is stored here), and remove
+  # the publish = false line.
   # The crate is packaged the way the crate job packages and installs it: same commit, same page.
   crates-io:
     if: github.event_name == 'push' && !contains(github.ref_name, '-')

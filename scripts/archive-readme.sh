@@ -3,11 +3,14 @@
 # from an unpacked archive, so each gets its address on GitHub: a page for a document, the file
 # itself for a picture. LICENSE and THIRD_PARTY.md are in the archive, and keep their links.
 #
-#   scripts/archive-readme.sh README.md > <archive folder>/README.md
+# The addresses name <ref>, a release's tag, so the README describes the binary beside it.
+#
+#   scripts/archive-readme.sh README.md <ref> > <archive folder>/README.md
 set -euo pipefail
 
-blob=https://github.com/jrnxf/okfs/blob/main
-raw=https://github.com/jrnxf/okfs/raw/main
+ref=${2:-main}
+blob=https://github.com/jrnxf/okfs/blob/$ref
+raw=https://github.com/jrnxf/okfs/raw/$ref
 dirs='docs|skills|themes|web|ui|src'
 sed -E \
   -e "s#(src|srcset)=\"(($dirs)/)#\1=\"$raw/\2#g" \

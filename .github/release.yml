@@ -2,16 +2,14 @@
 # notes written by hand in .github/release-notes/, which the release workflow publishes.
 changelog:
   exclude:
-    authors:
-      - dependabot[bot]
     labels:
-      - skip-notes
+      - dependencies
   categories:
     - title: New
-      labels: [enhancement, feature]
+      labels: [enhancement]
     - title: Fixes
-      labels: [bug, fix, security]
-    - title: Docs and site
-      labels: [documentation, site]
+      labels: [bug]
+    - title: Docs
+      labels: [documentation]
     - title: Everything else
       labels: ["*"]
