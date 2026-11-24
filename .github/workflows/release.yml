@@ -35,6 +35,7 @@ on:
     tags: ["v*"]
   pull_request:
     paths:
+      - .cargo/**
       - .github/workflows/release.yml
       - about.hbs
       - about.toml
@@ -136,6 +137,11 @@ jobs:
           file "$bin"
           if [ "$RUNNER_OS" = Linux ] && ! file -b "$bin" | grep -Eq 'static(ally|-pie) linked'; then
             echo "expected a static binary" >&2
+            exit 1
+          fi
+          # .cargo/config.toml links the C runtime in: okfs.exe must ask for no runtime DLL.
+          if [ "$RUNNER_OS" = Windows ] && grep -aqiE 'vcruntime[0-9]+\.dll|api-ms-win-crt-' "$bin"; then
+            echo "expected a static C runtime, but okfs.exe names a runtime DLL" >&2
             exit 1
           fi
 

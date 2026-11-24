@@ -1,0 +1,4 @@
+# The Windows binary carries the C runtime inside it, so okfs.exe starts on a machine that has no
+# Visual C++ redistributable, such as a fresh install or Windows Sandbox.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
