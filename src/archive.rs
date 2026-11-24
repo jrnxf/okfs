@@ -152,8 +152,14 @@ fn write(root: &Root, index: &Index, rel: &str, top: &Path, all: bool, pipe: Pip
         }
         for entry in seen.iter().filter(|e| !e.dir) {
             let name = paths::join(&dir, &entry.name);
+            let path = top.join(&name);
+            // A pipe, a socket or a device is skipped, and so is a link to one: opening a pipe
+            // waits for a writer that may never come.
+            if !std::fs::metadata(&path).is_ok_and(|meta| meta.is_file()) {
+                continue;
+            }
             // A file that vanished or cannot be read is skipped: the rest is still wanted.
-            let Ok(mut file) = File::open(top.join(&name)) else {
+            let Ok(mut file) = File::open(&path) else {
                 continue;
             };
             let Ok(meta) = file.metadata() else { continue };

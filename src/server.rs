@@ -1541,7 +1541,8 @@ fn copy_size(root: &Root, abs: &std::path::Path) -> u64 {
 }
 
 /// Copies what okfs shows of the folder `from` into the folder `to`, which is new and empty. A link
-/// is copied as a link where links can be made, and left out elsewhere: none is followed.
+/// is copied as a link where links can be made, and left out elsewhere: none is followed. A pipe,
+/// a socket or a device is left out: reading one may never end.
 fn copy_tree(root: &Root, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     for seen in root.scan(from)? {
         let (source, target) = (from.join(&seen.name), to.join(&seen.name));
@@ -1551,7 +1552,7 @@ fn copy_tree(root: &Root, from: &std::path::Path, to: &std::path::Path) -> std::
         } else if seen.dir {
             fs::create_dir(&target)?;
             copy_tree(root, &source, &target)?;
-        } else {
+        } else if fs::symlink_metadata(&source)?.is_file() {
             fs::copy(&source, &target)?;
         }
     }
@@ -1595,6 +1596,10 @@ async fn copy_entry(
             Err(why) => return no_place(why),
         };
         let dir = found.meta.is_dir();
+        // A pipe, a socket or a device is no file to copy: reading one may never end.
+        if !dir && !found.meta.is_file() {
+            return not_found();
+        }
         if dir && place.dir.starts_with(&found.abs) {
             return fail(StatusCode::CONFLICT, "a folder cannot be copied into itself");
         }
@@ -2039,19 +2044,30 @@ async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Respons
 }
 
 /// A file a page in the preview asks for with its pass, sent as `/raw/` sends it. Only a file the
-/// pass opens is found: one in the page's own folder or below it.
+/// pass opens is found: one in the page's own folder or below it. That holds for the address that
+/// was asked for and for the place the file really is, so a link in the folder that leads beside
+/// it or above it opens nothing more.
 async fn view(
     State(app): State<Arc<App>>,
     Path((pass, path)): Path<(String, String)>,
     uri: Uri,
     headers: HeaderMap,
 ) -> Response {
-    match app.root.resolve(&path) {
-        Some(found) if app.passes.opens(&pass, &found.rel) => {
-            send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers).await
-        }
-        _ => not_found(),
+    let opens = |found: &Resolved| {
+        app.passes.opens(&pass, &found.rel)
+            && app
+                .root
+                .place(found)
+                .is_some_and(|place| app.passes.opens(&pass, &place))
+    };
+    let Some(found) = app.root.resolve(&path).filter(opens) else {
+        return not_found();
+    };
+    // A folder is answered with its `--index` page, which may be a link too.
+    if found.meta.is_dir() && !index_page(&app, &found.rel).is_some_and(|page| opens(&page)) {
+        return not_found();
     }
+    send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers).await
 }
 
 /// The folder a pass is for, asked for by its own address. A pass opens the files in its folder,
