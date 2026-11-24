@@ -63,6 +63,11 @@ fn mime_of(bytes: &[u8]) -> &'static str {
     }
 }
 
+/// The version of how a picture is drawn, which is part of the name a picture is kept under. Raise
+/// it with any change to the pictures themselves, such as their size, format or quality: a later
+/// okfs must not be handed a picture that an earlier one drew another way.
+const DRAWN: u32 = 1;
+
 impl Thumbs {
     /// `cache` is where thumbnails are kept between runs. It is not used when it is
     /// missing or sits inside the served folder: nothing is ever written there.
@@ -89,7 +94,7 @@ impl Thumbs {
 
     fn slot(&self, abs: &Path, w: u32, meta: &fs::Metadata) -> Option<PathBuf> {
         let modified = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
-        let key = format!("{}\0{w}\0{modified}\0{}", abs.display(), meta.len());
+        let key = format!("{DRAWN}\0{}\0{w}\0{modified}\0{}", abs.display(), meta.len());
         // FNV-1a: stable across builds, which a cache key has to be.
         let hash = key.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
