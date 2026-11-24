@@ -836,7 +836,10 @@ fn opens_the_browser_with_a_one_time_code(cert: Option<&Cert>) {
 
     let since = Instant::now();
     let started = loop {
-        if let Ok(started) = fs::read_to_string(&opened) {
+        // The shell makes the file before printf writes to it, so wait for the whole line.
+        if let Ok(started) = fs::read_to_string(&opened)
+            && started.ends_with('\n')
+        {
             break started;
         }
         assert!(
