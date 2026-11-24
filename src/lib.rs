@@ -19,6 +19,7 @@ pub mod pdf;
 pub mod preview;
 pub mod raw;
 pub mod render;
+pub mod serve;
 pub mod server;
 pub mod skip;
 pub mod theme;
