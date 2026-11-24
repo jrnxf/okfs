@@ -129,6 +129,20 @@ jobs:
       - name: Audit the site's engine
         run: cargo audit --file web/engine/Cargo.lock
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      # The page compiled into okfs. bun audit reads ui/bun.lock and installs nothing.
+      - name: Audit the page
+        run: bun audit
+        working-directory: ui
+
+      # The site's build and deploy tools. Workers Builds has only Node, so web/ keeps an npm lock.
+      - name: Audit the site
+        run: npm audit
+        working-directory: web
+
   # The nix package builds and runs.
   package:
     runs-on: ubuntu-latest
