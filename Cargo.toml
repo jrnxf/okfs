@@ -63,6 +63,8 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 mime_guess = "2.0.5"
 notify = "8.2.0"
 nucleo-matcher = "0.3.1"
+# One form for an accented name and a query, so the search finds a name a Mac wrote.
+unicode-normalization = "0.1.25"
 percent-encoding = "2.3.2"
 pulldown-cmark = "0.13.4"
 # HMAC for the read-only passes a framed page gets. TLS already builds it.
