@@ -38,7 +38,7 @@ okfs theme check ./mine.css  # check a file against the contract
 
 Visitors can switch between the built-in themes in the page, with `Theme` in the palette. Moving over a theme shows it and `Enter` chooses it. The choice is remembered per browser.
 
-The ported themes (all but `default`) keep the accent and syntax colors of their upstream palettes, so they look as their authors made them. In the light schemes some of these colors are below 4.5:1 as text, for example links and code in Rosé Pine, Everforest and Tokyo Night. Text in `--fg` and `--faint` reaches at least 4.5:1 in every built-in theme.
+The ported themes (all but `default`) keep the accent and syntax colors of their upstream palettes, so they look as their authors made them. In the light schemes some of these colors are below 4.5:1 as text, for example links and code in Rosé Pine, Everforest and Tokyo Night. The syntax colors of a ported theme keep the upstream palette, so code comments and other tokens may be below 4.5:1. Text in `--fg` and `--faint` reaches at least 4.5:1 in every built-in theme.
 
 ## Write one
 
