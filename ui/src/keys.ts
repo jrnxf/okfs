@@ -73,10 +73,18 @@ export function keyFor(store: Store, host: KeyHost, press: Press): (() => void) 
     if (by !== undefined) return () => store.pickMove(by);
     if (press.key === " ") return () => store.pickCursor(true);
   }
-  return listKeys(store, host)[press.key];
+  return listKeys(store, host, press)[press.key];
 }
 
-export function listKeys(store: Store, host: KeyHost): Record<string, () => void> {
+/** Scrolls the open file's pane a page down, or a page up. A file with no pane that scrolls ignores it. */
+function scrollFile(by: 1 | -1): void {
+  const panes = [...document.querySelectorAll<HTMLElement>(".pv-scroll")].filter((pane) => pane.getClientRects().length > 0);
+  const pane = panes[panes.length - 1];
+  // A page less a line or two, as the browser does, so the line at the edge stays in view.
+  if (pane) pane.scrollBy({ top: by * Math.max(40, pane.clientHeight - 40), behavior: "instant" });
+}
+
+export function listKeys(store: Store, host: KeyHost, press: Pick<Press, "shift"> = { shift: false }): Record<string, () => void> {
   const { s } = store;
   // With a file open, down and up step from file to file instead. Left goes back to the list the file was opened
   // from, the way right opened it.
@@ -114,8 +122,10 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     },
     Home: () => store.moveTo(0),
     End: () => store.moveTo(s.entries.length - 1),
-    // Not taken on an open file: the file scrolls a page with them.
-    ...(modal ? {} : { PageDown: () => store.move(host.page()), PageUp: () => store.move(-host.page()) }),
+    // On an open file they scroll the file a page: the scroller is not focused, so the browser would not.
+    ...(modal
+      ? { PageDown: () => scrollFile(1), PageUp: () => scrollFile(-1) }
+      : { PageDown: () => store.move(host.page()), PageUp: () => store.move(-host.page()) }),
     "/": host.filter,
     y: () => void store.copyLink(),
     Y: host.copyPath,
@@ -123,7 +133,7 @@ export function listKeys(store: Store, host: KeyHost): Record<string, () => void
     t: host.flipScheme,
     "?": () => store.setHelp(true),
     // Not over an open file: its keys are the file's, and a menu or a selection is the list's.
-    ...(modal ? {} : { a: host.menu, " ": () => store.pickCursor(false) }),
+    ...(modal ? { " ": () => scrollFile(press.shift ? -1 : 1) } : { a: host.menu, " ": () => store.pickCursor(false) }),
     ...adding(store),
     ...changing(store),
   };

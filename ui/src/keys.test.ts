@@ -9,7 +9,7 @@ const saved = new Map<string, string>();
 /** Every address asked for, by `fetch` or as a picture. */
 const asked: string[] = [];
 Object.assign(globalThis, {
-  document: { getElementById: () => null, addEventListener: () => undefined, querySelector: () => null },
+  document: { getElementById: () => null, addEventListener: () => undefined, querySelector: () => null, querySelectorAll: () => [] },
   localStorage: { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) },
   innerWidth: 1495,
   location: { pathname: "/", search: "", href: "http://localhost/" },
@@ -248,11 +248,15 @@ test("page down and page up move a page of rows in a folder, and stop at its end
   keys.keyFor(store, { ...host, page: () => 7 }, press("PageDown"))?.();
   expect(store.s.cursor).toBe(7);
 
-  // An open file keeps them, to scroll a page of itself.
+  // An open file takes them to scroll a page of itself, and its cursor stays.
   store.activate();
   expect(store.s.open?.name).toBe("file-7.txt");
-  expect(keys.keyFor(store, host, press("PageDown"))).toBeUndefined();
-  expect(keys.keyFor(store, host, press("PageUp"))).toBeUndefined();
+  const before = store.s.cursor;
+  keys.keyFor(store, host, press("PageDown"))?.();
+  keys.keyFor(store, host, press("PageUp"))?.();
+  expect(keys.keyFor(store, host, press("PageDown"))).toBeDefined();
+  expect(keys.keyFor(store, host, press(" "))).toBeDefined();
+  expect(store.s.cursor).toBe(before);
 });
 
 test("page down and page up move a page of rows over the matches too", () => {

@@ -166,7 +166,7 @@ function Column({ folder, listing, led, edge, level }: { folder: Entry; listing:
         <span class={`${HEAD} justify-end`}>Size</span>
         <span class={`${HEAD} justify-end`}>Mod.</span>
       </div>
-      <div class="col-rows min-h-0 flex-1 overflow-auto overscroll-contain" onClick={go(false)} onDblClick={go(true)} onContextMenu={menuOf(listing, folder)}>
+      <div class="col-rows min-h-0 flex-1 overflow-auto overscroll-contain" tabIndex={-1} onClick={go(false)} onDblClick={go(true)} onContextMenu={menuOf(listing, folder)}>
         {listing?.entries.map((item, at) => {
           const entry = toEntry(item, listing.path, at);
           // The entry the next slot shows is marked.
