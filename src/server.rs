@@ -2018,7 +2018,7 @@ fn index_page(app: &App, folder: &str) -> Option<Resolved> {
 
 async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
     match app.root.resolve(&path) {
-        Some(found) => send_found(&app, found, "/raw/", &uri, &headers).await,
+        Some(found) => send_found(&app, found, "/raw/", &uri, &headers, |_| true).await,
         None => not_found(),
     }
 }
@@ -2031,17 +2031,15 @@ async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Respons
     let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
+    // The address is of the place the page really is, with or without a key: a page reached
+    // through a link loads what is beside the page, not what is beside the link.
+    let Some(place) = app.root.place(&found) else {
+        return not_found();
+    };
+    let encoded = encode_path(&place);
     let to = match app.options.key {
-        // The pass is to the folder the page really is in, and the address is of that place: a
-        // page reached through a link loads what is beside the page, not what is beside the link.
-        Some(_) => {
-            let Some(place) = app.root.place(&found) else {
-                return not_found();
-            };
-            let pass = app.passes.of(paths::parent(&place));
-            format!("/api/view/{pass}/{}", encode_path(&place))
-        }
-        None => format!("/raw/{}", encode_path(&found.rel)),
+        Some(_) => format!("/api/view/{}/{encoded}", app.passes.of(paths::parent(&place))),
+        None => format!("/raw/{encoded}"),
     };
     (
         StatusCode::TEMPORARY_REDIRECT,
@@ -2067,24 +2065,9 @@ async fn view(
                 .place(found)
                 .is_some_and(|place| app.passes.opens(&pass, &place))
     };
-    let Some(found) = app.root.resolve(&path).filter(opens) else {
-        return not_found();
-    };
-    // A folder is answered with its `--index` page, which may be a link too.
-    let found = if found.meta.is_dir() {
-        let Some(page) = index_page(&app, &found.rel).filter(opens) else {
-            return not_found();
-        };
-        if let Some(to) = with_slash(&format!("/api/view/{pass}/"), &found.rel, &uri) {
-            return to;
-        }
-        page
-    } else {
-        found
-    };
-    match raw::serve(found, &headers).await {
-        Ok(response) => response,
-        Err(_) => not_found(),
+    match app.root.resolve(&path) {
+        Some(found) => send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers, opens).await,
+        None => not_found(),
     }
 }
 
@@ -2108,12 +2091,24 @@ async fn view_folder() -> Response {
     not_found()
 }
 
-/// Sends a file, or a folder's `--index` page, found under the address `base`.
-async fn send_found(app: &App, found: Resolved, base: &str, uri: &Uri, headers: &HeaderMap) -> Response {
+/// Sends a file, or a folder's `--index` page, found under the address `base`. Only what `allowed`
+/// lets through is found: the path that was asked for, and the index page too, which may be a
+/// link of its own. What is neither a file nor a folder, such as a pipe, is never found.
+async fn send_found(
+    app: &App,
+    found: Resolved,
+    base: &str,
+    uri: &Uri,
+    headers: &HeaderMap,
+    allowed: impl Fn(&Resolved) -> bool,
+) -> Response {
+    if !allowed(&found) {
+        return not_found();
+    }
     let found = match found {
         found if found.meta.is_file() => found,
         folder if folder.meta.is_dir() => {
-            let Some(found) = index_page(app, &folder.rel) else {
+            let Some(found) = index_page(app, &folder.rel).filter(allowed) else {
                 return not_found();
             };
             if let Some(to) = with_slash(base, &folder.rel, uri) {
@@ -2376,7 +2371,11 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
         .strip_prefix("/-/")
         .or_else(|| (raw_path == "/-").then_some(""));
     let asked = percent_decode_str(behind.unwrap_or(raw_path)).decode_utf8().ok();
-    let found = asked.as_deref().and_then(|path| app.root.resolve(path));
+    // A pipe, a socket or a device is not shown, so its address is as good as missing.
+    let found = asked
+        .as_deref()
+        .and_then(|path| app.root.resolve(path))
+        .filter(|found| found.meta.is_file() || found.meta.is_dir());
 
     // A folder's address ends with a slash and a file's does not, so links inside both resolve.
     if let Some(found) = &found {

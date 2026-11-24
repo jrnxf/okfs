@@ -4828,6 +4828,17 @@ async fn with_a_key_a_pass_does_not_follow_a_link_out_of_its_folder() {
         let (response, _) = send(&app, on_home("GET", &format!("{folder}{inside}"), &[])).await;
         assert_eq!(response.status(), StatusCode::OK, "{inside}");
     }
+    // A pipe in the page's own folder is not opened with the pass.
+    make_pipe(&site.served.join("a/pipe"));
+    let piped = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        send(&app, on_home("GET", &format!("{folder}pipe"), &[])),
+    );
+    assert_eq!(
+        piped.await.expect("it waits on a pipe").0.status(),
+        StatusCode::NOT_FOUND
+    );
+
     for outside in [
         "tob/secret.txt",
         "tob/index.html",
@@ -4891,6 +4902,18 @@ async fn a_zip_and_a_copy_leave_out_what_is_not_a_file_or_a_folder() {
     assert_eq!(fs::read(site.served.join("copy/deep/b.txt")).unwrap(), b"y");
     assert!(!site.served.join("copy/pipe").exists());
     assert!(!site.served.join("copy/deep/pipe").exists());
+
+    // No address opens the pipe.
+    for uri in [
+        "/raw/fifo/pipe",
+        "/fifo/pipe",
+        "/raw/fifo/to-pipe",
+        "/api/frame/fifo/pipe",
+    ] {
+        let answered = tokio::time::timeout(limit, get(&app, uri)).await;
+        let (response, _) = answered.expect("the address waits on a pipe");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
 
     // The pipe itself is no file to copy.
     let copied = tokio::time::timeout(limit, send(&app, page_copy("fifo/pipe", "pipe-copy"))).await;

@@ -30,6 +30,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 use tokio_rustls::TlsAcceptor;
+use tokio_util::sync::CancellationToken;
 
 /// What bounds the connections that are open at once.
 #[derive(Clone, Copy, Debug)]
@@ -40,6 +41,9 @@ pub struct Limits {
     /// is closed. It bounds no body and no answer, so an upload, a download and the stream of
     /// changes take as long as they take, as does a reader that is slow but still reads.
     pub wait: Duration,
+    /// How long an answer may stand still because the other side takes none of it. A download
+    /// that is read, however slowly, never stands still this long.
+    pub stalled: Duration,
     /// How many connections are open at once, a TLS handshake under way included. One more
     /// waits its turn.
     pub open: usize,
@@ -48,13 +52,19 @@ pub struct Limits {
     pub each: usize,
 }
 
+/// File descriptors kept back for what is not a connection or the file it is sent: the listener,
+/// the watcher of the folder, the terminal, and the pipes to the process that draws a PDF.
+const KEPT_BACK: usize = 64;
+
 impl Limits {
-    /// The limits okfs runs with. `open` leaves at least half of the file descriptors this
-    /// process may hold for the files it serves.
+    /// The limits okfs runs with. Each connection may have one file open to send, so `open` is
+    /// at most half of the file descriptors this process may hold, less what is kept back.
     pub fn standard() -> Self {
-        let open = (descriptors() / 2).clamp(32, 1024);
+        let open = (descriptors().saturating_sub(KEPT_BACK) / 2).clamp(8, 1024);
         Self {
             wait: Duration::from_secs(20),
+            // As long as nginx waits between two writes to a client (`send_timeout`, 60 s).
+            stalled: Duration::from_secs(60),
             open,
             each: open / 2,
         }
@@ -78,18 +88,11 @@ fn descriptors() -> usize {
     }
 }
 
-/// Whose connections count together: one IPv4 address, or one IPv6 network of 64 bits, which is
-/// what one machine is handed. `None` for this machine itself: a proxy or a tunnel on it speaks
-/// for everyone behind it, and has no share of its own to keep to.
+/// Whose connections count together: one address. `None` for this machine itself: a proxy or a
+/// tunnel on it speaks for everyone behind it, and has no share of its own to keep to.
 fn holder(from: IpAddr) -> Option<IpAddr> {
     let from = from.to_canonical();
-    if from.is_loopback() {
-        return None;
-    }
-    Some(match from {
-        IpAddr::V4(_) => from,
-        IpAddr::V6(v6) => IpAddr::V6((u128::from(v6) & !u128::from(u64::MAX)).into()),
-    })
+    (!from.is_loopback()).then_some(from)
 }
 
 /// The connections each holder has. A place is given back when it is dropped.
@@ -140,6 +143,8 @@ struct Waiting {
     at_work: AtomicUsize,
     since: Mutex<Instant>,
     changed: Notify,
+    /// Since when an answer has bytes to send that the other side does not take.
+    held_up: Mutex<Option<Instant>>,
 }
 
 /// One request under way. It ends when its answer has been handed over whole, or given up.
@@ -151,6 +156,7 @@ impl Waiting {
             at_work: AtomicUsize::new(0),
             since: Mutex::new(Instant::now()),
             changed: Notify::new(),
+            held_up: Mutex::new(None),
         })
     }
 
@@ -163,6 +169,27 @@ impl Waiting {
     /// Something moved just now: the wait starts over.
     fn moved(&self) {
         *self.since.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Instant::now();
+        *self.held_up.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    /// The other side took none of what was there to send.
+    fn held_up(&self) {
+        self.held_up
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_or_insert_with(Instant::now);
+    }
+
+    /// Ends once an answer has stood still for `limit` because the other side takes none of it.
+    async fn stalled(&self, limit: Duration) {
+        loop {
+            let since = *self.held_up.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match since {
+                Some(since) if since.elapsed() >= limit => return,
+                Some(since) => tokio::time::sleep_until(since + limit).await,
+                None => tokio::time::sleep(limit).await,
+            }
+        }
     }
 
     fn since(&self) -> Instant {
@@ -227,6 +254,16 @@ struct Watched<I> {
     waiting: Arc<Waiting>,
 }
 
+impl<I> Watched<I> {
+    fn note(&self, sent: &Poll<io::Result<usize>>) {
+        match sent {
+            Poll::Ready(Ok(count)) if *count > 0 => self.waiting.moved(),
+            Poll::Pending => self.waiting.held_up(),
+            _ => {}
+        }
+    }
+}
+
 impl<I: AsyncRead + Unpin> AsyncRead for Watched<I> {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.io).poll_read(cx, buf)
@@ -236,9 +273,7 @@ impl<I: AsyncRead + Unpin> AsyncRead for Watched<I> {
 impl<I: AsyncWrite + Unpin> AsyncWrite for Watched<I> {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         let sent = Pin::new(&mut self.io).poll_write(cx, buf);
-        if matches!(sent, Poll::Ready(Ok(count)) if count > 0) {
-            self.waiting.moved();
-        }
+        self.note(&sent);
         sent
     }
 
@@ -248,9 +283,7 @@ impl<I: AsyncWrite + Unpin> AsyncWrite for Watched<I> {
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         let sent = Pin::new(&mut self.io).poll_write_vectored(cx, bufs);
-        if matches!(sent, Poll::Ready(Ok(count)) if count > 0) {
-            self.waiting.moved();
-        }
+        self.note(&sent);
         sent
     }
 
@@ -280,6 +313,7 @@ pub async fn serve(
     let open = Arc::new(Semaphore::new(limits.open));
     let held = Arc::new(Held::default());
     let graceful = GracefulShutdown::new();
+    let stopping = CancellationToken::new();
     let mut stop = pin!(stop);
     loop {
         // A place first, then a connection: one that has no place stays in the system's queue.
@@ -292,31 +326,42 @@ pub async fn serve(
             accepted = Listener::accept(&mut listener) => accepted,
             () = &mut stop => break,
         };
+        // Over its share: closed at once, with no answer. Before a TLS handshake there is no
+        // way to give one, and the handshake is what the share is there to bound.
         let Some(place) = held.take(from.ip(), limits.each, permit) else {
             continue;
         };
-        let (router, tls, watcher) = (router.clone(), tls.clone(), graceful.watcher());
+        let (router, tls, stopping) = (router.clone(), tls.clone(), stopping.clone());
+        // Taken here and handed on: a connection is waited for when the server stops only once
+        // it is through its handshake.
+        let watcher = graceful.watcher();
         tokio::spawn(async move {
             match tls {
                 // One that fails its handshake, as a browser asking for plain http does, or
                 // never ends it, is dropped without an answer.
                 Some(tls) => {
-                    if let Ok(Ok(stream)) = tokio::time::timeout(limits.wait, tls.accept(stream)).await {
-                        connection(stream, router, limits.wait, watcher).await;
+                    let shaken = tokio::select! {
+                        shaken = tokio::time::timeout(limits.wait, tls.accept(stream)) => shaken,
+                        () = stopping.cancelled() => return,
+                    };
+                    if let Ok(Ok(stream)) = shaken {
+                        connection(stream, router, limits, watcher).await;
                     }
                 }
-                None => connection(stream, router, limits.wait, watcher).await,
+                None => connection(stream, router, limits, watcher).await,
             }
             drop(place);
         });
     }
     drop(listener);
+    stopping.cancel();
     graceful.shutdown().await;
     Ok(())
 }
 
-/// Answers the requests of one connection, HTTP/1.1 alone, until it ends or waits too long.
-async fn connection<I>(io: I, router: TowerToHyperService<Router>, wait: Duration, watcher: Watcher)
+/// Answers the requests of one connection, HTTP/1.1 alone, until it ends, waits too long for a
+/// request, or takes none of an answer for too long.
+async fn connection<I>(io: I, router: TowerToHyperService<Router>, limits: Limits, watcher: Watcher)
 where
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -344,7 +389,8 @@ where
         // An error here is the other side's, such as a connection it broke.
         _ = serving => {}
         // Dropped, and so closed, with no answer: there is no request to answer.
-        () = waiting.too_long(wait) => {}
+        () = waiting.too_long(limits.wait) => {}
+        () = waiting.stalled(limits.stalled) => {}
     }
 }
 
@@ -358,7 +404,12 @@ mod tests {
     use tokio::time::{sleep, timeout};
 
     fn limits(wait: Duration) -> Limits {
-        Limits { wait, open: 8, each: 8 }
+        Limits {
+            wait,
+            stalled: Duration::from_secs(60),
+            open: 8,
+            each: 8,
+        }
     }
 
     /// A server that runs until the test ends.
@@ -423,32 +474,58 @@ mod tests {
         assert!(String::from_utf8_lossy(&read).ends_with("late"));
     }
 
+    /// One piece, far more than a socket holds: its end is handed over long before it is sent.
+    const BIG: usize = 24 << 20;
+
+    fn big() -> Router {
+        Router::new().route("/", get(|| async { vec![b'x'; BIG] }))
+    }
+
+    const WHOLE_THEN_CLOSE: &[u8] = b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+
     #[tokio::test]
     async fn a_reader_that_is_slow_but_still_reads_gets_the_whole_answer() {
-        // One piece, far more than a socket holds: its end is handed over long before it is sent.
-        const SIZE: usize = 24 << 20;
-        let router = Router::new().route("/", get(|| async { vec![b'x'; SIZE] }));
-        let address = served(router, None, limits(Duration::from_millis(250))).await;
+        let address = served(big(), None, limits(Duration::from_millis(250))).await;
         let mut stream = TcpStream::connect(address).await.unwrap();
-        stream.write_all(WHOLE).await.unwrap();
-        let (mut read, mut piece) = (0, vec![0; 1 << 20]);
+        stream.write_all(WHOLE_THEN_CLOSE).await.unwrap();
+        let (mut read, mut piece) = (Vec::new(), vec![0; 1 << 20]);
         let started = Instant::now();
-        while read < SIZE {
+        loop {
             let count = timeout(Duration::from_secs(5), stream.read(&mut piece))
                 .await
                 .expect("the answer stopped")
                 .unwrap();
-            assert!(count > 0, "cut after {read} bytes");
-            read += count;
+            if count == 0 {
+                break;
+            }
+            read.extend_from_slice(&piece[..count]);
             sleep(Duration::from_millis(40)).await;
         }
-        // The reading took several times the wait.
+        // The reading took several times the wait, and every byte came.
         assert!(
             started.elapsed() > Duration::from_millis(750),
             "{:?}",
             started.elapsed()
         );
-        assert!(read > SIZE);
+        let head = read.windows(4).position(|at| at == b"\r\n\r\n").unwrap() + 4;
+        assert_eq!(read.len() - head, BIG);
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_is_never_read_is_given_up() {
+        let limits = Limits {
+            stalled: Duration::from_millis(300),
+            ..limits(Duration::from_secs(30))
+        };
+        let address = served(big(), None, limits).await;
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        stream.write_all(WHOLE_THEN_CLOSE).await.unwrap();
+        // Nothing is read for far longer than the limit. What comes after is cut short.
+        sleep(Duration::from_millis(1500)).await;
+        let read = closed(&mut stream, Duration::from_secs(10))
+            .await
+            .expect("it stays open");
+        assert!(read.len() < BIG, "{}", read.len());
     }
 
     #[tokio::test]
@@ -470,12 +547,11 @@ mod tests {
         drop(first);
         assert!(held.take(from("192.0.2.7"), 2, permit()).is_some());
 
-        // One IPv6 network of 64 bits is one holder, whatever the rest of the address.
-        let a = held.take(from("2001:db8:0:1::1"), 2, permit());
-        let b = held.take(from("2001:db8:0:1:ffff::2"), 2, permit());
+        // Each IPv6 address is a holder of its own: one network of 64 bits is a whole LAN.
+        let a = held.take(from("2001:db8:0:1::1"), 1, permit());
+        let b = held.take(from("2001:db8:0:1::2"), 1, permit());
         assert!(a.is_some() && b.is_some());
-        assert!(held.take(from("2001:db8:0:1:1234::3"), 2, permit()).is_none());
-        assert!(held.take(from("2001:db8:0:2::1"), 2, permit()).is_some());
+        assert!(held.take(from("2001:db8:0:1::1"), 1, permit()).is_none());
 
         // This machine has no share to keep to: a proxy on it speaks for everyone.
         let local: Vec<_> = ["127.0.0.1", "::1", "::ffff:127.0.0.1", "127.0.0.1"]
@@ -490,9 +566,9 @@ mod tests {
     #[tokio::test]
     async fn no_more_connections_are_open_than_the_limit() {
         let limits = Limits {
-            wait: Duration::from_secs(30),
             open: 2,
             each: 2,
+            ..limits(Duration::from_secs(30))
         };
         let address = served(here(), None, limits).await;
         let ask = |mut stream: TcpStream| async move {
@@ -546,9 +622,9 @@ mod tests {
         std::fs::write(&key, made.signing_key.serialize_pem()).unwrap();
         let tls = TlsAcceptor::from(crate::tls::config(&cert, &key).unwrap());
         let limits = Limits {
-            wait: Duration::from_millis(300),
             open: 2,
             each: 2,
+            ..limits(Duration::from_millis(300))
         };
         let address = served(here(), Some(tls), limits).await;
         // Two connections that send no hello hold both places.
