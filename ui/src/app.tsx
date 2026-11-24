@@ -956,7 +956,7 @@ export function App() {
         <span
           class={`inline-flex flex-none items-center font-mono text-[length:calc(var(--text)*0.72)] font-medium tracking-[0] uppercase before:size-1.5 before:rounded-[50%] before:bg-accent before:content-[''] phone:hidden ${
             // Loud while it is not plain browsing: a filled chip, and no dot.
-            finding || s.open || s.filter || s.trashView || selected ? "gap-0 rounded-[min(var(--radius),3px)] bg-accent px-1.75 py-px text-accent-fg before:hidden" : "gap-1.5 text-muted"
+            finding || s.open || s.filter || s.trashView || selected ? "gap-0 rounded-[min(var(--radius),3px)] bg-[color-mix(in_srgb,var(--accent)_80%,var(--fg))] px-1.75 py-px text-accent-fg before:hidden dark:bg-accent" : "gap-1.5 text-muted"
           }`}
         >
           {s.trashView ? "trash" : finding ? "find" : s.editing ? "edit" : s.open ? "view" : selected ? "select" : s.filter ? "filter" : "browse"}

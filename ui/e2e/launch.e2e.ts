@@ -38,3 +38,18 @@ test("the scrolling parts of an open file and of a folder can take focus, and sa
   await expect(page.locator(".col-rows")).not.toHaveCount(0);
   expect((await rule()).violations.map((v) => v.nodes.map((n) => n.target.join(" ")))).toEqual([]);
 });
+
+const COMMENTED = '// A comment on top.\nfn main() {\n    // And one inside.\n    println!("hello"); /* and one at the end */\n}\n';
+
+test("a code file in the default theme has no contrast violation, light and dark, comments and the VIEW pill included", async ({ page, okfs }) => {
+  writeFileSync(join(okfs.root, "commented.rs"), COMMENTED);
+  for (const scheme of ["light", "dark"]) {
+    await page.goto(`${okfs.origin}/commented.rs?theme=default&scheme=${scheme}`);
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", scheme);
+    await expect(page.locator(".code")).toContainText("A comment on top");
+    await expect(page.getByText("view", { exact: true })).toBeVisible();
+    const { violations } = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+    const found = violations.flatMap((v) => v.nodes.map((n) => `${scheme}: ${n.target.join(" ")} ${JSON.stringify(n.any[0]?.data)}`));
+    expect(found).toEqual([]);
+  }
+});
