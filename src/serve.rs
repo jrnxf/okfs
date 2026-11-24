@@ -517,14 +517,24 @@ mod tests {
             stalled: Duration::from_millis(300),
             ..limits(Duration::from_secs(30))
         };
-        let address = served(big(), None, limits).await;
-        let mut stream = TcpStream::connect(address).await.unwrap();
-        stream.write_all(WHOLE_THEN_CLOSE).await.unwrap();
-        // Nothing is read for far longer than the limit. What comes after is cut short.
-        sleep(Duration::from_millis(1500)).await;
-        let read = closed(&mut stream, Duration::from_secs(10))
+        // A pipe in memory that holds 1 KB, so that no system's socket takes the answer whole.
+        let (mut reader, server_side) = tokio::io::duplex(1024);
+        let graceful = GracefulShutdown::new();
+        let serving = tokio::spawn(connection(
+            server_side,
+            TowerToHyperService::new(big()),
+            limits,
+            graceful.watcher(),
+        ));
+        reader.write_all(WHOLE_THEN_CLOSE).await.unwrap();
+        // Nothing is read for longer than the limit: the connection is given up, not held.
+        timeout(Duration::from_secs(10), serving)
             .await
-            .expect("it stays open");
+            .expect("it is still held")
+            .unwrap();
+        // What was sent before that is all there is.
+        let mut read = Vec::new();
+        let _ = reader.read_to_end(&mut read).await;
         assert!(read.len() < BIG, "{}", read.len());
     }
 
