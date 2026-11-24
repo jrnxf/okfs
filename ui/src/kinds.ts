@@ -94,6 +94,17 @@ export function hasSource(file: { kind: Kind; ext: string }): boolean {
   return file.kind === "html" || file.kind === "md" || file.kind === "csv" || file.kind === "json" || file.ext === "svg";
 }
 
+/** How much of a text file the server reads: the same as `MAX_TEXT` in `src/render.rs`. A larger one is shown as the code of its start. */
+export const MAX_MADE = 2 * 1024 * 1024;
+
+/**
+ * True for a Markdown, table or JSON file the server shows as the code of its start, for it is larger than it reads whole.
+ * Such a file cannot be shown as what is made from it, so it is its code, and has no other form to flip to.
+ */
+export function tooLargeToMake(file: { kind: Kind; ext: string; size: number }): boolean {
+  return (file.kind === "md" || file.kind === "csv" || file.kind === "json") && file.size > MAX_MADE;
+}
+
 /** What a flip of a file is remembered by: its kind, and an SVG drawing apart from the pictures. */
 export function formOf(file: { kind: Kind; ext: string }): string {
   return file.ext === "svg" ? "svg" : file.kind;

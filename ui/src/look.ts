@@ -37,7 +37,7 @@ export const nameWeight = (dir: boolean): string => (dir ? "font-medium" : "font
 
 /** The bar over a pane: the folder or the file it shows, and what can be done with it. */
 export const BAR =
-  "box-content flex h-[calc(30px*var(--density))] min-w-0 flex-none items-center gap-2.5 border-b border-b-line pr-[calc(var(--pad)*0.5)] pl-[calc(var(--pad)*1.25)] phone:relative phone:h-[calc(46px*var(--density))]";
+  "bar box-content flex h-[calc(30px*var(--density))] min-w-0 flex-none items-center gap-2.5 border-b border-b-line pr-[calc(var(--pad)*0.5)] pl-[calc(var(--pad)*1.25)] phone:relative phone:h-[calc(46px*var(--density))]";
 
 /** The name in a pane's bar, and what is known of it, which gives up its room first. */
 export const BAR_NAME = "min-w-0 flex-[0_1_auto] truncate font-strong phone:flex-1";
@@ -48,6 +48,10 @@ export const BAR_BTN = "h-[calc(24px*var(--density))] px-1.5 phone:h-[34px] phon
 
 /** A row of a menu: the theme menu's, and a phone's menu of a file's actions. */
 export const MENU_ROW = "flex h-(--row-h) w-full items-center gap-2.5 rounded px-2 text-left hover:bg-hover aria-pressed:bg-accent-soft";
+
+/** A row of the menu behind a phone's More button, and its name. Its names are a bar's names: see `BAR_NAME`. */
+export const MORE_ROW = `${MENU_ROW} phone:h-11`;
+export const MORE_NAME = "flex-[0_1_auto] font-strong phone:flex-1";
 
 /** A menu or a dialog over the page: it grows in from where it opens. */
 export const POP_IN = "transition-[opacity,transform] duration-150 ease-out starting:opacity-0 starting:[transform:scale(0.96)] motion-reduce:starting:[transform:none]";

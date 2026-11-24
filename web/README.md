@@ -56,9 +56,20 @@ npm install
 npm run build     # build.sh: dist/index.html, dist/demo/index.html and the data file
 ```
 
+The site uses npm, not bun, because Cloudflare's Workers Builds has Node and nothing else this build needs.
+
 `build.sh` uses Rust with the `wasm32-wasip1` target, binaryen's `wasm-opt` and bun when they are on PATH at
-the versions in `tools.sh`, and otherwise downloads them, pinned by checksum, into `.build/tools`. That is
-what happens in Cloudflare's Workers Builds.
+the versions in `tools.sh`. It downloads the missing ones, pinned by checksum, into `.build/tools`, but only on
+Linux x86-64. That is what happens in Workers Builds. On a Mac, or on any other platform, put the three tools
+on PATH first, or the build stops:
+
+```sh
+rustup target add wasm32-wasip1   # Rust from rustup, with the WebAssembly target
+brew install binaryen             # wasm-opt (any version works off Linux; tools.sh pins it on Linux)
+```
+
+bun comes from `node_modules` after `npm install`, so it needs no step. The nix dev shell (`nix develop` at the
+root) has Rust and bun, but not the `wasm32-wasip1` target.
 
 `demo/answers.json` holds okfs's own previews: Markdown and code as okfs's highlighter colors them, tables,
 JSON, readmes and the zip listing. Recording them needs a native okfs, so they are committed. Record them again

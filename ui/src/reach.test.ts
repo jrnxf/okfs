@@ -74,3 +74,43 @@ test("a proxy in front that signs people in refuses in its own words, which are 
     expect(isDown()).toBe(false);
   }
 });
+
+test("a refused key reloads the page once, and an answer that lets it in lets it reload again", async () => {
+  const kept = new Map<string, string>();
+  let reloads = 0;
+  const stand = globalThis as Record<string, unknown>;
+  stand.sessionStorage = {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => void kept.set(key, value),
+    removeItem: (key: string) => void kept.delete(key),
+  };
+  stand.location = { reload: () => void reloads++ };
+  try {
+    answering(401, { "www-authenticate": "okfs-key" });
+    await call("/api/list?path=").catch(() => undefined);
+    await call("/api/list?path=").catch(() => undefined);
+    // The second refusal does not reload again: a server that keeps refusing cannot loop the page.
+    expect(reloads).toBe(1);
+    answering(200);
+    await call("/api/list?path=");
+    answering(401, { "www-authenticate": "okfs-key" });
+    await call("/api/list?path=").catch(() => undefined);
+    expect(reloads).toBe(2);
+  } finally {
+    delete stand.sessionStorage;
+    delete stand.location;
+  }
+});
+
+test("a refused key does not reload a page that cannot keep the guard", async () => {
+  let reloads = 0;
+  const stand = globalThis as Record<string, unknown>;
+  stand.location = { reload: () => void reloads++ };
+  try {
+    answering(401, { "www-authenticate": "okfs-key" });
+    await call("/api/list?path=").catch(() => undefined);
+    expect(reloads).toBe(0);
+  } finally {
+    delete stand.location;
+  }
+});

@@ -3,7 +3,7 @@
   "name": "okfs-web",
   "compatibility_date": "2026-10-20",
   // Static files only: build.sh writes the page to dist.
-  "assets": { "directory": "./dist" },
+  "assets": { "directory": "./dist", "not_found_handling": "404-page" },
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "okfs.jrnxf.co", "custom_domain": true }],
