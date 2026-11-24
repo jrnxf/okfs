@@ -302,15 +302,22 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/folder", post(make_folder))
         .route("/api/picture", get(picture))
         .route("/api/frame/{*path}", get(frame))
-        .route("/api/view/{pass}/{*path}", get(view))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
         .route("/zip", get(zip_folder))
         .route("/zip/", get(zip_folder))
         .route("/zip/{*path}", get(zip_folder));
+    // The one route a request reaches without the key: a page in the preview brings the pass to
+    // its folder instead, and `view` checks it. It is a router of its own, so that no other
+    // address under `/api/view/` gets past the key: one this route does not match falls to the
+    // routes above, which ask for it.
+    let passed = Router::new()
+        .route("/api/view/{pass}/{*path}", get(view))
+        .layer(middleware::from_fn_with_state(Arc::clone(&app), guard_host));
     packed
         .merge(plain)
         .layer(middleware::from_fn_with_state(Arc::clone(&app), guard))
+        .merge(passed)
         .with_state(app)
 }
 
@@ -371,7 +378,18 @@ pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
 /// Runs before every route: checks the Host name and the key, and marks every answer as not to be
 /// sniffed.
 async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let mut response = match admit(&app, &request) {
+    let refused = refuse_host(&app, &request).or_else(|| admit(&app, &request));
+    answer(refused, request, next).await
+}
+
+/// Runs before the one route that takes a pass in place of the key: checks the Host name only.
+async fn guard_host(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
+    answer(refuse_host(&app, &request), request, next).await
+}
+
+/// The refusal, or the route's own answer, marked as not to be sniffed.
+async fn answer(refused: Option<Response>, request: Request, next: Next) -> Response {
+    let mut response = match refused {
         Some(refused) => refused,
         None => next.run(request).await,
     };
@@ -383,10 +401,8 @@ async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Res
     response
 }
 
-/// What a request is answered with in place of the route it asks for: a refusal for a host name
-/// okfs does not answer to or a request without the key, or the step that takes the key out of a
-/// browser's address. `None` lets it through.
-fn admit(app: &App, request: &Request) -> Option<Response> {
+/// The refusal for a host name okfs does not answer to. `None` lets the request through.
+fn refuse_host(app: &App, request: &Request) -> Option<Response> {
     let host = request_host(request.headers(), request.uri());
     if app.options.check_host && !host_allowed(host, &app.options.allow_hosts) {
         let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
@@ -394,11 +410,15 @@ fn admit(app: &App, request: &Request) -> Option<Response> {
             format!("okfs does not answer to the name {name:?}.\nTo allow it, start okfs with: --allow-host {name}\n");
         return Some((StatusCode::FORBIDDEN, message).into_response());
     }
+    None
+}
+
+/// What a request is answered with in place of the route it asks for: a refusal for a request
+/// without the key, or the step that takes the key out of a browser's address. `None` lets it
+/// through. No address is let past by its path: the routes this guards all need the key.
+fn admit(app: &App, request: &Request) -> Option<Response> {
+    let host = request_host(request.headers(), request.uri());
     let key = app.options.key.as_ref()?;
-    // A page in the preview brings its pass in place of the key, which `view` checks.
-    if request.uri().path().starts_with("/api/view/") {
-        return None;
-    }
     let headers = request.headers();
     let cookie = key::cookie_name(host);
     let query = request.uri().query();

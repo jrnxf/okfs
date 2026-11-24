@@ -2960,6 +2960,117 @@ async fn with_a_key_every_route_is_refused_without_it_and_says_nothing_of_the_fo
     assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
 }
 
+/// Every address the router names, read from its source, so a route added later is walked too.
+/// A part in braces is filled with `fill`.
+fn route_addresses(fill: &str) -> Vec<String> {
+    let source = include_str!("../src/server.rs");
+    let mut found: Vec<String> = source
+        .split(".route(\"")
+        .skip(1)
+        .map(|rest| {
+            let template = rest.split('"').next().unwrap();
+            let parts: Vec<&str> = template
+                .split('/')
+                .map(|part| if part.starts_with('{') { fill } else { part })
+                .collect();
+            parts.join("/")
+        })
+        .collect();
+    found.sort();
+    found.dedup();
+    assert!(found.len() >= 20, "the routes were not read from the source: {found:?}");
+    found
+}
+
+#[tokio::test]
+async fn with_a_key_no_address_hands_the_key_to_a_request_without_it() {
+    let site = Site::new();
+    // Real files at the addresses the pass route is under: they are files like any other.
+    fs::create_dir_all(site.served.join("api/view/deep")).unwrap();
+    fs::write(site.served.join("api/view/file.txt"), SECRET).unwrap();
+    fs::write(site.served.join("api/view/deep/file.txt"), SECRET).unwrap();
+    let app = keyed(
+        &site,
+        Options {
+            allow_upload: true,
+            allow_edit: true,
+            allow_delete: true,
+            ..Options::default()
+        },
+    );
+    let before = snapshot(&site.served);
+
+    let mut addresses = route_addresses("a.txt");
+    addresses.extend(route_addresses("x"));
+    addresses.extend(
+        [
+            "/api",
+            "/api/",
+            "/api/nothing",
+            "/api/view",
+            "/api/view/",
+            "/api/view/x",
+            "/api/view/x/",
+            "/api/view//",
+            "/api/view//a.txt",
+            "/api/view/%2e%2e",
+            "/api/view/%2E%2E/a.txt",
+            "/api/view/../a.txt",
+            "/api/view/file.txt",
+            "/api/view/deep/file.txt",
+            "/api/view/x/a.txt",
+            "/api/view/x/api/view/file.txt",
+            "/api/viewer",
+            "/api/view%2Fx",
+            "/API/VIEW/x",
+            "//api/view/x",
+            "/-/api/view/x",
+            "/-/api/view/",
+            "/raw/api/view/file.txt",
+            "/nothing",
+            "/nothing/",
+            "/sub",
+            "/assets/",
+            "/zip/nothing",
+            "/a.txt?key=",
+            "/api/view/x?key=",
+            "/api/view/?once=x",
+            "/api/list?path=api/view",
+        ]
+        .map(str::to_owned),
+    );
+    assert!(addresses.iter().any(|uri| uri == "/api/view/x/x"), "{addresses:?}");
+
+    let write: Headers = &[("x-okfs", "write"), ("origin", "http://localhost:8080")];
+    for uri in &addresses {
+        for method in ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"] {
+            for headers in [&[][..], NAVIGATE, write] {
+                let shown = format!("{method} {uri}");
+                let (response, body) = send(&app, on_home(method, uri, headers)).await;
+                let status = response.status();
+                // Only the pass route answers without the key, and a wrong pass finds nothing.
+                let passed = uri.starts_with("/api/view/")
+                    && matches!(status, StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED);
+                assert!(passed || status == StatusCode::UNAUTHORIZED, "{shown}: {status}");
+                let body = String::from_utf8_lossy(&body);
+                for told in [KEY, "okfs-config", SECRET, "0123456789"] {
+                    assert!(!body.contains(told), "{shown} tells {told}: {body}");
+                }
+                for (name, value) in response.headers() {
+                    let value = String::from_utf8_lossy(value.as_bytes());
+                    assert!(!value.contains(KEY), "{shown} tells the key in {name}: {value}");
+                }
+            }
+        }
+    }
+    assert_eq!(snapshot(&site.served), before);
+
+    // With the key, the files under those names are served like any other.
+    let (response, body) = send(&app, on_home("GET", "/raw/api/view/file.txt", &[COOKIE])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body, SECRET.as_bytes());
+}
+
 #[tokio::test]
 async fn with_a_key_a_page_in_the_preview_reads_its_own_folder_with_a_pass_and_nothing_else() {
     let site = Site::new();
