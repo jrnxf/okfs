@@ -2,12 +2,17 @@
 
 ## The page
 
-These are the details behind the list above.
+What the page shows, and how it moves. The keys are under [Keys](#keys).
 
 - A dense list on the left, and beside it what is under the cursor: a file is shown as soon as the cursor is on it, in the same pane. Hold `j` to flip through a folder: every file shows as the cursor passes it.
 - A page of 256 KB or more, a PDF's viewer and a player wait until the key is let go, unless they were loaded ahead: the next few pages and PDFs past the cursor are, in hidden frames, so a page may run its scripts before you look at it. A PDF shows a picture of its first page meanwhile, and a video one frame of itself when it was reached in time, so a held key flips through those too. A phone has no space bar: there a tap opens the file over the list, with previous and next in a bar at its foot and download and delete behind a `...` button.
-- A file with code opens as what is made from it, from the list and from a link alike: Markdown as a preview, an HTML page as the page, a CSV table as a table, an SVG drawing as an image and JSON as a tree. `r` flips it to its code, as it is written, colored and never run, and back. The choice holds for the files of that kind that follow, until you flip it back or leave the page. Pictures, PDFs, video and audio have no code and are always shown as themselves. A switch beside the file's name shows both forms, such as `Preview | Code`, with the one on show filled. The code of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
-- A folder under the cursor shows what is in it: its list in a column as wide as the main list, then the inside of its first entry in the next, or of the entry you were on when you last left it, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file. The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file, and a key that moves the cursor takes over until the pointer moves again. Going into the folder puts the cursor on the entry its column leads on to, whatever the sort. The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them. Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them. The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot, and the columns slide sideways into their new slots as you go in or out, with the cursor's highlight travelling from the row it was on to the row it lands on, so the eye can follow it.
+- A file that has code opens rendered, from the list and from a link alike: Markdown as a preview, an HTML page as the page, a CSV table as a table, an SVG drawing as an image and JSON as a tree. `r` flips it to its code, as it is written, colored and never run, and back. The choice holds for the files of that kind that follow, until you flip it back or leave the page. Pictures, PDFs, video and audio have no code and are always shown as themselves. A switch beside the file's name shows both forms, such as `Preview | Code`, with the one on show filled. The code of Markdown, an HTML page, a text and a log wraps at the edge of the pane, with wrapped lines hanging from the line number; source code never wraps. `w` turns wrapping off and on, and the choice holds for the files of that kind that follow.
+- A folder under the cursor shows what is in it, in columns:
+  - Its list comes first, in a column as wide as the main list. The next column shows the inside of its first entry, or of the entry you were on when you last left it, as far down as the window has room. A folder there gets a column of its own, and a file is shown as it would be under the cursor, so a folder that holds one file shows that file.
+  - The pointer leads them too: the entry it is on in a column is the one the columns after it go into, a folder or a file. A key that moves the cursor takes over until the pointer moves again. Going into the folder puts the cursor on the entry its column leads on to, whatever the sort.
+  - The window is cut into four equal parts, three under 1,200 px and two under 900 px, and the main list is one of them.
+  - Every column comes in one answer, so a held key shows them as it passes. They hold names, sizes and times, and no file is read for them.
+  - The main list has the same bar over it as each column, so a folder's rows sit at the same height in every slot. The columns slide sideways into their new slots as you go in or out, and the cursor's highlight travels from the row it was on to the row it lands on, so the eye can follow it.
 - Hidden files stay out of the way: dotfiles, and the folders left out of the search, such as `node_modules` and what a `.gitignore` names (see [A big folder](#a-big-folder)). `.`, or the eye button at the top, shows them and hides them again, and the browser remembers the choice. The counts beside each folder are of what is shown, so a folder says how many entries you will find in it, and the bar at the foot says how many are hidden. The search hides the same ones.
 - A palette (`Ctrl K` or `Cmd K`) that finds any file in the whole tree, lists the most recently changed files before you type, and runs commands when you start with `>`. `Ctrl Enter` or `Cmd Enter`, or the row under its matches, lists every match in place of the folder: ranked, with the folder each is in, sortable by name, folder, size and time, and loaded a page at a time as you scroll. The query is in the address (`?find=`), so back, a reload and a shared link all work, and a folder or a file opened from the matches leads back to them.
 - The page follows the folder. A file that is added, removed, renamed or rewritten shows at once, and so does an open preview, with no reload.
@@ -74,6 +79,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
 </details>
+
 ## Keys
 
 | Key | Does |
@@ -108,6 +114,7 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `Shift D`, `Delete`, `Cmd Backspace` | Move the file or folder, or the selection, to the Trash. Only with `--allow-delete`. |
 | `Ctrl Z`, `Cmd Z` | Undo the last move to the Trash, rename, move or copy, while its note is up |
 | `?` | Show the keys |
+
 ## Addresses you can rely on
 
 These addresses are stable. Scripts, bookmarks and `curl` can use them:
@@ -120,6 +127,7 @@ These addresses are stable. Scripts, bookmarks and `curl` can use them:
 | `/?find=<query>` | The page with the search for that query open. |
 | `/<path>?code` | The file as its code. Without it, a file opens as what is made from it. A file with no code ignores it. |
 | `/<path>?focus` | Only the file, with nothing of okfs around it. `Esc` or the button in the corner brings okfs back. |
+| `/-/<path>` | The same as `/<path>`, for a path whose first name okfs keeps for itself (see below). |
 
 The two go together: `/notes.md?code&focus` shows only the code of `notes.md`. A key keeps the address in step: `r` writes `?code=1` while a file is open, and `f` writes `?focus=1`. A link copied with `y` carries both. A folder's address drops them. Focus fills the browser window, not the screen: the browser's own full screen (F11, or Ctrl-Cmd-F on a Mac) does that, and works with it. `/raw/<path>` is a different thing: the file's exact bytes, outside okfs.
 
@@ -129,6 +137,8 @@ curl -o photos.zip http://127.0.0.1:8080/zip/photos
 ```
 
 Everything under `/api/` is okfs's own channel to its page. It may change in any release, so do not build on it.
+
+okfs keeps six names at the top of the address for itself: `api`, `raw`, `zip`, `assets`, `theme.css` and `-`. A file or folder at the top of the served folder with one of these names is not at `/<name>`: `/raw/a.txt` is okfs's raw route, not the file `raw/a.txt`. Put `/-` in front to reach it: `/-/raw/a.txt` is that file, and `/raw/raw/a.txt` is its bytes. The page makes these links itself, so a click works. Only the first name of the path is taken: `/site/assets/app.js` is the file. So a site served with `--index` from the top of the folder that asks for `/assets/app.js` gets a 404, and the same site in a folder of its own works. This list will not grow: a new route of okfs goes under one of these names.
 
 ## What you can rely on
 

@@ -25,6 +25,7 @@
 - [What is safe to serve](https://github.com/jrnxf/okfs/blob/main/docs/security.md): the security model
 - [How okfs compares](https://github.com/jrnxf/okfs/blob/main/docs/comparison.md): miniserve, dufs, copyparty and `python -m http.server`
 - [Develop](https://github.com/jrnxf/okfs/blob/main/docs/development.md): build and test
+- [Troubleshooting](https://github.com/jrnxf/okfs/blob/main/docs/troubleshooting.md): the 403, the 401 and a busy port, update, uninstall, the cache, browsers
 - [README](https://github.com/jrnxf/okfs/blob/main/README.md)
 - [All of the above as one file](https://okfs.jrnxf.co/llms-full.txt)
 - [Live demo](https://okfs.jrnxf.co/demo/): the real okfs, compiled to WebAssembly, in the browser

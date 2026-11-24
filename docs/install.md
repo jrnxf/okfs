@@ -8,6 +8,8 @@ With Homebrew, on macOS or Linux:
 brew install jrnxf/tap/okfs
 ```
 
+On a Mac, Homebrew installs the binary and nothing else. On Linux, Homebrew also installs its own gcc and glibc when they are not there yet: about 600 MB.
+
 With nix, run it without installing anything, or put it on your `PATH`:
 
 ```sh
@@ -15,7 +17,7 @@ nix run github:jrnxf/okfs -- ~/photos   # run it once
 nix profile install github:jrnxf/okfs   # or install it
 ```
 
-`nix profile upgrade okfs` brings an installed copy up to date.
+`nix profile upgrade okfs` brings an installed copy up to date. There is no binary cache yet, so nix builds okfs from source the first time: about 5 minutes, with no output for long stretches.
 
 Without Homebrew or nix, download an archive from the [releases](https://github.com/jrnxf/okfs/releases). Until v0.1.0, every release is a pre-release, tagged `v0.1.0-pre.N`. `gh release download` with no tag takes only a full release, so ask for the newest one by name.
 
@@ -50,11 +52,15 @@ With Docker, mount the folder to serve at `/srv`:
 docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs
 ```
 
-The image is the release's static binary and nothing else, for amd64 and arm64. It listens on every address, so it asks for the key. Inside a container okfs prints the container's own addresses, such as `172.17.0.2`, which a browser on the host cannot open: keep the `?key=...` part of the link and put the host's address in front of it, such as `http://192.168.1.20:8080/?key=...`. A plain IP address needs no `--allow-host`. The image runs as an unprivileged user, so to use a write flag (`--allow-upload` and the others), add `--user "$(id -u):$(id -g)"` and drop `:ro`. Anything after the image name is an okfs argument, and the `OKFS_*` variables below set its options. The image sets `OKFS_BIND`, `OKFS_PORT` (8080), `OKFS_NO_OPEN` and `OKFS_PATH` (`/srv`) itself: set one of them with `-e` to change it, and publish the new port with `-p`. The tags are the version, such as `0.1.0`, and `latest`, which follows full releases only. The thumbnail cache is the volume `/cache`.
+The image is the release's static binary and nothing else, for amd64 and arm64.
 
-With a Rust toolchain, `cargo install okfs` builds it from crates.io (from v0.1.0; until then use the git command below). The crate carries the built page, so it needs no bun.
+- It listens on every address, so it asks for the key.
+- Inside a container okfs prints the container's own addresses, such as `172.17.0.2`, which a browser on the host cannot open. Keep the `?key=...` part of the link and put the host's address in front of it, such as `http://192.168.1.20:8080/?key=...`. A plain IP address needs no `--allow-host`.
+- The image runs as an unprivileged user. To use a write flag (`--allow-upload` and the others), add `--user "$(id -u):$(id -g)"` and drop `:ro`.
+- Anything after the image name is an okfs argument, and the [`OKFS_*` variables](usage.md#options-from-the-environment) set its options. The image sets `OKFS_BIND`, `OKFS_PORT` (8080), `OKFS_NO_OPEN` and `OKFS_PATH` (`/srv`) itself. Set one of them with `-e` to change it, and publish the new port with `-p`.
+- The tags are the version, such as `0.1.0`, and `latest`, which follows full releases only. The thumbnail cache is the volume `/cache`.
 
-Or build it from the repository. You need a Rust toolchain and [bun](https://bun.sh): bun builds the page while cargo builds the binary.
+To build it from the repository, you need a Rust toolchain and [bun](https://bun.sh): bun builds the page while cargo builds the binary.
 
 ```sh
 cargo install --git https://github.com/jrnxf/okfs
@@ -74,6 +80,6 @@ Platform notes:
 - On Windows, download `okfs-<version>-x86_64-pc-windows-msvc.zip` from the [releases](https://github.com/jrnxf/okfs/releases); it holds `okfs.exe`. The drawing of a PDF's first page runs there without the memory and processor caps it has on Linux and a Mac, so only its time limit ends a PDF that will not draw.
 - On a Mac, a binary downloaded with a browser is quarantined, and Gatekeeper refuses to open it because okfs is not signed. Download it with `gh` or `curl` as above, which leaves no quarantine mark, or clear the mark with `xattr -d com.apple.quarantine okfs`.
 - On Windows, the `okfs.exe` of a release needs no Visual C++ runtime: it is linked in. A build with `cargo install` links the runtime the usual way, and needs the Visual C++ redistributable on the machine.
-- On Windows, a `okfs.exe` downloaded with a browser is blocked by SmartScreen because okfs is not signed. Choose "More info", then "Run anyway", or run `Unblock-File okfs.exe` in PowerShell.
+- On Windows, an `okfs.exe` downloaded with a browser is blocked by SmartScreen because okfs is not signed. Choose "More info", then "Run anyway", or run `Unblock-File okfs.exe` in PowerShell.
 - Watching a folder for changes uses inotify on Linux and FSEvents on a Mac. On a network share, where a watcher does not see what other machines change, use `--rescan` (see [A big folder](usage.md#a-big-folder)).
 - Shell completions: `okfs completions zsh` (or `bash`, `fish`, `powershell`) prints them. The release archive has them as files, and `okfs.1` is the manual page.
