@@ -4280,6 +4280,14 @@ async fn the_trash_sweeps_what_is_older_than_its_days_before_it_lists() {
 
     assert_eq!(trash_ids(&app).await, [ids[1].clone()]);
     assert!(!site.trash_dir().join(&ids[0]).exists());
+    assert_eq!(json(&app, "/api/trash").await["unreadable"], 0);
+
+    // An entry this okfs cannot read is not listed, and a listing does not remove it.
+    fs::write(site.trash_dir().join(&ids[1]).join("info.json"), "{").unwrap();
+    assert!(trash_ids(&app).await.is_empty());
+    assert!(site.trash_dir().join(&ids[1]).join("item").exists());
+    // The page is told how many, so it can say that the Trash holds more than it shows.
+    assert_eq!(json(&app, "/api/trash").await["unreadable"], 1);
 }
 
 #[tokio::test]

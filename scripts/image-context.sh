@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Lays out the Docker build context from a release's archives: <context>/linux-amd64/okfs and
-# <context>/linux-arm64/okfs, where the Dockerfile looks for them.
+# Lays out the Docker build context from a release's files: <context>/linux-amd64/okfs,
+# <context>/linux-arm64/okfs and <context>/THIRD_PARTY.md, where the Dockerfile looks for them.
 #
 #   scripts/image-context.sh <assets folder> <version> <context folder>
 set -euo pipefail
@@ -13,4 +13,5 @@ for pair in amd64:x86_64 arm64:aarch64; do
   tar -xzf "$assets/okfs-$version-$target.tar.gz" -O "okfs-$version-$target/okfs" > "$context/linux-$arch/okfs"
   chmod 0755 "$context/linux-$arch/okfs"
 done
-ls -l "$context"/*
+cp "$assets/okfs-third-party-notices.md" "$context/THIRD_PARTY.md"
+ls -l "$context" "$context"/linux-*

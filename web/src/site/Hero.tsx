@@ -141,7 +141,7 @@ export function Hero({ demo, failed, sub }: { demo?: Demo; failed: boolean; sub:
           <div className="font-serif font-[600] text-[34px] leading-[1] [font-variation-settings:'opsz'_144,'SOFT'_100,'WONK'_1]">
             Free
             <small className="mt-1 block [font:400_12px/1.3_var(--mono)] text-ink-2">
-              MIT licence
+              MIT license
             </small>
           </div>
           <a className="inline-flex flex-col gap-1 rounded-[4px] bg-spot px-4.5 py-3.25 [font:600_17px/1_var(--serif)] text-on-spot no-underline hover:bg-ink hover:text-paper" href="/demo/">

@@ -7,6 +7,7 @@
 //! Some folders are left out (see `skip`): they are listed in their folder, but what is
 //! inside is not walked, not searched, and not kept up by the watcher.
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
@@ -21,6 +22,7 @@ use notify::{RecursiveMode, Watcher};
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::{Deserialize, Serialize};
+use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
 
 use crate::every;
 use crate::live::{Change, Feed};
@@ -943,7 +945,8 @@ impl Index {
             ready: self.ready(),
             took: 0.0,
         };
-        let query = query.trim();
+        let query = composed(query.trim());
+        let query = &*query;
         if query.is_empty() || page.limit == 0 {
             return Some(found);
         }
@@ -1473,6 +1476,17 @@ fn prefix_held(hay: &[&[u8]], needle: &[u8]) -> usize {
     held
 }
 
+/// `text` with each accent made one letter with the one it is on (NFC). A Mac writes a name with
+/// the accent as a letter of its own after it (NFD), and a query typed elsewhere has it as one: the
+/// search compares the two in this form, so each finds the other.
+fn composed(text: &str) -> Cow<'_, str> {
+    if text.is_ascii() || is_nfc_quick(text.chars()) == IsNormalized::Yes {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(text.nfc().collect())
+    }
+}
+
 /// The score of `hay` when it matches, and whether its matched letters sit close together: each
 /// one either follows the one before it or starts a word. A query found as a run, or as the starts
 /// of words, is close; letters picked out of the middle of several words are not.
@@ -1483,6 +1497,7 @@ fn score(
     chars: &mut Vec<char>,
     matcher: &mut Matcher,
 ) -> Option<(u32, bool)> {
+    let hay = &*composed(hay);
     idx.clear();
     let score = pattern.indices(Utf32Str::new(hay, chars), matcher, idx)?;
     idx.sort_unstable();
@@ -1663,6 +1678,41 @@ mod tests {
         assert_eq!(site.index.child_count("dist/deep"), None);
         // What is outside it is held in full.
         assert_eq!(site.index.child_count("photos/edited"), Some(1));
+    }
+
+    #[test]
+    fn an_accented_name_is_found_whether_its_accent_is_one_letter_or_two() {
+        // A Mac's Finder writes é as e and a combining accent (NFD); most other tools write one
+        // letter (NFC). Each name is in a folder of its own, because a Mac's disk takes the two
+        // as one name.
+        const ONE: &str = "caf\u{e9}.txt";
+        const TWO: &str = "cafe\u{301}.txt";
+        let site = Watched::with(false, |served| {
+            for (dir, name) in [("one", ONE), ("two", TWO)] {
+                fs::create_dir_all(served.join(dir)).unwrap();
+                fs::write(served.join(dir).join(name), "x").unwrap();
+            }
+            fs::write(served.join("cafe.txt"), "x").unwrap();
+        });
+        let accented = |query: &str| {
+            let mut found = found(&site.index, query);
+            found.retain(|path| path.starts_with("one/") || path.starts_with("two/"));
+            found.sort();
+            found
+        };
+        let both = [format!("one/{ONE}"), format!("two/{TWO}")];
+        assert_eq!(accented("caf\u{e9}"), both);
+        assert_eq!(accented("cafe\u{301}"), both);
+        assert_eq!(accented("cafe"), both);
+        // An accent in the query still asks for it: the plain name is not found.
+        assert!(!found(&site.index, "caf\u{e9}").contains(&"cafe.txt".to_owned()));
+        for query in ["caf\u{e9}", "cafe\u{301}", "cafe"] {
+            assert_eq!(
+                searched(&site.index, query, 60, true),
+                plain_search(&site.index, query, 60, true),
+                "{query:?}"
+            );
+        }
     }
 
     #[test]
@@ -2127,7 +2177,8 @@ mod tests {
     /// whole path, one after the other. What the search finds must be what this finds.
     fn plain_search(index: &Index, query: &str, limit: usize, all: bool) -> Vec<Hit> {
         let tree = index.tree.read().expect("the index lock");
-        let query = query.trim();
+        let query = composed(query.trim());
+        let query = &*query;
         if query.is_empty() || limit == 0 {
             return Vec::new();
         }
@@ -2140,6 +2191,7 @@ mod tests {
         let mut idx = Vec::new();
         for (dir, folder) in tree.dirs.iter().filter(|(dir, _)| all || !in_hidden(dir)) {
             for (at, (name, _)) in folder.entries().enumerate().filter(|(_, (_, n))| all || !n.hidden) {
+                let name = &*composed(name);
                 if let Some(score) = pattern.score(Utf32Str::new(name, &mut chars), &mut matcher) {
                     let close = is_close(&pattern, name, &mut idx, &mut chars, &mut matcher);
                     scored.push((score + NAME_BONUS, dir, at, true, close));
@@ -2152,8 +2204,9 @@ mod tests {
                 path.push_str(dir);
                 path.push('/');
                 path.push_str(name);
-                if let Some(score) = pattern.score(Utf32Str::new(&path, &mut chars), &mut matcher) {
-                    let close = is_close(&pattern, &path, &mut idx, &mut chars, &mut matcher);
+                let path = &*composed(&path);
+                if let Some(score) = pattern.score(Utf32Str::new(path, &mut chars), &mut matcher) {
+                    let close = is_close(&pattern, path, &mut idx, &mut chars, &mut matcher);
                     scored.push((score, dir, at, false, close));
                 }
             }

@@ -232,7 +232,7 @@ function Head({ target }: { target: MenuTarget }) {
 }
 
 const ITEM =
-  "flex h-[calc(28px*var(--density))] w-full items-center gap-2.25 rounded px-2 text-left text-s whitespace-nowrap data-hi:bg-accent-soft [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:bg-transparent phone:h-11 phone:gap-3 phone:text-base phone:[&_kbd]:hidden";
+  "flex h-[calc(28px*var(--density))] w-full items-center gap-2.25 rounded px-2 text-left text-s whitespace-nowrap data-hi:bg-accent-soft [&_kbd]:h-[1.55em] [&_kbd]:min-w-[1.55em] [&_kbd]:bg-transparent phone:h-11 phone:gap-3 phone:text-base phone:[&_kbd]:hidden pointer-coarse:[&_kbd]:hidden";
 const WIDTH = 248;
 
 export function ContextMenu() {
@@ -481,7 +481,7 @@ export function Toast() {
           <button class="btn h-[calc(24px*var(--density))] font-strong text-accent hover:text-accent" onClick={() => store.undo()}>
             Undo
           </button>
-          <kbd class="phone:hidden">{MOD} Z</kbd>
+          <kbd class="phone:hidden pointer-coarse:hidden">{MOD} Z</kbd>
         </>
       )}
       <button class="btn h-[calc(24px*var(--density))] px-1.5" aria-label="Dismiss" onClick={() => store.dropToast()}>

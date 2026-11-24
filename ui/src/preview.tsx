@@ -631,7 +631,8 @@ function Card({ entry, line, unreached }: { entry: Entry; line: string; unreache
 function Scroll({ id, children }: { id: string; children: ComponentChildren }) {
   // Keyed by what is shown, so each file starts scrolled to its top.
   return (
-    <div class="pv-scroll min-h-0 flex-1 overflow-auto overscroll-contain" key={id}>
+    // Focusable, so a keyboard reaches what it scrolls: Tab stops here, and the arrows and Space scroll it.
+    <div class="pv-scroll min-h-0 flex-1 overflow-auto overscroll-contain focus-visible:[outline-offset:-2px]" key={id} tabIndex={0} role="group" aria-label="File contents">
       {children}
     </div>
   );

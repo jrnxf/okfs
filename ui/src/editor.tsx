@@ -214,7 +214,7 @@ export function Editor({ file }: { file: Entry }) {
         </button>
         <button class={`btn btn-fill ${BAR_BTN} gap-2 px-2.5`} disabled={!ready || saving || changed === 0} onClick={() => void save()}>
           {saving ? "Saving" : "Save"}
-          <kbd class="h-auto min-w-0 border-0 bg-transparent p-0 text-inherit opacity-75 phone:hidden">{MOD === "⌘" ? "⌘S" : "Ctrl S"}</kbd>
+          <kbd class="h-auto min-w-0 border-0 bg-transparent p-0 text-inherit opacity-75 phone:hidden pointer-coarse:hidden">{MOD === "⌘" ? "⌘S" : "Ctrl S"}</kbd>
         </button>
       </div>
       {form?.mixed ? <div class="flex-none border-b border-b-line px-3 py-1.75 text-s text-muted">{mixedNote(form)}</div> : null}

@@ -18,7 +18,7 @@ okfs ("ok file server") serves a folder as a keyboard-driven web file browser. T
 brew install jrnxf/tap/okfs     # macOS or Linux
 nix run github:jrnxf/okfs       # or run it once with nix
 docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs
-cargo install --git https://github.com/jrnxf/okfs
+cargo install --git https://github.com/jrnxf/okfs   # needs Rust and bun
 ```
 
 Release archives for Linux, macOS and Windows are on the [releases page](https://github.com/jrnxf/okfs/releases). See [docs/install.md](docs/install.md) for them, Docker, building from source and platform notes.
@@ -56,6 +56,7 @@ An agent can show you a folder the same way. [skills/okfs](skills/okfs/SKILL.md)
 - [Writing](docs/writing.md): uploading, editing, deleting and the Trash
 - [Themes](docs/themes.md) and [what is safe to serve](docs/security.md)
 - [How okfs compares](docs/comparison.md) and [developing it](docs/development.md)
+- [Troubleshooting](docs/troubleshooting.md): the first errors, update, uninstall, the cache
 
 ## License
 

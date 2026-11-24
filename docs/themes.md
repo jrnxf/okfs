@@ -38,7 +38,7 @@ okfs theme check ./mine.css  # check a file against the contract
 
 Visitors can switch between the built-in themes in the page, with `Theme` in the palette. Moving over a theme shows it and `Enter` chooses it. The choice is remembered per browser.
 
-The ported themes (all but `default`) keep the accent and syntax colors of their upstream palettes, so they look as their authors made them. In the light schemes some of these colors are below 4.5:1 as text, for example links and code in Rosé Pine, Everforest and Tokyo Night. Text in `--fg` and `--faint` reaches at least 4.5:1 in every built-in theme.
+The ported themes (all but `default`) keep the accent and syntax colors of their upstream palettes, so they look as their authors made them. In the light schemes some of these colors are below 4.5:1 as text, for example links and code in Rosé Pine, Everforest and Tokyo Night. The syntax colors of a ported theme keep the upstream palette, so code comments and other tokens may be below 4.5:1. Text in `--fg` and `--faint` reaches at least 4.5:1 in every built-in theme.
 
 ## Write one
 
@@ -66,7 +66,7 @@ The rules, all enforced by `okfs theme check` and again when okfs loads a theme 
 
 - The file starts with a comment that names the theme with `@name`.
 - Exactly two blocks, in this order: `:root` and `:root[data-scheme="dark"]`. Either may be empty. No other selector and no at-rule.
-- Only the 42 tokens may be set. A token left out keeps its default.
+- Only the 42 tokens may be set. A token left out keeps its default. A token okfs does not know is an error, and the theme is refused whole: a misspelled token must not pass in silence. A later okfs may add tokens, so a theme that sets a new one needs that okfs or a later one.
 - Nothing may be loaded: no `url()`, no `@import`, no `@font-face`. Fonts are the three bundled families (`Geist`, `Geist Mono`, `Newsreader`) or ones on the visitor's system.
 - Bounds:
 
