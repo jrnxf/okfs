@@ -13,8 +13,14 @@
 //! .okfs-trash/
 //!   01792790214-7f3a9c01/
 //!     item          the file or folder, moved here whole
-//!     info.json     {"path": "tides/old.csv", "deleted": 1792790214, "dir": false, "size": 9100, ...}
+//!     info.json     {"v": 1, "path": "tides/old.csv", "deleted": 1792790214, "dir": false, ...}
 //! ```
+//!
+//! `v` is the version of this layout. An okfs that meets an `info.json` it cannot read, as one
+//! from a later okfs may be, leaves the entry where it is: it is not listed and cannot be put
+//! back by this okfs, and it is never removed for that reason, not even by emptying the Trash,
+//! which removes what it lists. Only its age removes it, read from the name of its folder, or
+//! from when the folder was made when its name says nothing.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -35,9 +41,21 @@ const ITEM: &str = "item";
 const INFO: &str = "info.json";
 const DAY: i64 = 24 * 60 * 60;
 
+/// The version of the Trash's layout on disk that this okfs writes, and the latest it reads.
+const VERSION: u32 = 1;
+/// The version of an `info.json` that names none: the first okfs wrote it that way.
+const FIRST_VERSION: u32 = 1;
+
+fn first_version() -> u32 {
+    FIRST_VERSION
+}
+
 /// What is known of an entry in the Trash, kept beside it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Info {
+    /// The version of the layout. The first okfs that wrote one left it out.
+    #[serde(default = "first_version")]
+    pub v: u32,
     /// Where it was, relative to the served folder: its real folder, then its name.
     pub path: String,
     /// When it was deleted, in seconds since 1970.
@@ -163,6 +181,7 @@ impl Trash {
         let (size, count) = measure(now_entry.abs(), now_entry.is_dir());
         let deleted = now();
         let info = Info {
+            v: VERSION,
             path: now_entry.place(),
             deleted,
             dir: now_entry.is_dir(),
@@ -208,8 +227,9 @@ impl Trash {
         }
     }
 
-    /// What the Trash holds, the last deleted first. An entry whose folder lost its item or what is
-    /// known of it, as a delete cut off part way leaves it, is not listed: the sweep removes it.
+    /// What the Trash holds, the last deleted first. An entry whose folder lost its item, as a
+    /// delete cut off part way leaves it, is not listed: the sweep removes it. Nor is one whose
+    /// `info.json` this okfs cannot read, which stays on disk until its time is up.
     pub fn list(&self) -> io::Result<Vec<Item>> {
         let _busy = self.hold();
         let mut items = self.read()?;
@@ -218,21 +238,12 @@ impl Trash {
     }
 
     fn read(&self) -> io::Result<Vec<Item>> {
-        let names = match fs::read_dir(&self.dir) {
-            Ok(names) => names,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
-        };
         let mut items = Vec::new();
-        for name in names.flatten() {
-            let Some(id) = name.file_name().to_str().filter(|id| is_id(id)).map(str::to_owned) else {
+        for slot in self.slots()? {
+            let (Some(id), Held::Item) = (slot.id, slot.held) else {
                 continue;
             };
-            let slot = name.path();
-            if fs::symlink_metadata(slot.join(ITEM)).is_err() {
-                continue;
-            }
-            let Some(info) = read_info(&slot) else { continue };
+            let Some(info) = read_info(&slot.path) else { continue };
             items.push(Item {
                 id,
                 gone: self.gone(info.deleted),
@@ -240,6 +251,16 @@ impl Trash {
             });
         }
         Ok(items)
+    }
+
+    /// How many entries the Trash holds that this okfs cannot read, and so does not list.
+    pub fn unreadable(&self) -> io::Result<usize> {
+        let _busy = self.hold();
+        let slots = self.slots()?;
+        Ok(slots
+            .iter()
+            .filter(|slot| slot.held == Held::Item && (slot.id.is_none() || read_info(&slot.path).is_none()))
+            .count())
     }
 
     /// Puts an entry back where it was. The folders it was in are made again when they are gone.
@@ -283,7 +304,8 @@ impl Trash {
         Ok(true)
     }
 
-    /// Deletes everything in the Trash for good. Answers with how many entries went.
+    /// Deletes for good everything the Trash lists. An entry this okfs cannot read is not listed,
+    /// and stays until its time is up. Answers with how many entries went.
     pub fn empty(&self) -> io::Result<usize> {
         let _busy = self.hold();
         let mut gone = 0;
@@ -297,12 +319,27 @@ impl Trash {
 
     /// Deletes for good what has been in the Trash longer than it keeps things, as of `now`, and
     /// what a delete cut off part way left. Answers with how many entries went.
+    ///
+    /// An entry whose `info.json` cannot be read, as a later okfs may have written it, is never
+    /// removed for that reason. Its age is read from the name of its folder, or from when the
+    /// folder was made when its name says nothing, and it is kept as long as any other.
     pub fn sweep(&self, now: i64) -> io::Result<usize> {
         let _busy = self.hold();
         let mut gone = 0;
-        for item in self.read()? {
-            if item.gone <= now {
-                remove_slot(&self.dir.join(&item.id))?;
+        for slot in self.slots()? {
+            if slot.held != Held::Item {
+                continue;
+            }
+            let made = || {
+                let meta = fs::symlink_metadata(&slot.path).ok()?;
+                meta.modified().ok().map(seconds)
+            };
+            let deleted = read_info(&slot.path)
+                .map(|info| info.deleted)
+                .or_else(|| slot.id.as_deref().and_then(deleted_at))
+                .or_else(made);
+            if deleted.is_some_and(|deleted| self.gone(deleted) <= now) {
+                remove_slot(&slot.path)?;
                 gone += 1;
             }
         }
@@ -310,20 +347,69 @@ impl Trash {
         Ok(gone)
     }
 
-    /// Removes the folders in the Trash that hold no whole entry.
+    /// Removes the folders in the Trash that hold no item: what a delete cut off part way left.
+    /// A folder whose item cannot be looked at, as on a disk fault, is left alone.
     fn clear_leftovers(&self) -> io::Result<()> {
-        let Ok(names) = fs::read_dir(&self.dir) else {
-            return Ok(());
-        };
-        for name in names.flatten() {
-            let slot = name.path();
-            let whole = fs::symlink_metadata(slot.join(ITEM)).is_ok() && read_info(&slot).is_some();
-            if !whole && name.file_type().is_ok_and(|kind| kind.is_dir()) {
-                remove_slot(&slot)?;
+        for slot in self.slots()? {
+            if slot.held == Held::Nothing {
+                remove_slot(&slot.path)?;
             }
         }
         Ok(())
     }
+
+    /// Each folder in the Trash.
+    fn slots(&self) -> io::Result<Vec<Slot>> {
+        let names = match fs::read_dir(&self.dir) {
+            Ok(names) => names,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        Ok(names
+            .flatten()
+            .filter(|name| name.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|name| {
+                let path = name.path();
+                let held = match fs::symlink_metadata(path.join(ITEM)) {
+                    Ok(_) => Held::Item,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Held::Nothing,
+                    Err(_) => Held::Unknown,
+                };
+                Slot {
+                    id: name.file_name().to_str().filter(|id| is_id(id)).map(str::to_owned),
+                    path,
+                    held,
+                }
+            })
+            .collect())
+    }
+}
+
+/// One folder in the Trash.
+struct Slot {
+    path: PathBuf,
+    /// Its name, when that is one a request may give.
+    id: Option<String>,
+    held: Held,
+}
+
+/// What a folder in the Trash holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Held {
+    /// An entry that was deleted.
+    Item,
+    /// No item: a delete cut off part way left the folder.
+    Nothing,
+    /// The item could not be looked at, for a reason other than not being there.
+    Unknown,
+}
+
+/// When the entry in the folder named `id` was deleted: the digits its name starts with.
+fn deleted_at(id: &str) -> Option<i64> {
+    let (seconds, _) = id.split_once('-')?;
+    (seconds.len() == 11 && seconds.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| seconds.parse().ok())
+        .flatten()
 }
 
 /// Removes one entry's folder in the Trash with all it holds. No link in it is followed.
@@ -344,8 +430,11 @@ fn write_info(slot: &Path, info: &Info) -> io::Result<()> {
     part.create(&slot.join(INFO))
 }
 
+/// What is known of the entry in `slot`, when this okfs can read it: not when the file is missing
+/// or broken, and not when a later okfs wrote it in a layout this one does not know.
 fn read_info(slot: &Path) -> Option<Info> {
-    serde_json::from_slice(&fs::read(slot.join(INFO)).ok()?).ok()
+    let info: Info = serde_json::from_slice(&fs::read(slot.join(INFO)).ok()?).ok()?;
+    (info.v <= VERSION).then_some(info)
 }
 
 /// The size of an entry, and for a folder how many entries it holds. No link is followed.
@@ -545,6 +634,81 @@ mod tests {
         assert!(site.trash.list().unwrap().is_empty());
         site.trash.sweep(now()).unwrap();
         assert!(!slot.exists());
+    }
+
+    #[test]
+    fn an_entry_whose_info_cannot_be_read_is_kept_until_its_time_is_up() {
+        let site = site();
+        let trash = site.root.dir().join(paths::TRASH);
+        let broken = put(&site, "notes.md");
+        fs::write(trash.join(&broken.id).join(INFO), "{ not json").unwrap();
+        // As a later okfs may write it: a later version, and a field of another type.
+        let later = put(&site, "tides/old.csv");
+        let text = r#"{"v": 2, "path": ["tides", "old.csv"], "deleted": "soon"}"#;
+        fs::write(trash.join(&later.id).join(INFO), text).unwrap();
+        // A later version alone is not read either, though every field this okfs knows is there.
+        let newer = put(&site, "tides/2026/a.csv");
+        let mut info = newer.info.clone();
+        info.v = VERSION + 1;
+        fs::write(trash.join(&newer.id).join(INFO), serde_json::to_vec(&info).unwrap()).unwrap();
+        let good = put(&site, "tides");
+
+        // A start, and every listing, sweeps. None of the three is listed, and none is removed.
+        assert_eq!(site.trash.sweep(now()).unwrap(), 0);
+        let listed: Vec<String> = site.trash.list().unwrap().into_iter().map(|item| item.id).collect();
+        assert_eq!(listed, std::slice::from_ref(&good.id));
+        assert_eq!(site.trash.unreadable().unwrap(), 3);
+        for kept in [&broken, &later, &newer] {
+            assert!(trash.join(&kept.id).join(ITEM).exists(), "{}", kept.id);
+            // This okfs cannot put it back, and says it is not there, with nothing changed.
+            let restored = site.trash.restore(&site.root, &kept.id);
+            assert!(matches!(restored, Err(Unrestored::Missing)), "{}", kept.id);
+            assert!(trash.join(&kept.id).join(ITEM).exists(), "{}", kept.id);
+        }
+        assert_eq!(fs::read(trash.join(&broken.id).join(ITEM)).unwrap(), b"# notes");
+
+        // Emptying the Trash removes what it lists, and these are not listed.
+        assert_eq!(site.trash.empty().unwrap(), 1);
+        assert_eq!(site.trash.unreadable().unwrap(), 3);
+
+        // Its age is read from the name of its folder: a second early it stays, then it goes.
+        assert_eq!(site.trash.sweep(broken.gone - 1).unwrap(), 0);
+        assert!(trash.join(&broken.id).exists());
+        assert_eq!(site.trash.sweep(newer.gone).unwrap(), 3);
+        assert!(fs::read_dir(&trash).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_folder_with_an_item_and_a_name_that_says_nothing_is_kept_until_it_is_old() {
+        let site = site();
+        let trash = site.root.dir().join(paths::TRASH);
+        // Not a name okfs gives, and nothing readable beside the item: only the folder's own time.
+        let odd = trash.join("backup.old");
+        fs::create_dir_all(&odd).unwrap();
+        fs::write(odd.join(ITEM), "kept").unwrap();
+        assert_eq!(site.trash.sweep(now()).unwrap(), 0);
+        assert_eq!(site.trash.empty().unwrap(), 0);
+        assert!(odd.join(ITEM).exists());
+        assert_eq!(site.trash.unreadable().unwrap(), 1);
+        // Long after it was made, it goes like any other.
+        assert_eq!(site.trash.sweep(now() + 31 * DAY).unwrap(), 1);
+        assert!(!odd.exists());
+    }
+
+    #[test]
+    fn what_is_known_of_an_entry_carries_the_version_and_reads_without_one() {
+        let site = site();
+        let item = put(&site, "notes.md");
+        let slot = site.root.dir().join(paths::TRASH).join(&item.id);
+        let written: serde_json::Value = serde_json::from_slice(&fs::read(slot.join(INFO)).unwrap()).unwrap();
+        assert_eq!(written["v"], 1);
+        // As the first okfs wrote it: no version.
+        let old = r#"{"path":"notes.md","deleted":1792790214,"dir":false,"size":7}"#;
+        fs::write(slot.join(INFO), old).unwrap();
+        let listed = site.trash.list().unwrap();
+        assert_eq!(listed[0].info.v, 1);
+        assert_eq!(listed[0].info.path, "notes.md");
+        assert!(site.trash.restore(&site.root, &item.id).is_ok());
     }
 
     #[cfg(unix)]

@@ -1301,11 +1301,14 @@ async fn trash_list(State(app): State<Arc<App>>) -> Response {
     let listed = tokio::task::spawn_blocking(move || {
         worker.sweep_trash();
         let trash = worker.trash.as_ref().expect("checked above");
-        trash.list().map(|items| (trash.days(), items))
+        let items = trash.list()?;
+        Ok::<_, std::io::Error>((trash.days(), items, trash.unreadable()?))
     })
     .await;
     match listed {
-        Ok(Ok((days, items))) => Json(serde_json::json!({ "days": days, "items": items })).into_response(),
+        Ok(Ok((days, items, unreadable))) => {
+            Json(serde_json::json!({ "days": days, "items": items, "unreadable": unreadable })).into_response()
+        }
         Ok(Err(error)) => disk_failed(&error),
         Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the Trash could not be read"),
     }

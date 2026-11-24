@@ -264,6 +264,8 @@ export interface TrashItem {
 export interface TrashList {
   days: number;
   items: TrashItem[];
+  /** How many more entries the Trash holds that this okfs cannot read, as a later okfs may have left them. */
+  unreadable?: number;
 }
 
 /**
