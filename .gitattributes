@@ -1,0 +1,2 @@
+# Keep the marketing site out of the GitHub language stats.
+web/** linguist-detectable=false
