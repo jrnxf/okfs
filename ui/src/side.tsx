@@ -11,7 +11,7 @@ import { config } from "./config";
 import * as fmt from "./fmt";
 import { Icon, KindIcon } from "./icons";
 import { hasSource, madeName } from "./kinds";
-import { AGE, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MENU_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
+import { AGE, BAR, BAR_BTN, BAR_FACTS, BAR_NAME, DROP_PANE, DROP_ROW, HEAD, HEADS, LIST_PAD, MORE_NAME, MORE_ROW, POP_IN, ROW, ROW_GRID, ROW_REST, SIZE, nameWeight } from "./look";
 import { goingOf } from "./moves";
 import { Editor } from "./editor";
 import { DELETE_KEY, deleteLabel } from "./palette";
@@ -68,9 +68,6 @@ const SWITCH = "flex flex-none items-center gap-px rounded border border-line p-
 const SWITCH_BTN = "h-[calc(20px*var(--density))] px-2 text-xs phone:h-[30px] phone:px-2.5";
 /** A button that only a file at the full width has. */
 const OPEN_ONLY = "hidden viewing:inline-flex";
-/** A row of the menu behind a phone's More button. Its names are a bar's names: see `BAR_NAME`. */
-const MORE_ROW = `${MENU_ROW} phone:h-11`;
-const MORE_NAME = "flex-[0_1_auto] font-strong phone:flex-1";
 const COL_NOTE = `label flex h-(--row-h) items-center ${LIST_PAD}`;
 /** Previous and next at the foot of a phone's sheet: in reach of a thumb. */
 const STEP = "btn h-11 min-w-[112px] justify-center gap-1.5 px-3.5 text-fg";
