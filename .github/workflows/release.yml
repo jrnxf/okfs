@@ -25,11 +25,19 @@ name: release
 #   aarch64-apple-darwin and x86_64-apple-darwin. The Linux binaries are static, so they run on any
 #   Linux, whatever its C library. Each archive holds one folder, okfs-<version>-<target>/, with the
 #   executable okfs, completions/okfs.bash, completions/_okfs (zsh), completions/okfs.fish, the
-#   manual page okfs.1, README.md and LICENSE, so a package manager installs them as they are.
+#   manual page okfs.1, README.md, LICENSE and THIRD_PARTY.md, so a package manager installs them
+#   as they are.
 # - okfs-<version>-x86_64-pc-windows-msvc.zip: one folder of the same name with okfs.exe,
-#   completions/_okfs.ps1 (PowerShell), README.md and LICENSE. It has no manual page.
+#   completions/_okfs.ps1 (PowerShell), README.md, LICENSE and THIRD_PARTY.md. It has no manual
+#   page.
 # - okfs-third-party-notices.md: THIRD_PARTY.md, then the licenses of every Rust crate and syntax
-#   definition compiled in.
+#   definition compiled in. Each archive holds the same text as THIRD_PARTY.md, and the image as
+#   /THIRD_PARTY.md, so the notices travel with every copy of the binary.
+#
+# The order of a release: the image is pushed under its version, then the release is published with
+# a build provenance attestation for each file, then latest moves to the image (full releases only),
+# then the tap is bumped, and last the image is run as a user would run it. A step that fails stops
+# the ones after it, so a release is never out without an image that works.
 on:
   push:
     tags: ["v*"]
@@ -37,6 +45,8 @@ on:
     paths:
       - .cargo/**
       - .github/workflows/release.yml
+      - scripts/archive-readme.sh
+      - scripts/image-context.sh
       - about.hbs
       - about.toml
       - build.rs
@@ -56,6 +66,7 @@ concurrency:
 jobs:
   build:
     name: build ${{ matrix.target }}
+    needs: notices
     strategy:
       fail-fast: false
       matrix:
@@ -156,12 +167,26 @@ jobs:
             run manpage > "$ASSET/okfs.1"
           fi
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: okfs-third-party-notices
+          path: notices
+
+      # The licenses of what is compiled in go with the binary, under the name the README links to.
+      # The README's other links lead into the repository, which the archive does not hold: they
+      # get their address on GitHub.
       # COPYFILE_DISABLE keeps macOS's tar from adding ._ files for extended attributes.
       - name: Package
         env:
           COPYFILE_DISABLE: 1
         run: |
-          cp README.md LICENSE "$ASSET/"
+          cp LICENSE "$ASSET/"
+          cp notices/okfs-third-party-notices.md "$ASSET/THIRD_PARTY.md"
+          scripts/archive-readme.sh README.md > "$ASSET/README.md"
+          if grep -nE '(\]\(|(src|srcset|href)=")(docs|skills|themes|web|ui|src)/' "$ASSET/README.md"; then
+            echo "the archive's README still links into the repository" >&2
+            exit 1
+          fi
           if [ "$RUNNER_OS" = Windows ]; then
             cp "target/$TARGET/release/okfs.exe" "$ASSET/okfs.exe"
             7z a -tzip "$ASSET.zip" "$ASSET"
@@ -243,7 +268,8 @@ jobs:
           path: assets
           merge-multiple: true
 
-      # Each archive must hold exactly the files the formula installs, with okfs executable.
+      # Each archive must hold exactly the files the formula installs, the README and the licenses,
+      # with okfs executable.
       - name: Check the archives
         working-directory: assets
         run: |
@@ -253,9 +279,9 @@ jobs:
             echo "$archive"
             tar -tvzf "$archive"
             listed=$(tar -tzf "$archive" | sed 's|/$||' | sort)
-            expected=$(printf '%s\n' "$dir" "$dir/LICENSE" "$dir/README.md" "$dir/completions" \
-              "$dir/completions/_okfs" "$dir/completions/okfs.bash" "$dir/completions/okfs.fish" \
-              "$dir/okfs" "$dir/okfs.1" | sort)
+            expected=$(printf '%s\n' "$dir" "$dir/LICENSE" "$dir/README.md" "$dir/THIRD_PARTY.md" \
+              "$dir/completions" "$dir/completions/_okfs" "$dir/completions/okfs.bash" \
+              "$dir/completions/okfs.fish" "$dir/okfs" "$dir/okfs.1" | sort)
             if [ "$listed" != "$expected" ]; then
               echo "$archive does not hold the expected files" >&2
               exit 1
@@ -271,8 +297,8 @@ jobs:
             echo "$archive"
             unzip -l "$archive"
             listed=$(unzip -Z1 "$archive" | sed 's|/$||' | sort)
-            expected=$(printf '%s\n' "$dir" "$dir/LICENSE" "$dir/README.md" "$dir/completions" \
-              "$dir/completions/_okfs.ps1" "$dir/okfs.exe" | sort)
+            expected=$(printf '%s\n' "$dir" "$dir/LICENSE" "$dir/README.md" "$dir/THIRD_PARTY.md" \
+              "$dir/completions" "$dir/completions/_okfs.ps1" "$dir/okfs.exe" | sort)
             if [ "$listed" != "$expected" ]; then
               echo "$archive does not hold the expected files" >&2
               exit 1
@@ -283,6 +309,8 @@ jobs:
           run=$(mktemp -d)
           tar -xzf "$1" -C "$run"
           "$run/${1%.tar.gz}/okfs" --version
+          # The notices in an archive are the ones this run wrote, whole.
+          cmp "$run/${1%.tar.gz}/THIRD_PARTY.md" okfs-third-party-notices.md
           ls -l
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -351,9 +379,8 @@ jobs:
           ' | tee install.txt
           grep -F "okfs $VERSION" install.txt
 
-  # Builds the container image from the binaries the build jobs made, so nothing compiles again.
   # Builds the container image from the binaries the build jobs made, so nothing compiles again, and
-  # runs it. It pushes nothing: image-push does, once the release is out.
+  # runs it. It pushes nothing: image-push does.
   image:
     needs: [assets, crate]
     runs-on: ubuntu-24.04
@@ -379,6 +406,12 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           scripts/image-context.sh assets "$version" context
 
+      # A full release is published with notes written by hand. Checked here, before anything is
+      # pushed: a tag without its notes stops with nothing out.
+      - name: Check the notes of a full release
+        if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+        run: test -s ".github/release-notes/$GITHUB_REF_NAME.md"
+
       - name: Set up buildx
         run: docker buildx create --name okfs --driver docker-container --use
 
@@ -390,6 +423,13 @@ jobs:
           docker buildx build --platform linux/amd64 -f Dockerfile --tag okfs:test --load context
           docker run --rm okfs:test --version | tee image.txt
           grep -F "okfs $VERSION" image.txt
+          # The licenses of what is compiled in are in the image, and it says where it comes from.
+          id=$(docker create okfs:test)
+          docker cp "$id:/THIRD_PARTY.md" image-notices.md
+          docker rm "$id" >/dev/null
+          cmp image-notices.md assets/okfs-third-party-notices.md
+          docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' okfs:test \
+            | grep -Fx "https://github.com/jrnxf/okfs"
           mkdir -p srv && echo hello > srv/hello.txt
 
           # Starts the image with the given docker arguments, then lists the folder it serves on the
@@ -419,11 +459,11 @@ jobs:
       - name: Build both platforms
         run: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile context
 
-  # A tag with a hyphen is a pre-release: it gets its version tag and never latest. Runs only after
-  # the release is published, so a release that fails never moves latest.
+  # Pushes the image under its version, before the release is published: a release is never out
+  # without its image. latest does not move here.
   image-push:
     if: github.event_name == 'push'
-    needs: [image, publish]
+    needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -449,31 +489,166 @@ jobs:
           scripts/image-context.sh assets "$version" context
           docker buildx create --name okfs --driver docker-container --use
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          tags=(--tag "$IMAGE:$version")
-          case "$version" in *-*) ;; *) tags+=(--tag "$IMAGE:latest") ;; esac
-          docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile "${tags[@]}" --push context
+          # The labels are on each platform's image. The registry reads its page for an image of
+          # more than one platform from the index, so the same facts go there too.
+          about="An open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard."
+          docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile \
+            --label "org.opencontainers.image.version=$version" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/jrnxf/okfs" \
+            --annotation "index:org.opencontainers.image.description=$about" \
+            --annotation "index:org.opencontainers.image.licenses=MIT" \
+            --annotation "index:org.opencontainers.image.version=$version" \
+            --tag "$IMAGE:$version" --push context
 
   publish:
     if: github.event_name == 'push'
-    needs: [assets, crate]
+    needs: [assets, crate, image-push]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
+      # For the build provenance attestations.
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
     steps:
+      # Only the notes of full releases: the files to publish come from the artifact.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/release-notes
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: assets
 
+      # Says that these files were built by this workflow from this commit. Check one with:
+      #   gh attestation verify <file> --repo jrnxf/okfs
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            assets/*.tar.gz
+            assets/*.zip
+
+      # A full release has notes written by hand, which say what okfs is. A pre-release lists the
+      # pull requests since the one before it.
       - name: Publish the release
         run: |
-          flags=(--generate-notes --verify-tag)
-          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" assets/*
+          case "$TAG" in
+            *-*) flags=(--generate-notes --prerelease) ;;
+            *) flags=(--notes-file ".github/release-notes/$TAG.md" --title "okfs ${TAG#v}") ;;
+          esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" assets/*
+
+  # A tag with a hyphen is a pre-release: its image keeps its version tag and never becomes latest.
+  # Runs only after the release is published, so a release that fails never moves latest. It points
+  # latest at the image that is already pushed, and builds nothing.
+  image-latest:
+    if: github.event_name == 'push' && !contains(github.ref_name, '-')
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/jrnxf/okfs
+    steps:
+      - name: Point latest at this release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$version"
+
+  # The last word on a release: the image is run from the registry as a user runs it, signed out.
+  # For a full release that is the command in the README, with no tag. When this fails the run
+  # fails, and the release is not usable as documented.
+  image-check:
+    if: always() && github.event_name == 'push' && needs.publish.result == 'success'
+    needs: [publish, image-latest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    env:
+      IMAGE: ghcr.io/jrnxf/okfs
+    steps:
+      - name: Run the image as a user would
+        env:
+          LATEST: ${{ needs.image-latest.result }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          docker run --rm "$IMAGE:$version" --version | tee tagged.txt
+          grep -Fx "okfs $version" tagged.txt
+          case "$version" in *-*) exit 0 ;; esac
+          if [ "$LATEST" != success ]; then
+            echo "::error::latest was not moved to $version: docker run $IMAGE fails or runs an older okfs"
+            exit 1
+          fi
+          docker run --rm "$IMAGE" --version | tee latest.txt
+          grep -Fx "okfs $version" latest.txt
+
+  # Publishes the crate to crates.io, for a full release only. It cannot run yet: Cargo.toml says
+  # publish = false, and this job stops there. To turn it on, remove that line, and on crates.io
+  # add this repository and this workflow as a trusted publisher of okfs (no token is stored here).
+  # The crate is packaged the way the crate job packages and installs it: same commit, same page.
+  crates-io:
+    if: github.event_name == 'push' && !contains(github.ref_name, '-')
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check that publishing is turned on
+        id: gate
+        run: |
+          if grep -Eq '^publish *= *false' Cargo.toml; then
+            echo "::notice::Cargo.toml says publish = false, so nothing goes to crates.io"
+            echo "open=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.open == 'true'
+        run: scripts/stamp-version.sh "${GITHUB_REF_NAME#v}"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.gate.outputs.open == 'true'
+        with:
+          bun-version: 1.4.2
+
+      - name: Install the Rust toolchain
+        if: steps.gate.outputs.open == 'true'
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build the page
+        if: steps.gate.outputs.open == 'true'
+        working-directory: ui
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        if: steps.gate.outputs.open == 'true'
+        id: auth
+
+      # A version on crates.io can be yanked but never replaced: this runs once per version.
+      - name: Publish the crate
+        if: steps.gate.outputs.open == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --allow-dirty --locked --no-verify
 
   # Points jrnxf/homebrew-tap's Formula/okfs.rb at this release's archives. The tap's
   # docs/automatic-updates.md issues the TAP_DEPLOY_KEY secret this needs.

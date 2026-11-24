@@ -1,0 +1,17 @@
+# How GitHub groups the pull requests in the notes it writes for a pre-release. A full release has
+# notes written by hand in .github/release-notes/, which the release workflow publishes.
+changelog:
+  exclude:
+    authors:
+      - dependabot[bot]
+    labels:
+      - skip-notes
+  categories:
+    - title: New
+      labels: [enhancement, feature]
+    - title: Fixes
+      labels: [bug, fix, security]
+    - title: Docs and site
+      labels: [documentation, site]
+    - title: Everything else
+      labels: ["*"]
