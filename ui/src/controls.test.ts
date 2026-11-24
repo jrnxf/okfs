@@ -106,11 +106,33 @@ test("only a message made right is read", () => {
     { id: "c", open: false },
   ];
   expect(readMessage({ type: "okfs:save", controls: good })).toEqual(good);
+  expect(readMessage({ type: "okfs:save", v: 1, controls: good })).toEqual(good);
   expect(readMessage({ type: "other", controls: good })).toBeNull();
-  expect(readMessage({ type: "okfs:save", controls: [{ id: "a" }] })).toBeNull();
   expect(readMessage({ type: "okfs:save", controls: [{ id: "a", checked: true, open: true }] })).toBeNull();
   expect(readMessage({ type: "okfs:save", controls: [{ id: "", checked: true }] })).toBeNull();
   expect(readMessage({ type: "okfs:save", controls: [{ id: "a", checked: "yes" }] })).toBeNull();
+  expect(readMessage({ type: "okfs:save", controls: [good[0], { id: "b", value: 7 }] })).toBeNull();
+  expect(readMessage({ type: "okfs:save", controls: "a" })).toBeNull();
   expect(readMessage("okfs:save")).toBeNull();
   expect(readMessage(null)).toBeNull();
+});
+
+test("a message of a later version is not read at all", () => {
+  const good: Control[] = [{ id: "a", checked: true }];
+  expect(readMessage({ type: "okfs:save", v: 2, controls: good })).toBeNull();
+  expect(readMessage({ type: "okfs:save", v: 1.5, controls: good })).toBeNull();
+  // Anything that is not a later version reads as this one.
+  expect(readMessage({ type: "okfs:save", v: 0, controls: good })).toEqual(good);
+  expect(readMessage({ type: "okfs:save", v: "1", controls: good })).toEqual(good);
+  expect(readMessage({ type: "okfs:save", v: null, controls: good })).toEqual(good);
+});
+
+test("a control of a kind okfs does not know is left out, and the others are kept", () => {
+  const good: Control[] = [
+    { id: "a", checked: true },
+    { id: "b", value: "x" },
+  ];
+  const unknown = [{ id: "c" }, { id: "d", range: [1, 2] }];
+  expect(readMessage({ type: "okfs:save", controls: [good[0], ...unknown, good[1]] })).toEqual(good);
+  expect(readMessage({ type: "okfs:save", controls: unknown })).toEqual([]);
 });

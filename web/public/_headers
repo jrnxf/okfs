@@ -1,6 +1,17 @@
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000
 
 /okfs-demo.*
   Cache-Control: public, max-age=31536000, immutable
+
+# The font files keep one name across builds, so a browser keeps them a day, not for good.
+/fonts/*
+  Cache-Control: public, max-age=86400
+
+/og.png
+  Cache-Control: public, max-age=86400
+
+/favicon.ico
+  Cache-Control: public, max-age=86400

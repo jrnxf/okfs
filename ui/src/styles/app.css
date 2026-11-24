@@ -256,6 +256,26 @@
   .btn-fill:focus-visible {
     outline-offset: 2px;
   }
+  /* A thumb needs 44px: a button on a phone is hit within that, whatever size it is drawn at. The reach is a
+     pseudo-element, so the bars keep their look, and the buttons in them are set far enough apart not to share it. */
+  @media (max-width: 760px) {
+    header .btn,
+    footer .btn,
+    .bar .btn {
+      position: relative;
+    }
+    header .btn::after,
+    footer .btn::after,
+    .bar .btn::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+  }
   .btn:disabled {
     opacity: 0.55;
     cursor: default;

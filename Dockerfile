@@ -1,7 +1,8 @@
 # The okfs image: the release's static musl binary on an empty filesystem.
 #
 # The release workflow builds it from the binaries it already made, with no compile here. Its build
-# context holds linux-amd64/okfs and linux-arm64/okfs, and buildx picks one by platform:
+# context holds linux-amd64/okfs, linux-arm64/okfs and THIRD_PARTY.md, and buildx picks a binary by
+# platform:
 #
 #   docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile <context>
 #
@@ -17,7 +18,16 @@ RUN mkdir -m 0755 /srv && mkdir -m 0777 /cache
 
 FROM scratch
 ARG TARGETARCH
+# What the registry's page shows, and where the image comes from. The release adds the version.
+LABEL org.opencontainers.image.title="okfs" \
+      org.opencontainers.image.description="An open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard." \
+      org.opencontainers.image.source="https://github.com/jrnxf/okfs" \
+      org.opencontainers.image.url="https://okfs.jrnxf.co" \
+      org.opencontainers.image.documentation="https://github.com/jrnxf/okfs/blob/main/docs/install.md" \
+      org.opencontainers.image.licenses="MIT"
 COPY linux-${TARGETARCH}/okfs /okfs
+# The licenses of everything compiled into the binary.
+COPY THIRD_PARTY.md /THIRD_PARTY.md
 COPY --from=dirs /srv /srv
 COPY --from=dirs /cache /cache
 ENV XDG_CACHE_HOME=/cache

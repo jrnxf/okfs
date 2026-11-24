@@ -109,6 +109,30 @@ jobs:
       - name: Clippy without the PDF preview
         run: nix develop -c cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
+  # okfs builds with the oldest Rust that Cargo.toml names in rust-version.
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Install the Rust that Cargo.toml names
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          rustup toolchain install "$version" --profile minimal
+          rustup default "$version"
+          rustc --version
+
+      - name: Build
+        run: cargo check --locked --all-targets
+
   # RustSec advisories for both lockfiles. A vulnerability fails the job; warnings (unmaintained,
   # unsound) are listed and do not.
   audit:
@@ -128,6 +152,20 @@ jobs:
 
       - name: Audit the site's engine
         run: cargo audit --file web/engine/Cargo.lock
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      # The page compiled into okfs. bun audit reads ui/bun.lock and installs nothing.
+      - name: Audit the page
+        run: bun audit
+        working-directory: ui
+
+      # The site's build and deploy tools. Workers Builds has only Node, so web/ keeps an npm lock.
+      - name: Audit the site
+        run: npm audit
+        working-directory: web
 
   # The nix package builds and runs.
   package:

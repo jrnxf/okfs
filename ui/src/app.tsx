@@ -12,7 +12,7 @@ import { MatchBar, MatchColumns, MatchRow, MatchesEmpty, TrailButton, matchesInf
 import { ConfirmLeave } from "./editor";
 import { ConfirmDelete, Help, ThemeMenu } from "./overlays";
 import { MOD, Palette } from "./palette";
-import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
+import { AGE, DROP_PANE, DROP_ROW, EMPTY, EMPTY_HEAD, HEAD, HEADS, LIST_PAD, LIST_ROW, MORE_NAME, MORE_ROW, POP_IN, ROW, ROW_GRID, ROW_ON, ROW_REST, SIZE, nameWeight } from "./look";
 import { Prose, lookAhead, pagesAhead } from "./preview";
 import { UNREACHED, useDown } from "./reach";
 import { Aim, AIM_RECHECK } from "./aim";
@@ -123,8 +123,8 @@ function Crumbs() {
   const finding = s.finding && s.matches;
   // A phone has room for the last crumb only, and the way back beside it.
   const link = "whitespace-nowrap rounded px-1.5 py-0.75 no-underline hover:bg-hover hover:text-fg";
-  const crumb = `${link} last-of-type:overflow-hidden last-of-type:text-ellipsis last-of-type:font-strong last-of-type:text-fg phone:hidden phone:last-of-type:inline-flex`;
-  const back = `${link} hidden phone:-ml-1.5 phone:inline-flex phone:p-1.5 phone:text-muted`;
+  const crumb = `${link} last-of-type:overflow-hidden last-of-type:text-ellipsis last-of-type:font-strong last-of-type:text-fg phone:hidden phone:last-of-type:block phone:last-of-type:min-w-0 phone:last-of-type:py-0 phone:last-of-type:leading-[44px]`;
+  const back = `${link} hidden phone:inline-flex phone:size-11 phone:flex-none phone:items-center phone:justify-center phone:p-0 phone:text-muted`;
   const slash = "flex-none not-italic text-faint phone:hidden";
   return (
     <nav class="flex min-w-0 flex-1 items-center overflow-hidden text-muted" aria-label="Path">
@@ -194,6 +194,50 @@ function Columns() {
       {head("size", "Size", true)}
       {head("time", "Mod.", true)}
     </div>
+  );
+}
+
+/**
+ * A phone's top bar has room for the search and one button more. This is that one: what the wide bar has as buttons
+ * of its own, the upload, a new file, the folder's delete, the Trash, the hidden files and the theme.
+ */
+function HeaderMore({ adds, here, onTheme }: { adds: Parameters<typeof pick>[0] | null; here: ReturnType<typeof store.here>; onTheme: (anchor: HTMLElement | null) => void }) {
+  const { s } = store;
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    setOpen(false);
+  }, [s.path, s.trashView]);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!(event.target as Element).closest?.(".head-more")) setOpen(false);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [open]);
+  const row = (icon: string, label: string, run: () => void) => (
+    <button class={MORE_ROW} role="menuitem" onClick={run}>
+      <Icon name={icon} />
+      <span class={MORE_NAME}>{label}</span>
+    </button>
+  );
+  return (
+    <span class="head-more relative hidden phone:inline-flex">
+      <button ref={button} class={`btn ${TOOL}`} aria-label="More" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div class={`absolute top-full right-0 z-30 mt-1 w-[240px] rounded-lg bg-surface p-1.5 shadow ${POP_IN}`} role="menu" onClick={() => setOpen(false)}>
+          {adds !== null && !s.trashView && row("upload", "Upload files here", () => pick(adds))}
+          {adds !== null && !s.trashView && row("plus", "New file", () => store.setNaming("file"))}
+          {here && !s.trashView && row("trash", config.trash ? "Move this folder to Trash" : "Delete this folder", () => store.askDelete(here))}
+          {s.trash && row("bin", `Trash${s.trash.items.length ? ` · ${fmt.count(s.trash.items.length)}` : ""}`, () => store.showTrash())}
+          {row(s.hidden ? "eye" : "eye-off", s.hidden ? "Hide hidden files" : "Show hidden files", () => store.setHidden())}
+          {row("swatch", "Theme", () => onTheme(button.current))}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -268,7 +312,7 @@ function pageOf(list: HTMLElement | null): number {
 }
 
 /** The keys the foot of the page hints at. The 3px pad shows the focus ring of the one that is a button. */
-const HINTS = "-m-[3px] p-[3px] items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden";
+const HINTS = "-m-[3px] p-[3px] items-center gap-3 overflow-hidden whitespace-nowrap *:inline-flex *:items-center *:gap-1 phone:hidden pointer-coarse:hidden";
 
 /**
  * A quiet word at the foot of the page: that okfs is not answering or refuses the key, for as long as it does, or
@@ -416,8 +460,10 @@ export function App() {
 
   useEffect(() => {
     const name = s.open?.name ?? (s.path ? s.path.slice(s.path.lastIndexOf("/") + 1) : "");
-    document.title = name ? `${name} - ${config.title}` : config.title;
-  }, [s.open, s.path]);
+    const where = name ? `${name} - ${config.title}` : config.title;
+    // Over the matches of a search, the tab says what was searched for.
+    document.title = s.finding && s.matches ? `Find “${s.matches.q}” - ${where}` : where;
+  }, [s.open, s.path, s.finding, s.matches?.q]);
 
   // Listening from the first render, not after the first paint: a key pressed as the page appears is not lost.
   useLayoutEffect(() => {
@@ -770,7 +816,7 @@ export function App() {
         onDrop={(event) => carriesRows(event) && onDrop(event)}
       >
         <a
-          class="inline-flex items-center gap-[0.5em] font-display text-[length:calc(var(--text)*1.08)] leading-none font-strong tracking-[-0.02em] text-fg no-underline phone:gap-0 phone:text-[0px]"
+          class="inline-flex items-center gap-[0.5em] font-display text-[length:calc(var(--text)*1.08)] leading-none font-strong tracking-[-0.02em] text-fg no-underline phone:-ml-3.5 phone:-mr-3 phone:size-11 phone:flex-none phone:justify-center phone:gap-0 phone:text-[0px]"
           href="/"
           aria-label={`${config.title}, top folder`}
           onClick={inPlace(() => void store.showDir(""))}
@@ -780,31 +826,17 @@ export function App() {
         </a>
         <TrailButton />
         <Crumbs />
-        <div class="flex flex-none items-center gap-1" onMouseDown={(event) => event.preventDefault()}>
-          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto ${TOOL}`} aria-label={`Find anything, ${MOD} K`} onClick={() => store.setPalette(true)}>
+        <div class="flex flex-none items-center gap-1 phone:gap-3.5" onMouseDown={(event) => event.preventDefault()}>
+          <button class={`btn btn-line w-[210px] justify-start text-faint hover:text-fg phone:w-auto pointer-coarse:w-auto ${TOOL}`} aria-label={`Find anything, ${MOD} K`} onClick={() => store.setPalette(true)}>
             <Icon name="search" />
-            <span class="flex-1 text-left phone:hidden">Find anything</span>{" "}
-            <kbd class="phone:hidden">{MOD} K</kbd>
+            <span class="flex-1 text-left phone:hidden pointer-coarse:hidden">Find anything</span>{" "}
+            <kbd class="phone:hidden pointer-coarse:hidden">{MOD} K</kbd>
           </button>
-          {/* A phone has no folder bar above the list to hold these, and a tap on a folder goes in. */}
-          {adds !== null && !s.trashView && (
-            <>
-              <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="Upload files here" onClick={() => pick(adds)}>
-                <Icon name="upload" />
-              </button>
-              <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label="New file" onClick={() => store.setNaming("file")}>
-                <Icon name="plus" />
-              </button>
-            </>
-          )}
-          {here && !s.trashView && (
-            <button class={`btn hidden phone:inline-flex ${TOOL}`} aria-label={config.trash ? "Move this folder to Trash" : "Delete this folder"} onClick={() => store.askDelete(here)}>
-              <Icon name="trash" />
-            </button>
-          )}
+          {/* A phone's bar has room for the search and one button more: the rest are behind it. */}
+          <HeaderMore adds={adds} here={here} onTheme={setMenu} />
           {s.trash && (
             <button
-              class={`btn ${TOOL}`}
+              class={`btn phone:hidden ${TOOL}`}
               aria-label={`Trash, ${fmt.items(s.trash.items.length)}`}
               aria-pressed={s.trashView}
               title={`Trash: what is deleted stays ${s.trash.days} days`}
@@ -821,7 +853,7 @@ export function App() {
             </button>
           )}
           <button
-            class={`btn ${TOOL}`}
+            class={`btn phone:hidden ${TOOL}`}
             aria-label="Show hidden files"
             aria-pressed={s.hidden}
             title={s.hidden ? "Hide hidden files (.)" : "Show hidden files (.)"}
@@ -829,7 +861,7 @@ export function App() {
           >
             <Icon name={s.hidden ? "eye" : "eye-off"} />
           </button>
-          <button class={`btn ${TOOL}`} aria-label="Theme" onClick={(event) => setMenu(menu ? null : event.currentTarget)}>
+          <button class={`btn phone:hidden ${TOOL}`} aria-label="Theme" onClick={(event) => setMenu(menu ? null : event.currentTarget)}>
             <Icon name="swatch" />
           </button>
         </div>
@@ -956,7 +988,7 @@ export function App() {
         <span
           class={`inline-flex flex-none items-center font-mono text-[length:calc(var(--text)*0.72)] font-medium tracking-[0] uppercase before:size-1.5 before:rounded-[50%] before:bg-accent before:content-[''] phone:hidden ${
             // Loud while it is not plain browsing: a filled chip, and no dot.
-            finding || s.open || s.filter || s.trashView || selected ? "gap-0 rounded-[min(var(--radius),3px)] bg-accent px-1.75 py-px text-accent-fg before:hidden" : "gap-1.5 text-muted"
+            finding || s.open || s.filter || s.trashView || selected ? "gap-0 rounded-[min(var(--radius),3px)] bg-[color-mix(in_srgb,var(--accent)_80%,var(--fg))] px-1.75 py-px text-accent-fg before:hidden dark:bg-accent" : "gap-1.5 text-muted"
           }`}
         >
           {s.trashView ? "trash" : finding ? "find" : s.editing ? "edit" : s.open ? "view" : selected ? "select" : s.filter ? "filter" : "browse"}
