@@ -327,7 +327,7 @@ fn an_option_can_come_from_the_environment() {
     assert!(error.contains(&format!("cannot listen on 127.0.0.1:{port}")), "{error}");
 
     let mut command = okfs(&served, &cache, &["--port", "0"]);
-    command.env("OKFS_ASK_KEY", "true");
+    command.env("OKFS_REQUIRE_KEY", "true");
     let running = listening(command);
     assert!(running.key.is_some(), "{}", running.said);
 }
@@ -383,8 +383,8 @@ fn allow_host_in_the_environment_is_a_list_split_on_commas() {
 fn a_switch_set_to_false_in_the_environment_is_off_and_conflicts_with_nothing() {
     let (_tmp, served, cache) = folder();
 
-    // --no-key off, --key on.
-    let mut command = okfs(&served, &cache, &["--key"]);
+    // --no-key off, --require-key on.
+    let mut command = okfs(&served, &cache, &["--require-key"]);
     command.args(["--port", "0"]).env("OKFS_NO_KEY", "false");
     assert!(listening(command).key.is_some());
 
@@ -393,7 +393,7 @@ fn a_switch_set_to_false_in_the_environment_is_off_and_conflicts_with_nothing() 
     command
         .args(["--port", "0"])
         .env("OKFS_NO_KEY", "false")
-        .env("OKFS_ASK_KEY", "false");
+        .env("OKFS_REQUIRE_KEY", "false");
     assert_eq!(listening(command).key, None);
 
     // --no-trash off, --trash-days given.
@@ -420,10 +420,10 @@ fn a_switch_set_to_false_in_the_environment_is_off_and_conflicts_with_nothing() 
 fn options_that_exclude_each_other_are_refused_whether_a_flag_or_a_variable_sets_them() {
     let (_tmp, served, cache) = folder();
     for (vars, args, pair) in [
-        (vec![], vec!["--no-key", "--key"], "--no-key"),
-        (vec![("OKFS_NO_KEY", "true")], vec!["--key"], "--no-key"),
+        (vec![], vec!["--no-key", "--require-key"], "--no-key"),
+        (vec![("OKFS_NO_KEY", "true")], vec!["--require-key"], "--no-key"),
         (
-            vec![("OKFS_NO_KEY", "true"), ("OKFS_ASK_KEY", "true")],
+            vec![("OKFS_NO_KEY", "true"), ("OKFS_REQUIRE_KEY", "true")],
             vec![],
             "--no-key",
         ),
@@ -452,8 +452,8 @@ fn on_loopback_no_key_is_asked_for_unless_told_to() {
     );
     assert_eq!(ask(okfs.port, "localhost", "/raw/docs/note.txt", "").0, 200);
 
-    let (_tmp, okfs) = site(&["--key"]);
-    let key = okfs.key.clone().expect("a key with --key");
+    let (_tmp, okfs) = site(&["--require-key"]);
+    let key = okfs.key.clone().expect("a key with --require-key");
     assert!(okfs.said.contains("http://127.0.0.1:"), "{}", okfs.said);
     assert!(okfs.said.contains("  key      on:"), "{}", okfs.said);
     assert_eq!(ask(okfs.port, "localhost", "/raw/docs/note.txt", "").0, 401);
@@ -557,7 +557,7 @@ fn with_no_key_anyone_who_reaches_the_address_gets_in_and_is_told_so() {
         okfs.said
     );
 
-    let (ended, error) = run(&["--no-open", "--key", "--no-key", "."]);
+    let (ended, error) = run(&["--no-open", "--require-key", "--no-key", "."]);
     assert!(!ended.success());
     assert!(error.contains("cannot be used with"), "{error}");
 }
@@ -805,7 +805,7 @@ fn opens_the_browser_with_a_one_time_code(cert: Option<&Cert>) {
         .map(|cert| format!("'{}' ", cert.args().join("' '")))
         .unwrap_or_default();
     let okfs = format!(
-        "'{}' --bind 127.0.0.1 --key --port 0 {tls}'{}'",
+        "'{}' --bind 127.0.0.1 --require-key --port 0 {tls}'{}'",
         env!("CARGO_BIN_EXE_okfs"),
         served.display()
     );
@@ -1033,10 +1033,15 @@ fn the_trash_is_said_at_start_and_its_days_are_set_or_it_is_turned_off() {
     );
     let (_tmp, okfs) = site(&["--allow-delete", "--trash-days", "7"]);
     assert!(okfs.said.contains("kept 7 days"), "{}", okfs.said);
-    for args in [&["--allow-delete", "--no-trash"][..], &[][..]] {
-        let (_tmp, okfs) = site(args);
-        assert!(!okfs.said.contains("trash"), "{args:?}: {}", okfs.said);
-    }
+    // With no Trash a delete cannot be undone, and the lines at start say so.
+    let (_tmp, okfs) = site(&["--allow-delete", "--no-trash"]);
+    assert!(
+        okfs.said.contains("trash    off: a delete is for good at once"),
+        "{}",
+        okfs.said
+    );
+    let (_tmp, okfs) = site(&[]);
+    assert!(!okfs.said.contains("trash"), "{}", okfs.said);
     // Without deleting on, the Trash's options do nothing, and the lines at start say so.
     for (args, given) in [
         (&["--no-trash"][..], "--no-trash"),
@@ -1298,4 +1303,118 @@ fn a_folder_okfs_cannot_write_is_named_at_start() {
     assert!(!reading.said.contains(warning), "{}", reading.said);
     // The check leaves nothing behind.
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
+}
+
+#[test]
+fn a_switch_from_the_environment_takes_its_words_and_no_other() {
+    let run_with = |name: &str, value: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_okfs"))
+            .args(["theme", "list"])
+            .env(name, value)
+            .output()
+            .unwrap();
+        (output.status, String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+    let switches = [
+        "OKFS_QR",
+        "OKFS_NO_OPEN",
+        "OKFS_HIDDEN",
+        "OKFS_ALLOW_UPLOAD",
+        "OKFS_ALLOW_EDIT",
+        "OKFS_ALLOW_DELETE",
+        "OKFS_NO_TRASH",
+        "OKFS_NO_KEY",
+        "OKFS_REQUIRE_KEY",
+    ];
+    for name in switches {
+        // A misspelled word must not turn a switch on, or off: okfs does not start.
+        for wrong in ["flase", "maybe", "ture", "2", "y es"] {
+            let (ended, error) = run_with(name, wrong);
+            assert_eq!(ended.code(), Some(2), "{name}={wrong}: {error}");
+            assert!(
+                error.contains("true") && error.contains("false"),
+                "{name}={wrong}: {error}"
+            );
+        }
+        for right in ["", "1", "0", "true", "FALSE", "Yes", "no", "on", "off", " true "] {
+            let (ended, error) = run_with(name, right);
+            assert!(ended.success(), "{name}={right:?}: {error}");
+        }
+    }
+    // The old name of --require-key is no switch.
+    let (ended, error) = run(&["--no-open", "--key", "."]);
+    assert_eq!(ended.code(), Some(2), "{error}");
+}
+
+#[test]
+fn the_help_fits_in_80_columns_and_the_manual_page_keeps_the_examples_in_lines() {
+    for args in [&["--help"][..], &["theme", "--help"], &["completions", "--help"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_okfs")).args(args).output().unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8_lossy(&output.stdout).into_owned();
+        let wide: Vec<&str> = help.lines().filter(|line| line.chars().count() > 80).collect();
+        assert!(wide.is_empty(), "{args:?}: {wide:#?}");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_okfs")).arg("--help").output().unwrap();
+    let help = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        help.contains("--allow-edit             let visitors edit, replace, rename and move"),
+        "{help}"
+    );
+    // Both texts for --allow-edit name the same abilities.
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains("edit text files, replace a file with an upload of the same name, and rename and move"),
+        "{help}"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_okfs"))
+        .arg("manpage")
+        .output()
+        .unwrap();
+    let page = String::from_utf8_lossy(&output.stdout).into_owned();
+    // No page of its own exists for a subcommand.
+    assert!(!page.contains("(1)"), "{page}");
+    assert!(
+        page.contains("\\fBokfs theme\\fR") && page.contains("\\fBokfs completions\\fR"),
+        "{page}"
+    );
+    // The examples are not filled into one paragraph.
+    let examples = page.split(".SH EXAMPLES\n").nth(1).expect("an EXAMPLES section");
+    assert!(examples.starts_with(".nf\n"), "{examples}");
+    let (kept, after) = examples.split_once("\n.fi\n").expect("the end of the examples");
+    assert!(
+        kept.lines().count() > 15 && kept.contains("okfs \\-\\-port 0"),
+        "{kept}"
+    );
+    assert!(after.contains("Everything is read only"), "{after}");
+    assert!(!page.lines().any(|line| line.starts_with('\'')), "{page}");
+}
+
+#[test]
+fn a_value_that_cannot_mean_what_was_meant_is_refused() {
+    for (args, says) in [
+        (&["--allow-host", ""][..], "not a host name"),
+        (&["--allow-host", "a b"], "not a host name"),
+        (&["--allow-host", "http://x.test"], "not a host name"),
+        (&["--allow-host", "x.test:8080"], "not a host name"),
+        (&["--allow-host", "ok.test,http://x.test"], "not a host name"),
+        (&["--max-upload", "0"], "no limit"),
+        (&["--max-upload", "0G"], "no limit"),
+    ] {
+        let mut all = vec!["--no-open"];
+        all.extend_from_slice(args);
+        all.push(".");
+        let (ended, error) = run(&all);
+        assert_eq!(ended.code(), Some(2), "{args:?}: {error}");
+        assert!(error.contains(says), "{args:?}: {error}");
+    }
+    // A wrong flag is answered with the usage as it is, whatever the environment holds.
+    let output = Command::new(env!("CARGO_BIN_EXE_okfs"))
+        .arg("--bogus")
+        .env("OKFS_NO_OPEN", "true")
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(error.contains("Usage: okfs [OPTIONS] [PATH]"), "{error}");
 }

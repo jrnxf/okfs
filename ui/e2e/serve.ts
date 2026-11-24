@@ -19,7 +19,7 @@ export interface Served {
 }
 
 /**
- * Runs okfs on a fresh fixture folder. `args` are okfs's own, such as `--key`. `files` are more files to put in it,
+ * Runs okfs on a fresh fixture folder. `args` are okfs's own, such as `--require-key`. `files` are more files to put in it,
  * by name, before okfs starts: one written after would be named as changed while a test looks at it.
  */
 export async function serve(args: string[] = [], files: Record<string, string> = {}): Promise<Served> {
