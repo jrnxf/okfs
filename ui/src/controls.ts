@@ -13,20 +13,30 @@ const LONGEST_VALUE = 100_000;
 /** The kind of message a page sends to have its controls kept. */
 export const SAVE = "okfs:save";
 
+/** The version of the message that this okfs reads. A page may leave it out, which means 1. */
+export const SAVE_VERSION = 1;
+
 /**
  * The controls a message from a page names, or `null` when it is no message of this kind or is not made right:
- * `{ type: "okfs:save", controls: [{ id, checked } | { id, value } | { id, open }] }`.
+ * `{ type: "okfs:save", v: 1, controls: [{ id, checked } | { id, value } | { id, open }] }`.
+ *
+ * A message with a later `v` is not read at all: okfs does not know what it means. In a message it reads, a
+ * control of a kind this okfs does not know, one that says none of `checked`, `value` and `open`, is left out and
+ * the others are kept. A control of a kind it knows that is not made right still refuses the whole message: half
+ * of what a page shows must not be written as if it were all of it.
  */
 export function readMessage(data: unknown): Control[] | null {
   if (typeof data !== "object" || data === null) return null;
-  const { type, controls } = data as { type?: unknown; controls?: unknown };
+  const { type, v, controls } = data as { type?: unknown; v?: unknown; controls?: unknown };
   if (type !== SAVE || !Array.isArray(controls) || controls.length > MOST_CONTROLS) return null;
+  if (typeof v === "number" && v > SAVE_VERSION) return null;
   const out: Control[] = [];
   for (const item of controls as unknown[]) {
     if (typeof item !== "object" || item === null) return null;
     const { id, checked, value, open } = item as Record<string, unknown>;
     if (typeof id !== "string" || id === "" || id.length > LONGEST_ID) return null;
     const said = [checked, value, open].filter((part) => part !== undefined).length;
+    if (said === 0) continue;
     if (said !== 1) return null;
     if (typeof checked === "boolean") out.push({ id, checked });
     else if (typeof open === "boolean") out.push({ id, open });

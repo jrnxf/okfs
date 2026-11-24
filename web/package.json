@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "./build.sh",
+    "comparison": "bun comparison.ts --write",
     "check": "../ui/node_modules/.bin/tsc -p tsconfig.json && ../ui/node_modules/.bin/tsc -p tsconfig.frame.json",
     "deploy": "wrangler deploy"
   },

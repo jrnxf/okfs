@@ -76,7 +76,7 @@ export function Questions() {
             Does it run on Windows?
           </h3>
           <p>
-            Not yet. It runs on Linux and macOS.
+            Yes. Each release has a zip for Windows (x86-64). The Windows build is new and lightly tested. okfs also runs on Linux and macOS.
           </p>
         </div>
       </div>

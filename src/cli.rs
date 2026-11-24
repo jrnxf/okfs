@@ -15,38 +15,52 @@ use crate::index::{Follow, Index};
 use crate::key::{self, Key, Once};
 use crate::lan::{self, Scan};
 use crate::paths::Root;
+use crate::serve;
 use crate::server::{self, App, Options, ThemeChoice};
 use crate::theme;
 use crate::tls;
 
+/// Every line fits in 80 columns: clap wraps prose, but it would break these up.
 const EXAMPLES: &str = "\
 Examples:
-  okfs                            serve this folder at http://127.0.0.1:8080/
-  okfs ~/photos --port 9000       serve another folder on another port
-  okfs --port 0                   serve on any free port
-  okfs --bind 0.0.0.0             let other machines on the network in, with the key in the link
-  okfs --bind 0.0.0.0 --qr        and print a QR code a phone can scan to open it
-  okfs --bind 0.0.0.0 --no-key    behind a proxy that signs people in itself
+  okfs                          serve this folder at http://127.0.0.1:8080/
+  okfs ~/photos --port 9000     serve another folder on another port
+  okfs --port 0                 serve on any free port
+  okfs --bind 0.0.0.0           let other machines in, with the key in the link
+  okfs --bind 0.0.0.0 --qr      and print a QR code for a phone to scan
+  okfs --bind 0.0.0.0 --no-key  behind a proxy that signs people in itself
   okfs --bind 0.0.0.0 --tls-cert cert.pem --tls-key key.pem
-                                  serve https, so the network sees neither the key nor a file
-  okfs --no-open                  serve without opening the browser
-  okfs --index index.html         open a folder that holds an index.html as that page
-  okfs --theme gruvbox            start in a built-in theme (see: okfs theme list)
-  okfs --theme ./mine.css         start in your own theme
-  okfs theme check ./mine.css     check a theme file against the contract
-  okfs --allow-upload             let visitors add files and folders
-  okfs --allow-edit               let visitors change text files
-  okfs --allow-delete             let visitors delete files and folders
-  okfs --rescan 6h                read the whole tree again every 6 hours instead of watching it
-  okfs completions zsh            print the completions for a shell
+                                serve https: the network sees no key and no file
+  okfs --no-open                serve without opening the browser
+  okfs --index index.html       open a folder with an index.html as that page
+  okfs --theme gruvbox          start in a built-in theme (see: okfs theme list)
+  okfs --theme ./mine.css       start in your own theme
+  okfs theme check ./mine.css   check a theme file against the contract
+  okfs --allow-upload           let visitors add files and folders
+  okfs --allow-edit             let visitors edit, replace, rename and move
+  okfs --allow-delete           let visitors delete files and folders
+  okfs --rescan 6h              read the tree again every 6 hours, not watch it
+  okfs completions zsh          print the completions for a shell
 
-Everything is read only unless you pass --allow-upload, --allow-edit or --allow-delete.
-Beyond loopback, only a link with the key okfs prints gets in, unless you pass --no-key.
-With --allow-upload, --allow-edit or --allow-delete, the key is asked for on loopback too.";
+Everything is read only unless you pass --allow-upload, --allow-edit or
+--allow-delete. Beyond loopback, only a link with the key okfs prints gets in,
+unless you pass --no-key. With a write flag, the key is asked for on loopback
+too.";
 
-/// A web file browser. Run it in a folder and flip through every file inside.
+/// The widest a line of help is. A terminal that is narrower gets narrower lines.
+const HELP_WIDTH: usize = 80;
+
+/// An open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard, each one shown beside the list as the cursor lands on it.
 #[derive(Parser)]
-#[command(name = "okfs", version, after_help = EXAMPLES, args_conflicts_with_subcommands = true)]
+#[command(
+    name = "okfs",
+    version,
+    after_help = EXAMPLES,
+    args_conflicts_with_subcommands = true,
+    max_term_width = HELP_WIDTH,
+    // clap's own usage line lists the switches that are set in the environment as if they were required.
+    override_usage = "okfs [OPTIONS] [PATH]\n       okfs <COMMAND>"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -69,11 +83,11 @@ struct Serve {
     port: Option<u16>,
 
     /// Print a QR code for the address another device can use. Needs a terminal
-    #[arg(env = "OKFS_QR", value_parser = clap::builder::FalseyValueParser::new(), long)]
+    #[arg(env = "OKFS_QR", value_parser = switch, long)]
     qr: bool,
 
     /// Do not open the browser. It is never opened without a terminal or over SSH
-    #[arg(env = "OKFS_NO_OPEN", value_parser = clap::builder::FalseyValueParser::new(), long)]
+    #[arg(env = "OKFS_NO_OPEN", value_parser = switch, long)]
     no_open: bool,
 
     /// Open a folder that holds a file of this name as that page: --index index.html
@@ -109,26 +123,27 @@ struct Serve {
     accent: Option<String>,
 
     /// Show and serve dotfiles. Left out by default
-    #[arg(env = "OKFS_HIDDEN", value_parser = clap::builder::FalseyValueParser::new(), short = 'H', long)]
+    #[arg(env = "OKFS_HIDDEN", value_parser = switch, short = 'H', long)]
     hidden: bool,
 
     /// Also answer to this host name, for a proxy or a tunnel. Repeatable
-    #[arg(env = "OKFS_ALLOW_HOST", value_delimiter = ',', long, value_name = "NAME")]
+    #[arg(env = "OKFS_ALLOW_HOST", value_delimiter = ',', long, value_name = "NAME", value_parser = host_name)]
     allow_host: Vec<String>,
 
     /// Let anyone who can reach the address add files and folders. A file never replaces one that is
     /// there. Off by default
-    #[arg(env = "OKFS_ALLOW_UPLOAD", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_UPLOAD", value_parser = switch, long, help_heading = "Writes")]
     allow_upload: bool,
 
-    /// Let anyone who can reach the address change the files that are there: edit text files, and
-    /// replace a file with an upload of the same name. Off by default
-    #[arg(env = "OKFS_ALLOW_EDIT", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
+    /// Let anyone who can reach the address change the files that are there: edit text files,
+    /// replace a file with an upload of the same name, and rename and move files and folders. Off
+    /// by default
+    #[arg(env = "OKFS_ALLOW_EDIT", value_parser = switch, long, help_heading = "Writes")]
     allow_edit: bool,
 
     /// Let anyone who can reach the address delete files and folders. A delete goes to the Trash
     /// first. Off by default
-    #[arg(env = "OKFS_ALLOW_DELETE", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
+    #[arg(env = "OKFS_ALLOW_DELETE", value_parser = switch, long, help_heading = "Writes")]
     allow_delete: bool,
 
     /// How many days the Trash keeps what is deleted before it goes for good [default: 30]
@@ -136,21 +151,22 @@ struct Serve {
     trash_days: Option<u32>,
 
     /// Delete for good at once, with no Trash and no undo
-    #[arg(env = "OKFS_NO_TRASH", value_parser = clap::builder::FalseyValueParser::new(), long, help_heading = "Writes")]
+    #[arg(env = "OKFS_NO_TRASH", value_parser = switch, long, help_heading = "Writes")]
     no_trash: bool,
 
-    /// The largest file an upload or a save may be: --max-upload 4G. No limit without it
-    #[arg(env = "OKFS_MAX_UPLOAD", long, value_name = "SIZE", value_parser = byte_size, help_heading = "Writes")]
+    /// The largest file an upload or a save may be: --max-upload 4G. No limit without it, and 0
+    /// is refused
+    #[arg(env = "OKFS_MAX_UPLOAD", long, value_name = "SIZE", value_parser = upload_limit, help_heading = "Writes")]
     max_upload: Option<u64>,
 
     /// Let in anyone who reaches an address beyond loopback, with no key in the link. For a proxy in
     /// front that signs people in itself
-    #[arg(env = "OKFS_NO_KEY", value_parser = clap::builder::FalseyValueParser::new(), long)]
+    #[arg(env = "OKFS_NO_KEY", value_parser = switch, long)]
     no_key: bool,
 
     /// Ask for the key on a loopback address too, as behind a tunnel that anyone can reach
-    #[arg(env = "OKFS_ASK_KEY", value_parser = clap::builder::FalseyValueParser::new(), long)]
-    key: bool,
+    #[arg(env = "OKFS_REQUIRE_KEY", value_parser = switch, long)]
+    require_key: bool,
 
     /// Serve https with this certificate, in PEM. Needs --tls-key
     #[arg(
@@ -249,20 +265,17 @@ pub fn run() -> ExitCode {
         Some(Command::Completions { shell }) => {
             // Into memory first: clap_complete panics when it cannot write.
             let mut script = Vec::new();
-            clap_complete::generate(shell, &mut Cli::command(), "okfs", &mut script);
+            clap_complete::generate(shell, &mut completed(), "okfs", &mut script);
             print(&script);
             Ok(())
         }
-        Some(Command::Manpage) => {
-            let mut page = Vec::new();
-            match clap_mangen::Man::new(Cli::command()).render(&mut page) {
-                Ok(()) => {
-                    print(&page);
-                    Ok(())
-                }
-                Err(error) => Err(format!("cannot write the manual page: {error}")),
+        Some(Command::Manpage) => match manual() {
+            Ok(page) => {
+                print(&page);
+                Ok(())
             }
-        }
+            Err(error) => Err(format!("cannot write the manual page: {error}")),
+        },
         Some(Command::PdfPage { width }) => {
             // Its failures are for the server that started it, which reads the exit code alone.
             return match crate::pdf::page(width) {
@@ -284,11 +297,67 @@ pub fn run() -> ExitCode {
     }
 }
 
+/// The manual page. clap_mangen writes the parts it gets right. The two it does not are written
+/// here: it names a page for each subcommand, which do not exist, and it lets the examples flow
+/// together into one paragraph.
+fn manual() -> io::Result<Vec<u8>> {
+    let command = Cli::command();
+    let man = clap_mangen::Man::new(command.clone());
+    let mut page = Vec::new();
+    man.render_title(&mut page)?;
+    man.render_name_section(&mut page)?;
+    man.render_synopsis_section(&mut page)?;
+    man.render_description_section(&mut page)?;
+    man.render_options_section(&mut page)?;
+    writeln!(page, ".SH COMMANDS")?;
+    for sub in command.get_subcommands().filter(|sub| !sub.is_hide_set()) {
+        let about = sub.get_about().map(ToString::to_string).unwrap_or_default();
+        writeln!(page, ".TP\n\\fBokfs {}\\fR\n{}", roff(sub.get_name()), roff(&about))?;
+    }
+    let (examples, notes) = EXAMPLES.split_once("\n\n").unwrap_or((EXAMPLES, ""));
+    let examples = examples.trim_start_matches("Examples:\n");
+    // Not filled: each example keeps its own line and its column.
+    writeln!(page, ".SH EXAMPLES\n.nf\n{}\n.fi\n.PP\n{}", roff(examples), roff(notes))?;
+    man.render_version_section(&mut page)?;
+    Ok(page)
+}
+
+/// Text as roff takes it: a hyphen that stays a hyphen, and no line that reads as a request.
+fn roff(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let line = line.replace('\\', "\\e").replace('-', "\\-");
+            match line.chars().next() {
+                Some('.' | '\'') => format!("\\&{line}"),
+                _ => line,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The command that the completions are made from: every option, and the subcommands that the help
+/// shows. clap leaves a hidden subcommand out of the help and the manual page, but its completions
+/// list every subcommand, so the ones okfs runs itself are left out here.
+fn completed() -> clap::Command {
+    let whole = Cli::command();
+    clap::Command::new("okfs")
+        .version(env!("CARGO_PKG_VERSION"))
+        .args_conflicts_with_subcommands(true)
+        .args(whole.get_arguments().cloned())
+        .subcommands(
+            whole
+                .get_subcommands()
+                .filter(|command| !command.is_hide_set())
+                .cloned(),
+        )
+}
+
 /// Exits as clap does when two options that exclude each other are both on. Checked here, not with
 /// `conflicts_with`, because clap counts a variable that is set to `false` as given.
 fn refuse_conflicts(args: &Serve) {
-    let pair = if args.no_key && args.key {
-        ("--no-key", "--key")
+    let pair = if args.no_key && args.require_key {
+        ("--no-key", "--require-key")
     } else if args.no_trash && args.trash_days.is_some() {
         ("--no-trash", "--trash-days")
     } else {
@@ -350,6 +419,44 @@ fn second_path(error: clap::Error) -> clap::Error {
     let message =
         format!("'{word}' is a second folder, and okfs serves one. Give one PATH, and quote a name that has spaces");
     cli.error(ErrorKind::ArgumentConflict, message)
+}
+
+/// A switch as a variable sets it. On the command line a switch takes no value, so this reads only
+/// what comes from the environment. A word that is not on the list is an error, not a yes: a
+/// misspelled `false` must not turn a switch on.
+fn switch(text: &str) -> Result<bool, String> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "" | "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(
+            "a switch set from the environment takes 1, true, yes or on, and 0, false, no, off or nothing".to_owned(),
+        ),
+    }
+}
+
+/// A host name for `--allow-host`: a name or an address as a request's Host header carries it,
+/// without a scheme, a port or a path.
+fn host_name(text: &str) -> Result<String, String> {
+    let plain = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if plain || text.parse::<IpAddr>().is_ok() {
+        Ok(text.to_owned())
+    } else {
+        Err("not a host name. Give the name alone, such as files.example.com, with no http://, port or path".to_owned())
+    }
+}
+
+/// The size for `--max-upload`. Zero would refuse every upload, which is what no write flag does.
+fn upload_limit(text: &str) -> Result<u64, String> {
+    match byte_size(text)? {
+        0 => Err(
+            "0 lets no upload in. Leave --max-upload out for no limit, or drop --allow-upload to refuse uploads"
+                .to_owned(),
+        ),
+        size => Ok(size),
+    }
 }
 
 /// A port: a whole number from 0 to 65535.
@@ -441,10 +548,12 @@ async fn stopped() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+        // A terminal that closes sends a hangup: that is a stop like any other.
+        if let (Ok(mut terminate), Ok(mut hangup)) = (signal(SignalKind::terminate()), signal(SignalKind::hangup())) {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = terminate.recv() => {}
+                _ = hangup.recv() => {}
             }
             return;
         }
@@ -517,7 +626,7 @@ fn serve(args: Serve) -> Result<(), String> {
     // Beyond loopback, anyone on the network could otherwise read the folder. On loopback, any other
     // account on the machine could otherwise change it.
     let writes = args.allow_upload || args.allow_edit || args.allow_delete;
-    let key = if args.key || (!args.no_key && (!args.bind.is_loopback() || writes)) {
+    let key = if args.require_key || (!args.no_key && (!args.bind.is_loopback() || writes)) {
         Some(Key::new()?)
     } else {
         None
@@ -599,7 +708,9 @@ fn serve(args: Serve) -> Result<(), String> {
                 trash.days(),
                 crate::paths::TRASH
             );
-        } else if !args.allow_delete && (args.no_trash || args.trash_days.is_some()) {
+        } else if args.allow_delete {
+            say!("  trash    off: a delete is for good at once, with no undo");
+        } else if args.no_trash || args.trash_days.is_some() {
             let given = if args.no_trash { "--no-trash" } else { "--trash-days" };
             say!("  trash    {given} does nothing without --allow-delete");
         }
@@ -637,7 +748,7 @@ fn serve(args: Serve) -> Result<(), String> {
                     }
                 }
                 Scan::Nothing(why) => say!("  qr       {why}"),
-                Scan::Skipped => {}
+                Scan::Skipped => say!("  qr       not printed: the output is not a terminal"),
             }
         }
         say!("  Press Ctrl-C to stop");
@@ -656,14 +767,9 @@ fn serve(args: Serve) -> Result<(), String> {
             // An open page holds a stream that would never end by itself.
             index.feed().close();
         };
-        match tls {
-            Some(config) => {
-                let listener = tls::Listener::new(listener, config)
-                    .map_err(|error| format!("cannot listen on {address}: {error}"))?;
-                axum::serve(listener, router).with_graceful_shutdown(shutdown).await
-            }
-            None => axum::serve(listener, router).with_graceful_shutdown(shutdown).await,
-        }
+        let tls = tls.map(tokio_rustls::TlsAcceptor::from);
+        serve::serve(listener, tls, router, serve::Limits::standard(), shutdown)
+            .await
         .map_err(|error| format!("the server stopped: {error}"))
     })
 }

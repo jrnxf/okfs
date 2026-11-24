@@ -1,12 +1,31 @@
 # okfs
 
-> okfs is an open-source web file browser in one binary: run it in a folder and browse every file in your browser, with previews and instant search.
+> okfs is an open-source web file browser in one binary: run it in a folder and flip through every file with the keyboard, each one shown beside the list as the cursor lands on it.
 
-- Linux and macOS. MIT licence. Read only and loopback by default; a secret link (with a QR code) lets a phone in.
-- Install: `brew install jrnxf/tap/okfs`, `nix run github:jrnxf/okfs` or `cargo install --git https://github.com/jrnxf/okfs`. Release archives for Linux and macOS start with v0.1.0-pre.1.
+- Platforms: Linux (x86-64 and arm64), macOS (Apple silicon and Intel) and Windows (x86-64), new. MIT license.
+- One binary, 19 to 22 MB, with the page compiled in.
+- Defaults: it listens on loopback only and is read only. Beyond loopback, only a link with the key that okfs prints gets in. `--qr` prints that link as a QR code for a phone.
+- Search finds every name in the tree, from an index kept in memory.
+
+## Install
+
+- Homebrew, on macOS or Linux: `brew install jrnxf/tap/okfs`
+- nix: `nix run github:jrnxf/okfs`
+- Docker: `docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs:<version>`. The tag is a release's version without the `v`, such as `0.1.0-pre.26`. `latest` follows full releases only, from v0.1.0.
+- From source, with a Rust toolchain and bun: `cargo install --git https://github.com/jrnxf/okfs`
+- Release archives for Linux, macOS and Windows, each with a `.sha256`: https://github.com/jrnxf/okfs/releases
 
 ## Docs
 
-- [README](https://github.com/jrnxf/okfs/blob/main/README.md): install, flags, keys, proxies, safety
+- [Install](https://github.com/jrnxf/okfs/blob/main/docs/install.md): every way to get okfs, and platform notes
+- [Using okfs](https://github.com/jrnxf/okfs/blob/main/docs/usage.md): flags, environment variables, keys, addresses, big folders
+- [Network](https://github.com/jrnxf/okfs/blob/main/docs/network.md): the key, HTTPS, proxies, systemd and launchd
+- [Writing](https://github.com/jrnxf/okfs/blob/main/docs/writing.md): uploading, editing, deleting and the Trash
+- [Themes](https://github.com/jrnxf/okfs/blob/main/docs/themes.md): the built-in themes and how to write one
+- [What is safe to serve](https://github.com/jrnxf/okfs/blob/main/docs/security.md): the security model
+- [How okfs compares](https://github.com/jrnxf/okfs/blob/main/docs/comparison.md): miniserve, dufs, copyparty and `python -m http.server`
+- [Develop](https://github.com/jrnxf/okfs/blob/main/docs/development.md): build and test
+- [README](https://github.com/jrnxf/okfs/blob/main/README.md)
+- [All of the above as one file](https://okfs.jrnxf.co/llms-full.txt)
 - [Live demo](https://okfs.jrnxf.co/demo/): the real okfs, compiled to WebAssembly, in the browser
 - [Releases](https://github.com/jrnxf/okfs/releases)

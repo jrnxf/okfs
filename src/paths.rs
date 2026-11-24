@@ -101,7 +101,8 @@ pub enum NoEntry {
 pub enum Unshown {
     /// It starts with a dot, and dotfiles are not served.
     Hidden,
-    /// It cannot be served: a link that leads nowhere or out of what is served.
+    /// It cannot be served: a link that leads nowhere or out of what is served, or what is not
+    /// a file or a folder, such as a pipe, a socket or a device.
     Unserved,
     /// Its name is not text, so it has no address a request could carry.
     NotText,
@@ -389,6 +390,10 @@ impl Root {
         }
         let name = name.to_owned();
         if !kind.is_symlink() {
+            // A pipe, a socket or a device has nothing to show, and opening one may never end.
+            if !kind.is_dir() && !kind.is_file() {
+                return Err(Unshown::Unserved);
+            }
             return Ok(Seen {
                 name,
                 dir: kind.is_dir(),
@@ -401,9 +406,13 @@ impl Root {
             .ok()
             .filter(|target| self.contains(target))
             .ok_or(Unshown::Unserved)?;
+        let meta = fs::metadata(&target).map_err(|_| Unshown::Unserved)?;
+        if !meta.is_dir() && !meta.is_file() {
+            return Err(Unshown::Unserved);
+        }
         Ok(Seen {
             name,
-            dir: target.is_dir(),
+            dir: meta.is_dir(),
             link: true,
         })
     }

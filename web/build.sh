@@ -7,6 +7,9 @@ set -eu
 build=$web/.build
 mkdir -p "$build"
 
+# The table in docs/comparison.md and the site's table have one source: fail before the long steps when they differ.
+"$bun" run "$web/comparison.ts"
+
 # okfs's page needs its own dependencies: preact and the bundled fonts.
 (cd "$root/ui" && "$bun" install --frozen-lockfile)
 

@@ -35,6 +35,10 @@ export function Install() {
             brew
           </label>
           <label className="inline-flex cursor-pointer items-center gap-2">
+            <input className="m-0 grid size-[18px] appearance-none place-items-center border-[1.5px] border-ink checked:after:[font:600_14px/1_var(--mono)] checked:after:text-spot checked:after:content-['✕']" type="radio" name="way" value="docker" checked={way === "docker"} onChange={() => setWay("docker")} />
+            docker
+          </label>
+          <label className="inline-flex cursor-pointer items-center gap-2">
             <input className="m-0 grid size-[18px] appearance-none place-items-center border-[1.5px] border-ink checked:after:[font:600_14px/1_var(--mono)] checked:after:text-spot checked:after:content-['✕']" type="radio" name="way" value="nix" checked={way === "nix"} onChange={() => setWay("nix")} />
             nix
           </label>
@@ -62,6 +66,17 @@ export function Install() {
           </div>
           <p className="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">
             On a Mac or Linux. brew upgrade okfs updates it.
+          </p>
+        </div>
+        <div className="way" data-way="docker" hidden={way !== "docker"}>
+          <div className="flex items-center gap-2.5 border-b-[1.5px] border-b-ink py-2">
+            <code className="flex-1 overflow-x-auto whitespace-nowrap bg-transparent p-0 text-[16px] phone:text-[13px]">
+              docker run -p 8080:8080 -v &quot;$PWD:/srv:ro&quot; ghcr.io/jrnxf/okfs:0.1.0-pre.26
+            </code>
+            <CopyButton className="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" text={'docker run -p 8080:8080 -v "$PWD:/srv:ro" ghcr.io/jrnxf/okfs:0.1.0-pre.26'} />
+          </div>
+          <p className="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">
+            It serves the folder you are in, read only, and prints links with a key. Open the one that starts with http://127.0.0.1:8080. The tag after the colon is a release&apos;s version; put the one you want there. The tag latest follows full releases only, from v0.1.0.
           </p>
         </div>
         <div className="way" data-way="nix" hidden={way !== "nix"}>
@@ -101,7 +116,7 @@ export function Install() {
             <CopyButton className="flex-none border border-ink bg-paper px-2.25 py-1.5 [font:500_12px/1_var(--mono)]" text={"tar -xzf okfs-*-aarch64-apple-darwin.tar.gz"} />
           </div>
           <p className="mt-3 [font:400_13px/1.5_var(--mono)] text-ink-2">
-            That is a Mac with Apple silicon; the binary is okfs in the folder the archive makes. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. The first release, v0.1.0-pre.1, is on its way.
+            {"That is a Mac with Apple silicon; the binary is okfs in the folder the archive makes. For an Intel Mac ask for x86_64-apple-darwin, for Linux x86_64- or aarch64-unknown-linux-musl. Each archive holds completions and a man page. For Windows (x86-64), download okfs-<version>-x86_64-pc-windows-msvc.zip from github.com/jrnxf/okfs/releases; it holds okfs.exe."}
           </p>
         </div>
         <div className="way" data-way="cargo" hidden={way !== "cargo"}>

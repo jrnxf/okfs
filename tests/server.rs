@@ -2960,6 +2960,150 @@ async fn with_a_key_every_route_is_refused_without_it_and_says_nothing_of_the_fo
     assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
 }
 
+/// Every address the router names, read from its source, so a route added later is walked too.
+/// A part in braces is filled with each of `fills`.
+fn route_addresses(fills: &[&str]) -> Vec<String> {
+    let source = include_str!("../src/server.rs");
+    // Every way a router takes a route is read here, or the walk below would miss some.
+    for other in [".nest(", ".nest_service(", ".route_service(", ".fallback_service("] {
+        assert!(!source.contains(other), "{other} adds routes this test does not read");
+    }
+    let mut found = Vec::new();
+    for rest in source.split(".route(").skip(1) {
+        // rustfmt puts a long route's address on a line of its own.
+        let template = rest
+            .trim_start()
+            .strip_prefix('"')
+            .expect("a route's address is a literal");
+        let template = template.split('"').next().unwrap();
+        for fill in fills {
+            let parts: Vec<&str> = template
+                .split('/')
+                .map(|part| if part.starts_with('{') { fill } else { part })
+                .collect();
+            found.push(parts.join("/"));
+        }
+    }
+    found.sort();
+    found.dedup();
+    assert!(found.len() >= 25, "the routes were not read from the source: {found:?}");
+    found
+}
+
+/// Whether the pass route takes this address: `/api/view/<pass>/` and anything after it.
+fn is_pass_address(uri: &str) -> bool {
+    let path = uri.split('?').next().unwrap();
+    path.strip_prefix("/api/view/").is_some_and(|rest| rest.contains('/'))
+}
+
+#[tokio::test]
+async fn with_a_key_no_address_hands_the_key_to_a_request_without_it() {
+    let site = Site::new();
+    // Real files at the addresses the pass route is under: they are files like any other.
+    fs::create_dir_all(site.served.join("api/view/deep")).unwrap();
+    fs::write(site.served.join("api/view/file.txt"), SECRET).unwrap();
+    fs::write(site.served.join("api/view/deep/file.txt"), SECRET).unwrap();
+    let app = keyed(
+        &site,
+        Options {
+            allow_upload: true,
+            allow_edit: true,
+            allow_delete: true,
+            index: Some("a.txt".to_owned()),
+            ..Options::default()
+        },
+    );
+    let before = snapshot(&site.served);
+
+    let mut addresses = route_addresses(&["a.txt", "x"]);
+    addresses.extend(
+        [
+            "/api",
+            "/api/",
+            "/api/nothing",
+            "/api/view",
+            "/api/view/",
+            "/api/view/x",
+            "/api/view/x/",
+            "/api/view//",
+            "/api/view//a.txt",
+            "/api/view/%2e%2e",
+            "/api/view/%2E%2E/a.txt",
+            "/api/view/../a.txt",
+            "/api/view/file.txt",
+            "/api/view/deep/file.txt",
+            "/api/view/x/a.txt",
+            "/api/view/x/%ff",
+            "/api/view/x/api/view/file.txt",
+            "/api/viewer",
+            "/api/view%2Fx",
+            "/API/VIEW/x",
+            "//api/view/x",
+            "/-/api/view/x",
+            "/-/api/view/",
+            "/raw/api/view/file.txt",
+            "/nothing",
+            "/nothing/",
+            "/sub",
+            "/assets/",
+            "/zip/nothing",
+            "/a.txt?key=",
+            "/api/view/x?key=",
+            "/api/view/?once=x",
+            "/api/list?path=api/view",
+        ]
+        .map(str::to_owned),
+    );
+    assert!(addresses.iter().any(|uri| uri == "/api/view/x/x"), "{addresses:?}");
+
+    let write: Headers = &[("x-okfs", "write"), ("origin", "http://localhost:8080")];
+    for uri in &addresses {
+        for method in ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"] {
+            for headers in [&[][..], NAVIGATE, write] {
+                let shown = format!("{method} {uri}");
+                let (response, body) = send(&app, on_home(method, uri, headers)).await;
+                let status = response.status();
+                if is_pass_address(uri) {
+                    // The pass route answers without the key, and a wrong pass finds nothing.
+                    let found_nothing = [
+                        StatusCode::NOT_FOUND,
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        StatusCode::BAD_REQUEST,
+                    ];
+                    assert!(found_nothing.contains(&status), "{shown}: {status}");
+                } else {
+                    assert_eq!(status, StatusCode::UNAUTHORIZED, "{shown}");
+                    assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "okfs-key", "{shown}");
+                    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store", "{shown}");
+                }
+                assert!(!response.headers().contains_key(header::SET_COOKIE), "{shown}");
+                assert_eq!(response.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{shown}");
+                let body = String::from_utf8_lossy(&body);
+                for told in [KEY, "okfs-config", SECRET, "0123456789"] {
+                    assert!(!body.contains(told), "{shown} tells {told}: {body}");
+                }
+                for (name, value) in response.headers() {
+                    let value = String::from_utf8_lossy(value.as_bytes());
+                    assert!(!value.contains(KEY), "{shown} tells the key in {name}: {value}");
+                }
+            }
+        }
+    }
+    assert_eq!(snapshot(&site.served), before);
+
+    // A host okfs does not answer to is refused at the pass route too.
+    let request = Request::get("/api/view/x/a.txt")
+        .header(header::HOST, "evil.example")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
+
+    // With the key, the files under those names are served like any other.
+    let (response, body) = send(&app, on_home("GET", "/raw/api/view/file.txt", &[COOKIE])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body, SECRET.as_bytes());
+}
+
 #[tokio::test]
 async fn with_a_key_a_page_in_the_preview_reads_its_own_folder_with_a_pass_and_nothing_else() {
     let site = Site::new();
@@ -4130,6 +4274,14 @@ async fn the_trash_sweeps_what_is_older_than_its_days_before_it_lists() {
 
     assert_eq!(trash_ids(&app).await, [ids[1].clone()]);
     assert!(!site.trash_dir().join(&ids[0]).exists());
+    assert_eq!(json(&app, "/api/trash").await["unreadable"], 0);
+
+    // An entry this okfs cannot read is not listed, and a listing does not remove it.
+    fs::write(site.trash_dir().join(&ids[1]).join("info.json"), "{").unwrap();
+    assert!(trash_ids(&app).await.is_empty());
+    assert!(site.trash_dir().join(&ids[1]).join("item").exists());
+    // The page is told how many, so it can say that the Trash holds more than it shows.
+    assert_eq!(json(&app, "/api/trash").await["unreadable"], 1);
 }
 
 #[tokio::test]
@@ -4630,4 +4782,155 @@ async fn a_folder_holding_a_name_that_is_not_text_is_not_deleted_and_says_why() 
     assert_eq!(status, StatusCode::CONFLICT);
     assert!(why.contains("a name that is not text"), "{why}");
     assert!(folder.join(OsStr::from_bytes(b"caf\xe9.txt")).exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn with_a_key_a_pass_does_not_follow_a_link_out_of_its_folder() {
+    use std::os::unix::fs::symlink;
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("a/img")).unwrap();
+    fs::create_dir_all(site.served.join("b")).unwrap();
+    fs::write(site.served.join("a/page.html"), "page").unwrap();
+    fs::write(site.served.join("a/img/shot.png"), "png").unwrap();
+    fs::write(site.served.join("b/secret.txt"), SECRET).unwrap();
+    fs::write(site.served.join("b/index.html"), SECRET).unwrap();
+    // A link beside, a link above, a link to one file beside, and links that stay inside.
+    symlink("../b", site.served.join("a/tob")).unwrap();
+    symlink("..", site.served.join("a/up")).unwrap();
+    symlink("../b/secret.txt", site.served.join("a/one.txt")).unwrap();
+    symlink("../b/index.html", site.served.join("a/img/index.html")).unwrap();
+    symlink("img", site.served.join("a/pictures")).unwrap();
+    symlink("img/shot.png", site.served.join("a/shot.png")).unwrap();
+    let app = keyed(
+        &site,
+        Options {
+            index: Some("index.html".to_owned()),
+            ..Options::default()
+        },
+    );
+    let (frame, _) = send(&app, on_home("GET", "/api/frame/a/page.html", &[COOKIE])).await;
+    let to = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
+    let folder = to.strip_suffix("page.html").unwrap();
+
+    // A page reached through a link, and a page that is itself a link, are framed at the place
+    // they really are, with the pass to that folder: what is beside them loads.
+    symlink("a", site.served.join("shortcut")).unwrap();
+    symlink("a/page.html", site.served.join("linked.html")).unwrap();
+    for asked in ["shortcut/page.html", "linked.html", "a/pictures/shot.png"] {
+        let (frame, _) = send(&app, on_home("GET", &format!("/api/frame/{asked}"), &[COOKIE])).await;
+        let framed = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
+        let real = if asked.ends_with(".png") {
+            "a/img/shot.png"
+        } else {
+            "a/page.html"
+        };
+        assert!(framed.ends_with(&format!("/{real}")), "{asked}: {framed}");
+        let (response, _) = send(&app, on_home("GET", &framed, &[])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{asked}");
+    }
+    let (response, _) = send(&app, on_home("GET", &format!("{folder}img/shot.png"), &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    for inside in ["page.html", "img/shot.png", "pictures/shot.png", "shot.png"] {
+        let (response, _) = send(&app, on_home("GET", &format!("{folder}{inside}"), &[])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{inside}");
+    }
+    // A pipe in the page's own folder is not opened with the pass.
+    make_pipe(&site.served.join("a/pipe"));
+    let piped = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        send(&app, on_home("GET", &format!("{folder}pipe"), &[])),
+    );
+    assert_eq!(
+        piped.await.expect("it waits on a pipe").0.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    for outside in [
+        "tob/secret.txt",
+        "tob/index.html",
+        "tob/",
+        "up/b/secret.txt",
+        "up/a.txt",
+        "up/a/up/b/secret.txt",
+        "one.txt",
+        "img/",
+        "img/index.html",
+        "pictures/",
+    ] {
+        let (response, body) = send(&app, on_home("GET", &format!("{folder}{outside}"), &[])).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{outside}");
+        assert!(!String::from_utf8_lossy(&body).contains(SECRET), "{outside}");
+    }
+}
+
+/// A named pipe: opening one waits for a writer that never comes.
+#[cfg(unix)]
+fn make_pipe(path: &Path) {
+    let status = std::process::Command::new("mkfifo").arg(path).status().unwrap();
+    assert!(status.success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_zip_and_a_copy_leave_out_what_is_not_a_file_or_a_folder() {
+    use std::os::unix::fs::symlink;
+    use std::time::Duration;
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("fifo/deep")).unwrap();
+    fs::write(site.served.join("fifo/a.txt"), "x").unwrap();
+    fs::write(site.served.join("fifo/deep/b.txt"), "y").unwrap();
+    make_pipe(&site.served.join("fifo/pipe"));
+    make_pipe(&site.served.join("fifo/deep/pipe"));
+    symlink("pipe", site.served.join("fifo/to-pipe")).unwrap();
+    // A pipe with a name okfs reads by itself.
+    make_pipe(&site.served.join("fifo/README.md"));
+    make_pipe(&site.served.join("fifo/deep/.gitignore"));
+    let app = site.writing();
+    let limit = Duration::from_secs(10);
+
+    // The listing shows no pipe and waits on none.
+    let listed = tokio::time::timeout(limit, json(&app, "/api/list?path=fifo")).await;
+    let listed = listed.expect("the listing waits on a pipe");
+    assert_eq!(names(&listed), ["a.txt", "deep"]);
+    assert!(listed["readme"].is_null(), "{listed}");
+    let listed = tokio::time::timeout(limit, json(&app, "/api/list?path=fifo/deep")).await;
+    assert_eq!(names(&listed.expect("the listing waits on a pipe")), ["b.txt"]);
+
+    let zipped = tokio::time::timeout(limit, get(&app, "/zip/fifo")).await;
+    let (response, body) = zipped.expect("the zip waits on a pipe");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(zip_names(body), ["a.txt", "deep/", "deep/b.txt"]);
+
+    let copied = tokio::time::timeout(limit, send(&app, page_copy("fifo", "copy"))).await;
+    let (response, _) = copied.expect("the copy waits on a pipe");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(fs::read(site.served.join("copy/a.txt")).unwrap(), b"x");
+    assert_eq!(fs::read(site.served.join("copy/deep/b.txt")).unwrap(), b"y");
+    assert!(!site.served.join("copy/pipe").exists());
+    assert!(!site.served.join("copy/deep/pipe").exists());
+
+    // No address opens the pipe.
+    for uri in [
+        "/raw/fifo/pipe",
+        "/fifo/pipe",
+        "/raw/fifo/to-pipe",
+        "/api/frame/fifo/pipe",
+    ] {
+        let answered = tokio::time::timeout(limit, get(&app, uri)).await;
+        let (response, _) = answered.expect("the address waits on a pipe");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+
+    // The pipe itself is no file to copy.
+    let copied = tokio::time::timeout(limit, send(&app, page_copy("fifo/pipe", "pipe-copy"))).await;
+    let (response, _) = copied.expect("the copy waits on a pipe");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let left: Vec<_> = fs::read_dir(&site.served)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".part") || name == "pipe-copy")
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
 }

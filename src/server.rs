@@ -302,14 +302,22 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/folder", post(make_folder))
         .route("/api/picture", get(picture))
         .route("/api/frame/{*path}", get(frame))
-        .route("/api/view/{pass}/{*path}", get(view))
         .route("/raw/", get(raw_root))
         .route("/raw/{*path}", get(raw_file))
         .route("/zip", get(zip_folder))
         .route("/zip/", get(zip_folder))
         .route("/zip/{*path}", get(zip_folder));
+    // The one route a request reaches without the key: a page in the preview brings the pass to
+    // its folder instead, and `view` checks it. It is merged in after the key check, so no other
+    // address under `/api/view/` gets past the key: one this route does not match falls to the
+    // routes above, which ask for it. A route added here is open to anyone who can reach okfs.
+    let passed = Router::new()
+        .route("/api/view/{pass}/{*path}", get(view))
+        .route("/api/view/{pass}/", get(view_folder));
     packed
         .merge(plain)
+        .layer(middleware::from_fn_with_state(Arc::clone(&app), needs_the_key))
+        .merge(passed)
         .layer(middleware::from_fn_with_state(Arc::clone(&app), guard))
         .with_state(app)
 }
@@ -368,10 +376,9 @@ pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
         || allowed.iter().any(|allowed| allowed.eq_ignore_ascii_case(name))
 }
 
-/// Runs before every route: checks the Host name and the key, and marks every answer as not to be
-/// sniffed.
+/// Runs before every route: checks the Host name, and marks every answer as not to be sniffed.
 async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let mut response = match admit(&app, &request) {
+    let mut response = match refuse_host(&app, &request) {
         Some(refused) => refused,
         None => next.run(request).await,
     };
@@ -383,10 +390,17 @@ async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Res
     response
 }
 
-/// What a request is answered with in place of the route it asks for: a refusal for a host name
-/// okfs does not answer to or a request without the key, or the step that takes the key out of a
-/// browser's address. `None` lets it through.
-fn admit(app: &App, request: &Request) -> Option<Response> {
+/// Runs inside `guard`, before every route but the pass route, and before the page that an
+/// address with no route gets: checks the key.
+async fn needs_the_key(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
+    match admit(&app, &request) {
+        Some(refused) => refused,
+        None => next.run(request).await,
+    }
+}
+
+/// The refusal for a host name okfs does not answer to. `None` lets the request through.
+fn refuse_host(app: &App, request: &Request) -> Option<Response> {
     let host = request_host(request.headers(), request.uri());
     if app.options.check_host && !host_allowed(host, &app.options.allow_hosts) {
         let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
@@ -394,11 +408,15 @@ fn admit(app: &App, request: &Request) -> Option<Response> {
             format!("okfs does not answer to the name {name:?}.\nTo allow it, start okfs with: --allow-host {name}\n");
         return Some((StatusCode::FORBIDDEN, message).into_response());
     }
+    None
+}
+
+/// What a request is answered with in place of the route it asks for: a refusal for a request
+/// without the key, or the step that takes the key out of a browser's address. `None` lets it
+/// through. No address is let past by its path: the routes this guards all need the key.
+fn admit(app: &App, request: &Request) -> Option<Response> {
+    let host = request_host(request.headers(), request.uri());
     let key = app.options.key.as_ref()?;
-    // A page in the preview brings its pass in place of the key, which `view` checks.
-    if request.uri().path().starts_with("/api/view/") {
-        return None;
-    }
     let headers = request.headers();
     let cookie = key::cookie_name(host);
     let query = request.uri().query();
@@ -1283,11 +1301,14 @@ async fn trash_list(State(app): State<Arc<App>>) -> Response {
     let listed = tokio::task::spawn_blocking(move || {
         worker.sweep_trash();
         let trash = worker.trash.as_ref().expect("checked above");
-        trash.list().map(|items| (trash.days(), items))
+        let items = trash.list()?;
+        Ok::<_, std::io::Error>((trash.days(), items, trash.unreadable()?))
     })
     .await;
     match listed {
-        Ok(Ok((days, items))) => Json(serde_json::json!({ "days": days, "items": items })).into_response(),
+        Ok(Ok((days, items, unreadable))) => {
+            Json(serde_json::json!({ "days": days, "items": items, "unreadable": unreadable })).into_response()
+        }
         Ok(Err(error)) => disk_failed(&error),
         Err(_) => fail(StatusCode::INTERNAL_SERVER_ERROR, "the Trash could not be read"),
     }
@@ -1523,7 +1544,8 @@ fn copy_size(root: &Root, abs: &std::path::Path) -> u64 {
 }
 
 /// Copies what okfs shows of the folder `from` into the folder `to`, which is new and empty. A link
-/// is copied as a link where links can be made, and left out elsewhere: none is followed.
+/// is copied as a link where links can be made, and left out elsewhere: none is followed. A pipe,
+/// a socket or a device is not shown, so it is left out.
 fn copy_tree(root: &Root, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     for seen in root.scan(from)? {
         let (source, target) = (from.join(&seen.name), to.join(&seen.name));
@@ -1577,6 +1599,10 @@ async fn copy_entry(
             Err(why) => return no_place(why),
         };
         let dir = found.meta.is_dir();
+        // A pipe, a socket or a device is no file to copy: reading one may never end.
+        if !dir && !found.meta.is_file() {
+            return not_found();
+        }
         if dir && place.dir.starts_with(&found.abs) {
             return fail(StatusCode::CONFLICT, "a folder cannot be copied into itself");
         }
@@ -1995,7 +2021,7 @@ fn index_page(app: &App, folder: &str) -> Option<Resolved> {
 
 async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Uri, headers: HeaderMap) -> Response {
     match app.root.resolve(&path) {
-        Some(found) => send_found(&app, found, "/raw/", &uri, &headers).await,
+        Some(found) => send_found(&app, found, "/raw/", &uri, &headers, |_| true).await,
         None => not_found(),
     }
 }
@@ -2008,9 +2034,14 @@ async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Respons
     let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
-    let encoded = encode_path(&found.rel);
+    // The address is of the place the page really is, with or without a key: a page reached
+    // through a link loads what is beside the page, not what is beside the link.
+    let Some(place) = app.root.place(&found) else {
+        return not_found();
+    };
+    let encoded = encode_path(&place);
     let to = match app.options.key {
-        Some(_) => format!("/api/view/{}/{encoded}", app.passes.of(paths::parent(&found.rel))),
+        Some(_) => format!("/api/view/{}/{encoded}", app.passes.of(paths::parent(&place))),
         None => format!("/raw/{encoded}"),
     };
     (
@@ -2021,36 +2052,70 @@ async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Respons
 }
 
 /// A file a page in the preview asks for with its pass, sent as `/raw/` sends it. Only a file the
-/// pass opens is found: one in the page's own folder or below it.
+/// pass opens is found: one in the page's own folder or below it. That holds for the address that
+/// was asked for and for the place the file really is, so a link in the folder that leads beside
+/// it or above it opens nothing more.
 async fn view(
     State(app): State<Arc<App>>,
     Path((pass, path)): Path<(String, String)>,
     uri: Uri,
     headers: HeaderMap,
 ) -> Response {
+    let opens = |found: &Resolved| {
+        app.passes.opens(&pass, &found.rel)
+            && app
+                .root
+                .place(found)
+                .is_some_and(|place| app.passes.opens(&pass, &place))
+    };
     match app.root.resolve(&path) {
-        Some(found) if app.passes.opens(&pass, &found.rel) => {
-            send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers).await
-        }
-        _ => not_found(),
+        Some(found) => send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers, opens).await,
+        None => not_found(),
     }
 }
 
-/// Sends a file, or a folder's `--index` page, found under the address `base`.
-async fn send_found(app: &App, found: Resolved, base: &str, uri: &Uri, headers: &HeaderMap) -> Response {
+/// A folder's address ends with a slash, so links inside its index page resolve. This is the
+/// step to that address for a request that came without the slash.
+fn with_slash(base: &str, folder: &str, uri: &Uri) -> Option<Response> {
+    if uri.path().ends_with('/') {
+        return None;
+    }
+    let mut to = format!("{base}{}/", encode_path(folder));
+    if let Some(query) = uri.query() {
+        to = format!("{to}?{query}");
+    }
+    Some((StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response())
+}
+
+/// The folder a pass is for, asked for by its own address. A pass opens the files in its folder,
+/// not the folder: the answer is the one `view` gives for any folder, and not the request for
+/// the key that an address with no route gets.
+async fn view_folder() -> Response {
+    not_found()
+}
+
+/// Sends a file, or a folder's `--index` page, found under the address `base`. Only what `allowed`
+/// lets through is found: the path that was asked for, and the index page too, which may be a
+/// link of its own. What is neither a file nor a folder, such as a pipe, is never found.
+async fn send_found(
+    app: &App,
+    found: Resolved,
+    base: &str,
+    uri: &Uri,
+    headers: &HeaderMap,
+    allowed: impl Fn(&Resolved) -> bool,
+) -> Response {
+    if !allowed(&found) {
+        return not_found();
+    }
     let found = match found {
         found if found.meta.is_file() => found,
         folder if folder.meta.is_dir() => {
-            let Some(found) = index_page(app, &folder.rel) else {
+            let Some(found) = index_page(app, &folder.rel).filter(allowed) else {
                 return not_found();
             };
-            // A folder's address ends with a slash, so links inside its index page resolve.
-            if !uri.path().ends_with('/') {
-                let mut to = format!("{base}{}/", encode_path(&folder.rel));
-                if let Some(query) = uri.query() {
-                    to = format!("{to}?{query}");
-                }
-                return (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response();
+            if let Some(to) = with_slash(base, &folder.rel, uri) {
+                return to;
             }
             found
         }
@@ -2309,7 +2374,11 @@ async fn page(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Resp
         .strip_prefix("/-/")
         .or_else(|| (raw_path == "/-").then_some(""));
     let asked = percent_decode_str(behind.unwrap_or(raw_path)).decode_utf8().ok();
-    let found = asked.as_deref().and_then(|path| app.root.resolve(path));
+    // A pipe, a socket or a device is not shown, so its address is as good as missing.
+    let found = asked
+        .as_deref()
+        .and_then(|path| app.root.resolve(path))
+        .filter(|found| found.meta.is_file() || found.meta.is_dir());
 
     // A folder's address ends with a slash and a file's does not, so links inside both resolve.
     if let Some(found) = &found {

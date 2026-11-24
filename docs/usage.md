@@ -21,11 +21,13 @@ okfs --bind 0.0.0.0         # let other machines on the network in, with a key i
 okfs --bind 0.0.0.0 --qr    # and print a QR code a phone can scan to open it
 ```
 
+`theme`, `completions` and `help` are okfs's own commands. To serve a folder that has one of those names, write it as a path: `okfs ./theme`.
+
 A folder's `README.md` is shown under its listing.
 
 ## Options from the environment
 
-Every option can also come from an environment variable named for it: `OKFS_PORT` for `--port`, `OKFS_BIND`, `OKFS_THEME`, `OKFS_ALLOW_UPLOAD`, `OKFS_RESCAN`, and the folder itself as `OKFS_PATH`. `okfs --help` shows each one as `[env: OKFS_PORT=]`. That is how a Docker Compose file or a systemd unit configures okfs without a command line to rewrite. A flag on the command line beats the variable. A switch takes `true` or `false`: `OKFS_ALLOW_UPLOAD=true`. `OKFS_ALLOW_HOST` takes names separated by commas, and `--allow-host a,b` on the command line now means two names too. A switch also accepts `1`, `0`, `yes`, `no`, `on` and `off`, and an empty one counts as off, so an unset `${VAR}` in a Compose file does no harm. `--no-key` with `--key`, and `--no-trash` with `--trash-days`, are refused when either one comes from a variable and both are on. `--key` is the one that is not `OKFS_KEY`, which would read as the key's value: `--key` is `OKFS_ASK_KEY`, and `--no-key` is `OKFS_NO_KEY`.
+Every option can also come from an environment variable named for it: `OKFS_PORT` for `--port`, `OKFS_BIND`, `OKFS_THEME`, `OKFS_ALLOW_UPLOAD`, `OKFS_RESCAN`, and the folder itself as `OKFS_PATH`. `okfs --help` shows each one as `[env: OKFS_PORT=]`. That is how a Docker Compose file or a systemd unit configures okfs without a command line to rewrite. A flag on the command line beats the variable. A switch takes `true` or `false`: `OKFS_ALLOW_UPLOAD=true`. A switch also accepts `1`, `0`, `yes`, `no`, `on` and `off`, in any case, and an empty one counts as off, so an unset `${VAR}` in a Compose file does no harm. Any other word is an error and okfs does not start: a misspelled `false` never turns a switch on. `OKFS_ALLOW_HOST` takes names separated by commas, and `--allow-host a,b` on the command line means two names too. `--no-key` with `--require-key`, and `--no-trash` with `--trash-days`, are refused when either one comes from a variable and both are on. okfs reads no `OKFS_KEY`: the key is new at every start and cannot be set.
 
 ```yaml
 services:
@@ -58,17 +60,17 @@ With `--rescan`, okfs sets up no watcher and reads the whole folder again on a t
 | `--title <TEXT>` | Name shown in the corner and the browser tab. Default `okfs`. |
 | `--accent <COLOR>` | Accent color in every theme, as hex: `"#2d6a4f"`. |
 | `-H`, `--hidden` | Serve dotfiles, and show hidden files to a browser that has made no choice with `.`. Without it, dotfiles are never sent, and `.` shows only the folders left out of the search. |
-| `--key` | Ask for the key on a loopback address too, as behind a tunnel that anyone can reach. Any write flag does the same. |
+| `--require-key` | Ask for the key on a loopback address too, as behind a tunnel that anyone can reach. Any write flag does the same. |
 | `--no-key` | Let in anyone who reaches an address beyond loopback, with no key. For a proxy that signs people in itself. See [Letting other machines in](network.md#letting-other-machines-in). |
-| `--allow-host <NAME>` | Also answer to this host name. Repeatable. See below. |
+| `--allow-host <NAME>` | Also answer to this host name, given alone: no `http://`, port or path. Repeatable. See below. |
 | `--tls-cert <FILE>` | Serve https with this certificate, in PEM. Needs `--tls-key`. See [HTTPS](network.md#https). |
 | `--tls-key <FILE>` | The private key of the `--tls-cert` certificate, in PEM. Needs `--tls-cert`. |
 | `--allow-upload` | Let anyone who can reach the address add files and folders. A file never replaces one that is there. Off by default. See [Uploading and editing](writing.md#uploading-and-editing). |
-| `--allow-edit` | Let anyone who can reach the address change the files that are there, and rename and move them. Off by default. See [Uploading and editing](writing.md#uploading-and-editing). |
+| `--allow-edit` | Let anyone who can reach the address change the files that are there: edit text files, replace a file with an upload of the same name, and rename and move files and folders. Off by default. See [Uploading and editing](writing.md#uploading-and-editing). |
 | `--allow-delete` | Let anyone who can reach the address delete files and folders. A delete goes to the Trash first. Off by default. See [Deleting](writing.md#deleting). |
 | `--trash-days <DAYS>` | How long the Trash keeps what is deleted before it goes for good. 30 by default. |
 | `--no-trash` | Delete for good at once, after asking, with no Trash and no undo. |
-| `--max-upload <SIZE>` | The largest file an upload or a save may be: `500M`, `4G`. No limit by default. |
+| `--max-upload <SIZE>` | The largest file an upload or a save may be: `500M`, `4G`. No limit by default, and `0` is refused. |
 | `--rescan <EVERY>` | Read the whole tree again this often instead of watching it for changes: `90s`, `30m`, `6h`, `1d`, `1h30m`. Off by default. See [A big folder](#a-big-folder). |
 
 </details>
@@ -127,6 +129,20 @@ curl -o photos.zip http://127.0.0.1:8080/zip/photos
 ```
 
 Everything under `/api/` is okfs's own channel to its page. It may change in any release, so do not build on it.
+
+## What you can rely on
+
+A script, a service unit or a Compose file can build on these:
+
+- The flags and the `OKFS_*` variable of each one, as listed under [Options from the environment](#options-from-the-environment).
+- The addresses in [Addresses you can rely on](#addresses-you-can-rely-on).
+- The exit code. `0`: okfs did what was asked. That includes `--help`, `--version`, a theme that passes `okfs theme check`, and a server stopped with Ctrl-C. `1`: okfs failed, for example when the folder is not there or a theme does not pass the check. `2`: the command line is wrong, such as an unknown flag, a value that cannot be read, or two flags that exclude each other.
+
+These are not promises, and may change in any release:
+
+- What okfs prints in the terminal, on standard output and standard error. Do not parse it.
+- Everything under `/api/`.
+- The Rust library. okfs has no stable library API.
 
 ## A folder that is a small site
 

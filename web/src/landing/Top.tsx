@@ -143,7 +143,7 @@ export function Top() {
           okfs
         </a>
         <span className="min-w-0 truncate text-[15px] text-ink-2 under-1320:hidden under-1520:group-has-[.again:not([hidden])]/bar:hidden">
-          A whole folder in a browser tab, from one small binary. Below is okfs itself.
+          A whole folder in a browser tab, from one binary. Below is okfs itself.
         </span>
         <span className="flex-1"></span>
         <nav className="flex gap-4.5 [font:13px/1_var(--mono)] whitespace-nowrap under-1000:group-has-[.again:not([hidden])]/bar:hidden under-860:hidden" aria-label="Sections">
@@ -182,7 +182,7 @@ export function Top() {
       </header>
       <main className="relative min-h-0 flex-1 overflow-hidden bg-ok-bg" id="view" ref={viewRef}>
         <h1 className="absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]">
-          okfs, a web file browser in one small binary, running in this page
+          okfs, a web file browser in one binary, running in this page
         </h1>
         <div className={"pointer-events-none absolute inset-0 z-1 flex flex-col transition-opacity duration-350 [&.gone]:opacity-0" + (gone ? " gone" : "")} id="bones" aria-hidden="true">
           <div className="flex h-11.5 flex-none items-center gap-3 border-b border-b-ok-line px-3.5">
