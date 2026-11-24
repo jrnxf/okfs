@@ -8,6 +8,6 @@
     // The site is React: the Preact stand-in that ui/tsconfig.json sets up for nuqs is only for okfs's page.
     "paths": {}
   },
-  "include": ["src", "build.ts", "../ui/css.ts"],
+  "include": ["src", "build.ts", "comparison.ts", "../ui/css.ts"],
   "exclude": ["src/demo-boot.ts", "src/demo-main.tsx", "src/frame-address.ts", "src/frame-host.ts", "src/wait-for-host.ts"]
 }

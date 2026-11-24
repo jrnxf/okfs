@@ -1,4 +1,5 @@
-// Builds the site into dist: the front page, dist/index.html, and the demo, dist/demo/index.html. The demo is one
+// Builds the site into dist: the front page, dist/index.html, the demo, dist/demo/index.html, and dist/llms-full.txt,
+// the README and docs/ as one file. The demo is one
 // page holding okfs's page from ui/src, okfs's index from src/ compiled to WebAssembly (build.sh builds it first),
 // what bake.mjs recorded from a real okfs, the demo's own files, and the page around them. The front page runs the
 // same okfs from the same data, which it fetches as one file beside it. Run through build.sh, which puts the tools
@@ -194,11 +195,36 @@ const siteFonts: Record<string, string> = {
 };
 for (const name of Object.keys(siteFonts)) if (!front.includes(`/fonts/${name}`)) throw new Error(`site.html does not use /fonts/${name}`);
 
+// llms-full.txt: the README and every page in docs/ as one file, for answer engines. llms.txt, in public/, links
+// each of those pages by hand: the build fails when a page in docs/ has no link there.
+const BLOB = "https://github.com/jrnxf/okfs/blob/main/";
+const DOC_ORDER = ["install", "usage", "network", "writing", "themes", "security", "comparison", "development"];
+const docNames = readdirSync(join(repo, "docs")).filter((name) => name.endsWith(".md")).map((name) => name.slice(0, -3));
+const rank = (name: string) => (DOC_ORDER.includes(name) ? DOC_ORDER.indexOf(name) : DOC_ORDER.length);
+docNames.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+const llms = readFileSync(join(web, "public/llms.txt"), "utf8");
+const sentence = llms.split("\n").find((line) => line.startsWith("> "));
+if (!sentence) throw new Error("public/llms.txt has no summary line that starts with '> '");
+for (const name of docNames) if (!llms.includes(`${BLOB}docs/${name}.md`)) throw new Error(`public/llms.txt has no link to docs/${name}.md`);
+// A link or a picture that is relative to its file would point nowhere from the site: it gets the file's address on GitHub.
+// A picture gets the address of the file itself, as the blob address is a page about the file.
+const absolute = (text: string, path: string) =>
+  text.replace(/(!\[[^\]]*\]\(|\]\(|(?:src|srcset|href)=")(?!https?:|#|mailto:)([^)"\s]+)/g, (_, lead: string, target: string) => {
+    const picture = lead.startsWith("![") || lead.startsWith("src");
+    return lead + new URL(target, (picture ? BLOB.replace("/blob/", "/raw/") : BLOB) + path).href;
+  });
+const llmsFull = [
+  `# okfs\n\n${sentence}\n\nThis file is the README and every page of the documentation, in one. Each part starts with the address of its source.\n`,
+  ...["README.md", ...docNames.map((name) => `docs/${name}.md`)].map((path) => `---\n\nSource: ${BLOB}${path}\n\n${absolute(readFileSync(join(repo, path), "utf8").trim(), path)}\n`),
+].join("\n");
+
 mkdirSync(join(outDir, "demo"), { recursive: true });
 mkdirSync(join(outDir, "fonts"), { recursive: true });
 writeFileSync(join(outDir, "demo/index.html"), page);
 writeFileSync(join(outDir, "index.html"), front);
 writeFileSync(join(outDir, dataFile), dataJson);
+writeFileSync(join(outDir, "llms-full.txt"), llmsFull);
 for (const [name, file] of Object.entries(siteFonts)) copyFileSync(join(web, "node_modules", file), join(outDir, "fonts", name));
 console.log(`built ${join(outDir, "demo/index.html")}: ${(page.length / 1e6).toFixed(2)} MB (engine ${(wasm.length / 1e3).toFixed(0)} KB)`);
+console.log(`built ${join(outDir, "llms-full.txt")}: ${(llmsFull.length / 1e3).toFixed(0)} KB, from README.md and ${docNames.length} pages in docs/`);
 console.log(`built ${join(outDir, "index.html")}: ${(front.length / 1e3).toFixed(0)} KB, with ${dataFile}: ${(dataJson.length / 1e6).toFixed(2)} MB`);
