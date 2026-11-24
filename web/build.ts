@@ -207,8 +207,12 @@ const sentence = llms.split("\n").find((line) => line.startsWith("> "));
 if (!sentence) throw new Error("public/llms.txt has no summary line that starts with '> '");
 for (const name of docNames) if (!llms.includes(`${BLOB}docs/${name}.md`)) throw new Error(`public/llms.txt has no link to docs/${name}.md`);
 // A link or a picture that is relative to its file would point nowhere from the site: it gets the file's address on GitHub.
+// A picture gets the address of the file itself, as the blob address is a page about the file.
 const absolute = (text: string, path: string) =>
-  text.replace(/(\]\(|(?:src|srcset|href)=")(?!https?:|#|mailto:)([^)"\s]+)/g, (_, lead: string, target: string) => lead + new URL(target, BLOB + path).href);
+  text.replace(/(!\[[^\]]*\]\(|\]\(|(?:src|srcset|href)=")(?!https?:|#|mailto:)([^)"\s]+)/g, (_, lead: string, target: string) => {
+    const picture = lead.startsWith("![") || lead.startsWith("src");
+    return lead + new URL(target, (picture ? BLOB.replace("/blob/", "/raw/") : BLOB) + path).href;
+  });
 const llmsFull = [
   `# okfs\n\n${sentence}\n\nThis file is the README and every page of the documentation, in one. Each part starts with the address of its source.\n`,
   ...["README.md", ...docNames.map((name) => `docs/${name}.md`)].map((path) => `---\n\nSource: ${BLOB}${path}\n\n${absolute(readFileSync(join(repo, path), "utf8").trim(), path)}\n`),

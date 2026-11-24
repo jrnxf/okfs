@@ -42,9 +42,12 @@ okfs --no-open --bind 0.0.0.0 <dir>
 okfs then prints one link for each network address, each with a key:
 
 ```text
-  at       http://192.168.1.20:8080/?key=...
+  at       http://127.0.0.1:8080/?key=...
+           http://192.168.1.20:8080/?key=...
   key      on: anyone with one of these links can read every file shown
 ```
+
+The first link is for the machine okfs runs on. The links under it are for other machines: give the user one of those.
 
 - Give the user the whole link, with the key. A request without the key is refused.
 - The key is new at every start, so an old link stops working when okfs restarts.
