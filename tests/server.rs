@@ -4783,3 +4783,154 @@ async fn a_folder_holding_a_name_that_is_not_text_is_not_deleted_and_says_why() 
     assert!(why.contains("a name that is not text"), "{why}");
     assert!(folder.join(OsStr::from_bytes(b"caf\xe9.txt")).exists());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn with_a_key_a_pass_does_not_follow_a_link_out_of_its_folder() {
+    use std::os::unix::fs::symlink;
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("a/img")).unwrap();
+    fs::create_dir_all(site.served.join("b")).unwrap();
+    fs::write(site.served.join("a/page.html"), "page").unwrap();
+    fs::write(site.served.join("a/img/shot.png"), "png").unwrap();
+    fs::write(site.served.join("b/secret.txt"), SECRET).unwrap();
+    fs::write(site.served.join("b/index.html"), SECRET).unwrap();
+    // A link beside, a link above, a link to one file beside, and links that stay inside.
+    symlink("../b", site.served.join("a/tob")).unwrap();
+    symlink("..", site.served.join("a/up")).unwrap();
+    symlink("../b/secret.txt", site.served.join("a/one.txt")).unwrap();
+    symlink("../b/index.html", site.served.join("a/img/index.html")).unwrap();
+    symlink("img", site.served.join("a/pictures")).unwrap();
+    symlink("img/shot.png", site.served.join("a/shot.png")).unwrap();
+    let app = keyed(
+        &site,
+        Options {
+            index: Some("index.html".to_owned()),
+            ..Options::default()
+        },
+    );
+    let (frame, _) = send(&app, on_home("GET", "/api/frame/a/page.html", &[COOKIE])).await;
+    let to = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
+    let folder = to.strip_suffix("page.html").unwrap();
+
+    // A page reached through a link, and a page that is itself a link, are framed at the place
+    // they really are, with the pass to that folder: what is beside them loads.
+    symlink("a", site.served.join("shortcut")).unwrap();
+    symlink("a/page.html", site.served.join("linked.html")).unwrap();
+    for asked in ["shortcut/page.html", "linked.html", "a/pictures/shot.png"] {
+        let (frame, _) = send(&app, on_home("GET", &format!("/api/frame/{asked}"), &[COOKIE])).await;
+        let framed = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
+        let real = if asked.ends_with(".png") {
+            "a/img/shot.png"
+        } else {
+            "a/page.html"
+        };
+        assert!(framed.ends_with(&format!("/{real}")), "{asked}: {framed}");
+        let (response, _) = send(&app, on_home("GET", &framed, &[])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{asked}");
+    }
+    let (response, _) = send(&app, on_home("GET", &format!("{folder}img/shot.png"), &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    for inside in ["page.html", "img/shot.png", "pictures/shot.png", "shot.png"] {
+        let (response, _) = send(&app, on_home("GET", &format!("{folder}{inside}"), &[])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{inside}");
+    }
+    // A pipe in the page's own folder is not opened with the pass.
+    make_pipe(&site.served.join("a/pipe"));
+    let piped = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        send(&app, on_home("GET", &format!("{folder}pipe"), &[])),
+    );
+    assert_eq!(
+        piped.await.expect("it waits on a pipe").0.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    for outside in [
+        "tob/secret.txt",
+        "tob/index.html",
+        "tob/",
+        "up/b/secret.txt",
+        "up/a.txt",
+        "up/a/up/b/secret.txt",
+        "one.txt",
+        "img/",
+        "img/index.html",
+        "pictures/",
+    ] {
+        let (response, body) = send(&app, on_home("GET", &format!("{folder}{outside}"), &[])).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{outside}");
+        assert!(!String::from_utf8_lossy(&body).contains(SECRET), "{outside}");
+    }
+}
+
+/// A named pipe: opening one waits for a writer that never comes.
+#[cfg(unix)]
+fn make_pipe(path: &Path) {
+    let status = std::process::Command::new("mkfifo").arg(path).status().unwrap();
+    assert!(status.success());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_zip_and_a_copy_leave_out_what_is_not_a_file_or_a_folder() {
+    use std::os::unix::fs::symlink;
+    use std::time::Duration;
+    let site = Site::new();
+    fs::create_dir_all(site.served.join("fifo/deep")).unwrap();
+    fs::write(site.served.join("fifo/a.txt"), "x").unwrap();
+    fs::write(site.served.join("fifo/deep/b.txt"), "y").unwrap();
+    make_pipe(&site.served.join("fifo/pipe"));
+    make_pipe(&site.served.join("fifo/deep/pipe"));
+    symlink("pipe", site.served.join("fifo/to-pipe")).unwrap();
+    // A pipe with a name okfs reads by itself.
+    make_pipe(&site.served.join("fifo/README.md"));
+    make_pipe(&site.served.join("fifo/deep/.gitignore"));
+    let app = site.writing();
+    let limit = Duration::from_secs(10);
+
+    // The listing shows no pipe and waits on none.
+    let listed = tokio::time::timeout(limit, json(&app, "/api/list?path=fifo")).await;
+    let listed = listed.expect("the listing waits on a pipe");
+    assert_eq!(names(&listed), ["a.txt", "deep"]);
+    assert!(listed["readme"].is_null(), "{listed}");
+    let listed = tokio::time::timeout(limit, json(&app, "/api/list?path=fifo/deep")).await;
+    assert_eq!(names(&listed.expect("the listing waits on a pipe")), ["b.txt"]);
+
+    let zipped = tokio::time::timeout(limit, get(&app, "/zip/fifo")).await;
+    let (response, body) = zipped.expect("the zip waits on a pipe");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(zip_names(body), ["a.txt", "deep/", "deep/b.txt"]);
+
+    let copied = tokio::time::timeout(limit, send(&app, page_copy("fifo", "copy"))).await;
+    let (response, _) = copied.expect("the copy waits on a pipe");
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(fs::read(site.served.join("copy/a.txt")).unwrap(), b"x");
+    assert_eq!(fs::read(site.served.join("copy/deep/b.txt")).unwrap(), b"y");
+    assert!(!site.served.join("copy/pipe").exists());
+    assert!(!site.served.join("copy/deep/pipe").exists());
+
+    // No address opens the pipe.
+    for uri in [
+        "/raw/fifo/pipe",
+        "/fifo/pipe",
+        "/raw/fifo/to-pipe",
+        "/api/frame/fifo/pipe",
+    ] {
+        let answered = tokio::time::timeout(limit, get(&app, uri)).await;
+        let (response, _) = answered.expect("the address waits on a pipe");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
+    }
+
+    // The pipe itself is no file to copy.
+    let copied = tokio::time::timeout(limit, send(&app, page_copy("fifo/pipe", "pipe-copy"))).await;
+    let (response, _) = copied.expect("the copy waits on a pipe");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let left: Vec<_> = fs::read_dir(&site.served)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".part") || name == "pipe-copy")
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
