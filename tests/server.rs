@@ -4805,6 +4805,25 @@ async fn with_a_key_a_pass_does_not_follow_a_link_out_of_its_folder() {
     let to = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
     let folder = to.strip_suffix("page.html").unwrap();
 
+    // A page reached through a link, and a page that is itself a link, are framed at the place
+    // they really are, with the pass to that folder: what is beside them loads.
+    symlink("a", site.served.join("shortcut")).unwrap();
+    symlink("a/page.html", site.served.join("linked.html")).unwrap();
+    for asked in ["shortcut/page.html", "linked.html", "a/pictures/shot.png"] {
+        let (frame, _) = send(&app, on_home("GET", &format!("/api/frame/{asked}"), &[COOKIE])).await;
+        let framed = frame.headers()[header::LOCATION].to_str().unwrap().to_owned();
+        let real = if asked.ends_with(".png") {
+            "a/img/shot.png"
+        } else {
+            "a/page.html"
+        };
+        assert!(framed.ends_with(&format!("/{real}")), "{asked}: {framed}");
+        let (response, _) = send(&app, on_home("GET", &framed, &[])).await;
+        assert_eq!(response.status(), StatusCode::OK, "{asked}");
+    }
+    let (response, _) = send(&app, on_home("GET", &format!("{folder}img/shot.png"), &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
     for inside in ["page.html", "img/shot.png", "pictures/shot.png", "shot.png"] {
         let (response, _) = send(&app, on_home("GET", &format!("{folder}{inside}"), &[])).await;
         assert_eq!(response.status(), StatusCode::OK, "{inside}");
@@ -4846,8 +4865,19 @@ async fn a_zip_and_a_copy_leave_out_what_is_not_a_file_or_a_folder() {
     make_pipe(&site.served.join("fifo/pipe"));
     make_pipe(&site.served.join("fifo/deep/pipe"));
     symlink("pipe", site.served.join("fifo/to-pipe")).unwrap();
+    // A pipe with a name okfs reads by itself.
+    make_pipe(&site.served.join("fifo/README.md"));
+    make_pipe(&site.served.join("fifo/deep/.gitignore"));
     let app = site.writing();
     let limit = Duration::from_secs(10);
+
+    // The listing shows no pipe and waits on none.
+    let listed = tokio::time::timeout(limit, json(&app, "/api/list?path=fifo")).await;
+    let listed = listed.expect("the listing waits on a pipe");
+    assert_eq!(names(&listed), ["a.txt", "deep"]);
+    assert!(listed["readme"].is_null(), "{listed}");
+    let listed = tokio::time::timeout(limit, json(&app, "/api/list?path=fifo/deep")).await;
+    assert_eq!(names(&listed.expect("the listing waits on a pipe")), ["b.txt"]);
 
     let zipped = tokio::time::timeout(limit, get(&app, "/zip/fifo")).await;
     let (response, body) = zipped.expect("the zip waits on a pipe");

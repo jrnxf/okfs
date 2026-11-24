@@ -674,15 +674,9 @@ fn serve(args: Serve) -> Result<(), String> {
             // An open page holds a stream that would never end by itself.
             index.feed().close();
         };
-        let limits = serve::Limits::standard();
-        match tls {
-            Some(config) => {
-                let listener = tls::Listener::new(listener, config)
-                    .map_err(|error| format!("cannot listen on {address}: {error}"))?;
-                serve::serve(listener, router, limits, shutdown).await
-            }
-            None => serve::serve(listener, router, limits, shutdown).await,
-        }
+        let tls = tls.map(tokio_rustls::TlsAcceptor::from);
+        serve::serve(listener, tls, router, serve::Limits::standard(), shutdown)
+            .await
         .map_err(|error| format!("the server stopped: {error}"))
     })
 }

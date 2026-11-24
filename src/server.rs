@@ -1542,7 +1542,7 @@ fn copy_size(root: &Root, abs: &std::path::Path) -> u64 {
 
 /// Copies what okfs shows of the folder `from` into the folder `to`, which is new and empty. A link
 /// is copied as a link where links can be made, and left out elsewhere: none is followed. A pipe,
-/// a socket or a device is left out: reading one may never end.
+/// a socket or a device is not shown, so it is left out.
 fn copy_tree(root: &Root, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
     for seen in root.scan(from)? {
         let (source, target) = (from.join(&seen.name), to.join(&seen.name));
@@ -1552,7 +1552,7 @@ fn copy_tree(root: &Root, from: &std::path::Path, to: &std::path::Path) -> std::
         } else if seen.dir {
             fs::create_dir(&target)?;
             copy_tree(root, &source, &target)?;
-        } else if fs::symlink_metadata(&source)?.is_file() {
+        } else {
             fs::copy(&source, &target)?;
         }
     }
@@ -2031,10 +2031,17 @@ async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Respons
     let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
-    let encoded = encode_path(&found.rel);
     let to = match app.options.key {
-        Some(_) => format!("/api/view/{}/{encoded}", app.passes.of(paths::parent(&found.rel))),
-        None => format!("/raw/{encoded}"),
+        // The pass is to the folder the page really is in, and the address is of that place: a
+        // page reached through a link loads what is beside the page, not what is beside the link.
+        Some(_) => {
+            let Some(place) = app.root.place(&found) else {
+                return not_found();
+            };
+            let pass = app.passes.of(paths::parent(&place));
+            format!("/api/view/{pass}/{}", encode_path(&place))
+        }
+        None => format!("/raw/{}", encode_path(&found.rel)),
     };
     (
         StatusCode::TEMPORARY_REDIRECT,
@@ -2064,10 +2071,34 @@ async fn view(
         return not_found();
     };
     // A folder is answered with its `--index` page, which may be a link too.
-    if found.meta.is_dir() && !index_page(&app, &found.rel).is_some_and(|page| opens(&page)) {
-        return not_found();
+    let found = if found.meta.is_dir() {
+        let Some(page) = index_page(&app, &found.rel).filter(opens) else {
+            return not_found();
+        };
+        if let Some(to) = with_slash(&format!("/api/view/{pass}/"), &found.rel, &uri) {
+            return to;
+        }
+        page
+    } else {
+        found
+    };
+    match raw::serve(found, &headers).await {
+        Ok(response) => response,
+        Err(_) => not_found(),
     }
-    send_found(&app, found, &format!("/api/view/{pass}/"), &uri, &headers).await
+}
+
+/// A folder's address ends with a slash, so links inside its index page resolve. This is the
+/// step to that address for a request that came without the slash.
+fn with_slash(base: &str, folder: &str, uri: &Uri) -> Option<Response> {
+    if uri.path().ends_with('/') {
+        return None;
+    }
+    let mut to = format!("{base}{}/", encode_path(folder));
+    if let Some(query) = uri.query() {
+        to = format!("{to}?{query}");
+    }
+    Some((StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response())
 }
 
 /// The folder a pass is for, asked for by its own address. A pass opens the files in its folder,
@@ -2085,13 +2116,8 @@ async fn send_found(app: &App, found: Resolved, base: &str, uri: &Uri, headers: 
             let Some(found) = index_page(app, &folder.rel) else {
                 return not_found();
             };
-            // A folder's address ends with a slash, so links inside its index page resolve.
-            if !uri.path().ends_with('/') {
-                let mut to = format!("{base}{}/", encode_path(&folder.rel));
-                if let Some(query) = uri.query() {
-                    to = format!("{to}?{query}");
-                }
-                return (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, to)]).into_response();
+            if let Some(to) = with_slash(base, &folder.rel, uri) {
+                return to;
             }
             found
         }

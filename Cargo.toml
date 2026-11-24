@@ -52,8 +52,8 @@ httpdate = "1.0.3"
 # The connection loop in src/serve.rs, with a limit on how long a connection may wait for a
 # request. axum already builds all three.
 http-body = "1.1.0"
-hyper = { version = "1.12.0", default-features = false }
-hyper-util = { version = "0.1.21", default-features = false, features = ["server-auto", "server-graceful", "service", "tokio"] }
+hyper = { version = "1.12.0", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["http1", "server-graceful", "service", "tokio"] }
 ignore = "0.4"
 jiff = "0.2.38"
 if-addrs = { version = "0.15.0", default-features = false }
