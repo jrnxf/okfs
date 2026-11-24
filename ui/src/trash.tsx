@@ -41,6 +41,7 @@ export function TrashList({ onMenu }: { onMenu: (event: MouseEvent, item: TrashI
         <h1 class={BAR_NAME}>Trash</h1>
         <span class={BAR_FACTS}>
           {fmt.items(items.length)} · {fmt.size(bytes)} · each kept {trash?.days ?? 30} days, then deleted for good
+          {trash?.unreadable ? ` · ${fmt.items(trash.unreadable)} more from another okfs version, kept the same time and not shown` : ""}
         </span>
         {items.length > 0 && (
           <button class="btn btn-line h-[calc(24px*var(--density))] px-2 phone:h-[34px]" onClick={() => store.askForget("all")}>

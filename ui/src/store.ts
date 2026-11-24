@@ -125,6 +125,8 @@ export interface TrashState {
   days: number;
   items: TrashItem[];
   loaded: boolean;
+  /** How many more entries the Trash holds that this okfs cannot read, and so does not show. */
+  unreadable?: number;
 }
 
 export type SortKey = "name" | "time" | "size" | "kind";
@@ -1997,7 +1999,7 @@ export class Store {
     if (!s.trash) return;
     try {
       const listed = await listTrash();
-      s.trash = { days: listed.days, items: listed.items, loaded: true };
+      s.trash = { days: listed.days, items: listed.items, loaded: true, unreadable: listed.unreadable ?? 0 };
       s.trashCursor = Math.max(0, Math.min(s.trashCursor, listed.items.length - 1));
       this.emit();
     } catch {

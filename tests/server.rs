@@ -4266,19 +4266,22 @@ async fn the_trash_sweeps_what_is_older_than_its_days_before_it_lists() {
     assert_eq!(delete(&app, "a.txt").await, StatusCode::OK);
     assert_eq!(delete(&app, "file2.txt").await, StatusCode::OK);
     let ids = trash_ids(&app).await;
-    // The first one was deleted 31 days ago, as far as the Trash knows: the name of its folder
-    // says when.
-    let (seconds, rest) = ids[0].split_once('-').unwrap();
-    let aged = format!("{:011}-{rest}", seconds.parse::<i64>().unwrap() - 31 * 24 * 60 * 60);
-    fs::rename(site.trash_dir().join(&ids[0]), site.trash_dir().join(&aged)).unwrap();
+    // The first one was deleted 31 days ago, as far as the Trash knows.
+    let info_path = site.trash_dir().join(&ids[0]).join("info.json");
+    let mut info: Value = serde_json::from_slice(&fs::read(&info_path).unwrap()).unwrap();
+    info["deleted"] = (info["deleted"].as_i64().unwrap() - 31 * 24 * 60 * 60).into();
+    fs::write(&info_path, info.to_string()).unwrap();
 
     assert_eq!(trash_ids(&app).await, [ids[1].clone()]);
-    assert!(!site.trash_dir().join(&aged).exists());
+    assert!(!site.trash_dir().join(&ids[0]).exists());
+    assert_eq!(json(&app, "/api/trash").await["unreadable"], 0);
 
     // An entry this okfs cannot read is not listed, and a listing does not remove it.
     fs::write(site.trash_dir().join(&ids[1]).join("info.json"), "{").unwrap();
     assert!(trash_ids(&app).await.is_empty());
     assert!(site.trash_dir().join(&ids[1]).join("item").exists());
+    // The page is told how many, so it can say that the Trash holds more than it shows.
+    assert_eq!(json(&app, "/api/trash").await["unreadable"], 1);
 }
 
 #[tokio::test]
