@@ -308,16 +308,17 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/zip/", get(zip_folder))
         .route("/zip/{*path}", get(zip_folder));
     // The one route a request reaches without the key: a page in the preview brings the pass to
-    // its folder instead, and `view` checks it. It is a router of its own, so that no other
+    // its folder instead, and `view` checks it. It is merged in after the key check, so no other
     // address under `/api/view/` gets past the key: one this route does not match falls to the
-    // routes above, which ask for it.
+    // routes above, which ask for it. A route added here is open to anyone who can reach okfs.
     let passed = Router::new()
         .route("/api/view/{pass}/{*path}", get(view))
-        .layer(middleware::from_fn_with_state(Arc::clone(&app), guard_host));
+        .route("/api/view/{pass}/", get(view_folder));
     packed
         .merge(plain)
-        .layer(middleware::from_fn_with_state(Arc::clone(&app), guard))
+        .layer(middleware::from_fn_with_state(Arc::clone(&app), needs_the_key))
         .merge(passed)
+        .layer(middleware::from_fn_with_state(Arc::clone(&app), guard))
         .with_state(app)
 }
 
@@ -375,21 +376,9 @@ pub fn host_allowed(host: &str, allowed: &[String]) -> bool {
         || allowed.iter().any(|allowed| allowed.eq_ignore_ascii_case(name))
 }
 
-/// Runs before every route: checks the Host name and the key, and marks every answer as not to be
-/// sniffed.
+/// Runs before every route: checks the Host name, and marks every answer as not to be sniffed.
 async fn guard(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let refused = refuse_host(&app, &request).or_else(|| admit(&app, &request));
-    answer(refused, request, next).await
-}
-
-/// Runs before the one route that takes a pass in place of the key: checks the Host name only.
-async fn guard_host(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    answer(refuse_host(&app, &request), request, next).await
-}
-
-/// The refusal, or the route's own answer, marked as not to be sniffed.
-async fn answer(refused: Option<Response>, request: Request, next: Next) -> Response {
-    let mut response = match refused {
+    let mut response = match refuse_host(&app, &request) {
         Some(refused) => refused,
         None => next.run(request).await,
     };
@@ -399,6 +388,15 @@ async fn answer(refused: Option<Response>, request: Request, next: Next) -> Resp
         .entry(header::REFERRER_POLICY)
         .or_insert(HeaderValue::from_static("same-origin"));
     response
+}
+
+/// Runs inside `guard`, before every route but the pass route, and before the page that an
+/// address with no route gets: checks the key.
+async fn needs_the_key(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
+    match admit(&app, &request) {
+        Some(refused) => refused,
+        None => next.run(request).await,
+    }
 }
 
 /// The refusal for a host name okfs does not answer to. `None` lets the request through.
@@ -2054,6 +2052,13 @@ async fn view(
         }
         _ => not_found(),
     }
+}
+
+/// The folder a pass is for, asked for by its own address. A pass opens the files in its folder,
+/// not the folder: the answer is the one `view` gives for any folder, and not the request for
+/// the key that an address with no route gets.
+async fn view_folder() -> Response {
+    not_found()
 }
 
 /// Sends a file, or a folder's `--index` page, found under the address `base`.

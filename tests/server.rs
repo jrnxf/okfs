@@ -2961,25 +2961,39 @@ async fn with_a_key_every_route_is_refused_without_it_and_says_nothing_of_the_fo
 }
 
 /// Every address the router names, read from its source, so a route added later is walked too.
-/// A part in braces is filled with `fill`.
-fn route_addresses(fill: &str) -> Vec<String> {
+/// A part in braces is filled with each of `fills`.
+fn route_addresses(fills: &[&str]) -> Vec<String> {
     let source = include_str!("../src/server.rs");
-    let mut found: Vec<String> = source
-        .split(".route(\"")
-        .skip(1)
-        .map(|rest| {
-            let template = rest.split('"').next().unwrap();
+    // Every way a router takes a route is read here, or the walk below would miss some.
+    for other in [".nest(", ".nest_service(", ".route_service(", ".fallback_service("] {
+        assert!(!source.contains(other), "{other} adds routes this test does not read");
+    }
+    let mut found = Vec::new();
+    for rest in source.split(".route(").skip(1) {
+        // rustfmt puts a long route's address on a line of its own.
+        let template = rest
+            .trim_start()
+            .strip_prefix('"')
+            .expect("a route's address is a literal");
+        let template = template.split('"').next().unwrap();
+        for fill in fills {
             let parts: Vec<&str> = template
                 .split('/')
                 .map(|part| if part.starts_with('{') { fill } else { part })
                 .collect();
-            parts.join("/")
-        })
-        .collect();
+            found.push(parts.join("/"));
+        }
+    }
     found.sort();
     found.dedup();
-    assert!(found.len() >= 20, "the routes were not read from the source: {found:?}");
+    assert!(found.len() >= 25, "the routes were not read from the source: {found:?}");
     found
+}
+
+/// Whether the pass route takes this address: `/api/view/<pass>/` and anything after it.
+fn is_pass_address(uri: &str) -> bool {
+    let path = uri.split('?').next().unwrap();
+    path.strip_prefix("/api/view/").is_some_and(|rest| rest.contains('/'))
 }
 
 #[tokio::test]
@@ -2995,13 +3009,13 @@ async fn with_a_key_no_address_hands_the_key_to_a_request_without_it() {
             allow_upload: true,
             allow_edit: true,
             allow_delete: true,
+            index: Some("a.txt".to_owned()),
             ..Options::default()
         },
     );
     let before = snapshot(&site.served);
 
-    let mut addresses = route_addresses("a.txt");
-    addresses.extend(route_addresses("x"));
+    let mut addresses = route_addresses(&["a.txt", "x"]);
     addresses.extend(
         [
             "/api",
@@ -3019,6 +3033,7 @@ async fn with_a_key_no_address_hands_the_key_to_a_request_without_it() {
             "/api/view/file.txt",
             "/api/view/deep/file.txt",
             "/api/view/x/a.txt",
+            "/api/view/x/%ff",
             "/api/view/x/api/view/file.txt",
             "/api/viewer",
             "/api/view%2Fx",
@@ -3048,10 +3063,21 @@ async fn with_a_key_no_address_hands_the_key_to_a_request_without_it() {
                 let shown = format!("{method} {uri}");
                 let (response, body) = send(&app, on_home(method, uri, headers)).await;
                 let status = response.status();
-                // Only the pass route answers without the key, and a wrong pass finds nothing.
-                let passed = uri.starts_with("/api/view/")
-                    && matches!(status, StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED);
-                assert!(passed || status == StatusCode::UNAUTHORIZED, "{shown}: {status}");
+                if is_pass_address(uri) {
+                    // The pass route answers without the key, and a wrong pass finds nothing.
+                    let found_nothing = [
+                        StatusCode::NOT_FOUND,
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        StatusCode::BAD_REQUEST,
+                    ];
+                    assert!(found_nothing.contains(&status), "{shown}: {status}");
+                } else {
+                    assert_eq!(status, StatusCode::UNAUTHORIZED, "{shown}");
+                    assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "okfs-key", "{shown}");
+                    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store", "{shown}");
+                }
+                assert!(!response.headers().contains_key(header::SET_COOKIE), "{shown}");
+                assert_eq!(response.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{shown}");
                 let body = String::from_utf8_lossy(&body);
                 for told in [KEY, "okfs-config", SECRET, "0123456789"] {
                     assert!(!body.contains(told), "{shown} tells {told}: {body}");
@@ -3064,6 +3090,13 @@ async fn with_a_key_no_address_hands_the_key_to_a_request_without_it() {
         }
     }
     assert_eq!(snapshot(&site.served), before);
+
+    // A host okfs does not answer to is refused at the pass route too.
+    let request = Request::get("/api/view/x/a.txt")
+        .header(header::HOST, "evil.example")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&app, request).await.0.status(), StatusCode::FORBIDDEN);
 
     // With the key, the files under those names are served like any other.
     let (response, body) = send(&app, on_home("GET", "/raw/api/view/file.txt", &[COOKIE])).await;
