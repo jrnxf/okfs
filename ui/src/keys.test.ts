@@ -9,7 +9,7 @@ const saved = new Map<string, string>();
 /** Every address asked for, by `fetch` or as a picture. */
 const asked: string[] = [];
 Object.assign(globalThis, {
-  document: { getElementById: () => null, addEventListener: () => undefined, querySelector: () => null },
+  document: { getElementById: () => null, addEventListener: () => undefined, querySelector: () => null, querySelectorAll: () => [] },
   localStorage: { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => void saved.set(key, value) },
   innerWidth: 1495,
   location: { pathname: "/", search: "", href: "http://localhost/" },
@@ -248,11 +248,15 @@ test("page down and page up move a page of rows in a folder, and stop at its end
   keys.keyFor(store, { ...host, page: () => 7 }, press("PageDown"))?.();
   expect(store.s.cursor).toBe(7);
 
-  // An open file keeps them, to scroll a page of itself.
+  // An open file takes them to scroll a page of itself, and its cursor stays.
   store.activate();
   expect(store.s.open?.name).toBe("file-7.txt");
-  expect(keys.keyFor(store, host, press("PageDown"))).toBeUndefined();
-  expect(keys.keyFor(store, host, press("PageUp"))).toBeUndefined();
+  const before = store.s.cursor;
+  keys.keyFor(store, host, press("PageDown"))?.();
+  keys.keyFor(store, host, press("PageUp"))?.();
+  expect(keys.keyFor(store, host, press("PageDown"))).toBeDefined();
+  expect(keys.keyFor(store, host, press(" "))).toBeDefined();
+  expect(store.s.cursor).toBe(before);
 });
 
 test("page down and page up move a page of rows over the matches too", () => {
@@ -506,4 +510,26 @@ test("a folder okfs may not write in changes nothing, says why, and keeps no pag
     Object.assign(stores.store.s, { locked: false });
     Object.assign(config, { edit: false, upload: false, delete: false });
   }
+});
+
+test("a table, a tree or a document larger than the server reads whole is its code, and has no other form to flip to", () => {
+  const store = showing("small.csv", "big.csv", "big.json", "big.md", "big.html");
+  const entries = store.s.entries;
+  const [small, big, tree, doc, page] = entries;
+  for (const file of [big, tree, doc]) Object.assign(file!, { size: 2 * 1024 * 1024 + 1 });
+  // A page is drawn from the file itself, which no cut touches.
+  Object.assign(page!, { size: 5 * 1024 * 1024 });
+  expect(store.isCode(small!)).toBe(false);
+  for (const file of [big, tree, doc]) expect(store.isCode(file!)).toBe(true);
+  expect(store.isCode(page!)).toBe(false);
+  // Its flip is gone, and asking for the table does not keep a choice for the tables that follow.
+  store.s.cursor = 1;
+  expect(store.flippable()).toBe(null);
+  store.setCode(big!, false);
+  expect(store.isCode(big!)).toBe(true);
+  store.setCode(big!, true);
+  expect(store.s.asCode).toEqual([]);
+  expect(store.isCode(small!)).toBe(false);
+  store.s.cursor = 0;
+  expect(store.flippable()?.name).toBe("small.csv");
 });
