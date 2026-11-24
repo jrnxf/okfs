@@ -33,14 +33,14 @@ test("the link with the key gets in and the browser keeps it", async ({ page }) 
 });
 
 test("an open page whose server started again with a new key becomes the full page for a link without the key", async ({ page }) => {
-  const first = await serve(["--key"]);
+  const first = await serve(["--require-key"]);
   let second: Served | undefined;
   try {
     await page.goto(first.link);
     await expect(page.getByRole("option", { name: /^notes\.md/ })).toBeVisible();
     // The same folder and port, a new key: the cookie the page holds is refused from now on.
     first.stop(true);
-    second = await serve(["--key"], {}, { root: first.root, port: Number(new URL(first.origin).port) });
+    second = await serve(["--require-key"], {}, { root: first.root, port: Number(new URL(first.origin).port) });
     expect(second.link).not.toBe(first.link);
     // The stream of changes drops, the page asks what the matter is, and the server says it wants the key.
     await expect(page.getByRole("heading", { level: 1, name: "This link needs its key" })).toBeVisible({ timeout: 15_000 });
