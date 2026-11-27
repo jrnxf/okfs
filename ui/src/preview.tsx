@@ -12,7 +12,7 @@ import { LABEL, decodedByServer, hasSource } from "./kinds";
 import { NoAnswer, type Unreached, useDown } from "./reach";
 import { saveControls } from "./saves";
 import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
-import { STATE, keepState, loadState, readSet } from "./state";
+import { STATE, keepState, loadState, newToken, readSet } from "./state";
 import { type Entry, store } from "./store";
 
 /**
@@ -798,6 +798,8 @@ interface Slot {
   rested: number;
   /** The page in it went to another of its own accord, as by a link: what it says is not about this file. */
   away: boolean;
+  /** The token the page now in it was given with its value, or nothing: see `state.ts`. */
+  token: string;
 }
 
 const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms";
@@ -896,15 +898,16 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
   }, []);
 
   // Any page may ask okfs to keep a small value for this viewer, in this browser: see `state.ts`. It is kept by the
-  // path of the page the frame was sent to, once that page has loaded: not for a page that went elsewhere by a
-  // link, or a frame inside it. A page loaded ahead is heard too, as the value it keeps is its own.
+  // path of the page the frame was sent to, once that page has loaded and only with the token that load was given:
+  // not for a page that went elsewhere by a link, or a frame inside it. A page loaded ahead is heard too, as the
+  // value it keeps is its own.
   useEffect(() => {
     const told = new Set<string>();
     const heard = (event: MessageEvent) => {
       const asked = readSet(event.data);
       if (!asked || !event.source) return;
       const slot = slots.current.find((one) => frames.current.get(one.id)?.contentWindow === event.source);
-      if (!slot || slot.pdf || !slot.loaded || slot.away) return;
+      if (!slot || !slot.token || asked.token !== slot.token) return;
       const why = "refused" in asked ? asked.refused : keepState(slot.path, asked.text) ? "" : "this browser's storage is blocked or full";
       // The page is told why once, not at each tick.
       if (why && !told.has(slot.path)) store.say(`Not kept: ${why}`);
@@ -920,7 +923,7 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
     const now = performance.now();
     const before = slots.current.map((slot) => slot.id).join() + shown.current;
     const add = (file: Entry): Slot => {
-      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, since: 0, left: 0, rested: 0, away: false };
+      const slot = { id: made.current++, path: file.path, size: file.size, pdf: file.kind === "pdf", sent: "", loaded: false, since: 0, left: 0, rested: 0, away: false, token: "" };
       slots.current.push(slot);
       return slot;
     };
@@ -943,6 +946,7 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
       slot.loaded = false;
       slot.rested = 0;
       slot.away = false;
+      slot.token = "";
       return true;
     };
 
@@ -1128,9 +1132,10 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
             // A second load with nothing sent between: the page went to another one by itself.
             if (slot.loaded) slot.away = true;
             slot.loaded = true;
-            // Each page this frame was sent to is given the value it keeps, `null` when none. A sandboxed page has an
-            // origin of its own that no address names, so the message goes to whatever page is in the frame now.
-            if (!slot.pdf && !slot.away) event.currentTarget.contentWindow?.postMessage({ type: STATE, state: loadState(slot.path) }, "*");
+            // Each page this frame was sent to is given the value it keeps, `null` when none, and a new token. A sandboxed
+            // page has an origin of its own that no address names, so the message goes to whatever page is in the frame now.
+            slot.token = !slot.pdf && !slot.away ? newToken() : "";
+            if (slot.token) event.currentTarget.contentWindow?.postMessage({ type: STATE, token: slot.token, state: loadState(slot.path) }, "*");
             slot.since = performance.now();
             // The picture over a PDF goes once its viewer has had its time: see `SHEET_KEEP`.
             if (slot.pdf) setTimeout(again, SHEET_KEEP + 1);

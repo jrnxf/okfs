@@ -1,7 +1,7 @@
 // A small value kept for a page in this browser, by the page's path.
 
 import { beforeEach, expect, test } from "bun:test";
-import { LONGEST_STATE, keepState, loadState, readSet } from "./state";
+import { LONGEST_STATE, keepState, loadState, newToken, readSet } from "./state";
 
 const saved = new Map<string, string>();
 let blocked = false;
@@ -24,21 +24,37 @@ beforeEach(() => {
   blocked = false;
 });
 
-test("only a message of this kind is read, and its state becomes JSON text", () => {
-  expect(readSet({ type: "okfs:state-set", state: [true, false] })).toEqual({ text: "[true,false]" });
-  expect(readSet({ type: "okfs:state-set", state: { a: "x" } })).toEqual({ text: '{"a":"x"}' });
-  expect(readSet({ type: "okfs:state-set", state: 0 })).toEqual({ text: "0" });
-  expect(readSet({ type: "okfs:state-set", state: null })).toEqual({ text: null });
-  expect(readSet({ type: "okfs:state-set" })).toEqual({ text: null });
-  expect(readSet({ type: "okfs:save", state: [] })).toBeNull();
+test("only a message of this kind with a token is read, and its state becomes JSON text", () => {
+  expect(readSet({ type: "okfs:state-set", token: "t", state: [true, false] })).toEqual({ token: "t", text: "[true,false]" });
+  expect(readSet({ type: "okfs:state-set", token: "t", state: { a: "x" } })).toEqual({ token: "t", text: '{"a":"x"}' });
+  expect(readSet({ type: "okfs:state-set", token: "t", state: 0 })).toEqual({ token: "t", text: "0" });
+  expect(readSet({ type: "okfs:state-set", token: "t", state: null })).toEqual({ token: "t", text: null });
+  expect(readSet({ type: "okfs:state-set", token: "t" })).toEqual({ token: "t", text: null });
+  expect(readSet({ type: "okfs:save", token: "t", state: [] })).toBeNull();
   expect(readSet("okfs:state-set")).toBeNull();
   expect(readSet(null)).toBeNull();
 });
 
+test("a message without a token, or with one that is not text, is no message", () => {
+  expect(readSet({ type: "okfs:state-set", state: [true] })).toBeNull();
+  expect(readSet({ type: "okfs:state-set", state: null })).toBeNull();
+  expect(readSet({ type: "okfs:state-set", token: "", state: [true] })).toBeNull();
+  expect(readSet({ type: "okfs:state-set", token: 7, state: [true] })).toBeNull();
+});
+
 test("a state that is not JSON, or is too large, is refused with the reason", () => {
-  expect(readSet({ type: "okfs:state-set", state: 1n })).toEqual({ refused: "the page's state is not JSON" });
-  expect(readSet({ type: "okfs:state-set", state: () => 1 })).toEqual({ refused: "the page's state is not JSON" });
-  expect(readSet({ type: "okfs:state-set", state: "x".repeat(LONGEST_STATE) })).toEqual({ refused: "the page's state is larger than 100 KB" });
+  expect(readSet({ type: "okfs:state-set", token: "t", state: 1n })).toEqual({ token: "t", refused: "the page's state is not JSON" });
+  expect(readSet({ type: "okfs:state-set", token: "t", state: () => 1 })).toEqual({ token: "t", refused: "the page's state is not JSON" });
+  expect(readSet({ type: "okfs:state-set", token: "t", state: "x".repeat(LONGEST_STATE) })).toEqual({
+    token: "t",
+    refused: "the page's state is larger than 100 KB",
+  });
+});
+
+test("each token is new", () => {
+  const tokens = new Set(Array.from({ length: 100 }, newToken));
+  expect(tokens.size).toBe(100);
+  for (const token of tokens) expect(token).toMatch(/^[0-9a-f]{32}$/);
 });
 
 test("each page keeps its own value, and null forgets it", () => {

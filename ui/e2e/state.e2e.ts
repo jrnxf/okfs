@@ -7,13 +7,15 @@ import { type Served, serve } from "./serve";
 
 const SNIPPET = `<script>
 const boxes = [...document.querySelectorAll("input[type=checkbox]")];
+let token;
 addEventListener("message", (event) => {
   if (event.source !== parent || event.data?.type !== "okfs:state") return;
+  token = event.data.token;
   const ticks = event.data.state ?? [];
   boxes.forEach((box, i) => (box.checked = !!ticks[i]));
 });
 addEventListener("change", () => {
-  parent.postMessage({ type: "okfs:state-set", state: boxes.map((box) => box.checked) }, "*");
+  parent.postMessage({ type: "okfs:state-set", token, state: boxes.map((box) => box.checked) }, "*");
 });
 </script>`;
 
@@ -24,9 +26,19 @@ const PAGE = `<!doctype html>
 ${SNIPPET}
 `;
 
+// A page that asks at once, before it has loaded, to change the value kept: with no token, and with one it guessed.
+const JUMP = `<!doctype html>
+<title>jump</title>
+<p>landed</p>
+<script>
+parent.postMessage({ type: "okfs:state-set", state: null }, "*");
+parent.postMessage({ type: "okfs:state-set", token: "guess", state: [false, false] }, "*");
+</script>
+`;
+
 let okfs: Served;
 test.beforeAll(async () => {
-  okfs = await serve([], { "list.html": PAGE, "other.html": PAGE });
+  okfs = await serve([], { "list.html": PAGE, "other.html": PAGE, "linked.html": `${PAGE}<a href="jump.html">jump</a>\n`, "jump.html": JUMP });
 });
 test.afterAll(() => okfs.stop());
 
@@ -63,4 +75,14 @@ test("a page that went to another by a link is not given the first page's value"
   await expect(shown(page).getByText("milk")).toBeVisible();
   await page.waitForTimeout(300);
   await expect(shown(page).getByLabel("milk")).not.toBeChecked();
+});
+
+test("a page reached by a link that asks at once cannot change the first page's value", async ({ page }) => {
+  await page.goto(`${okfs.origin}/linked.html`);
+  await shown(page).getByLabel("milk").check();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("okfs.state:linked.html"))).toBe("[true,false]");
+  await shown(page).getByText("jump").click();
+  await expect(shown(page).getByText("landed")).toBeVisible();
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => localStorage.getItem("okfs.state:linked.html"))).toBe("[true,false]");
 });
