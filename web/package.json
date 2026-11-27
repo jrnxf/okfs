@@ -12,11 +12,11 @@
     "@fontsource-variable/mona-sans": "5.3.0",
     "@fontsource/fragment-mono": "5.3.0",
     "@fontsource/ibm-plex-mono": "5.3.0",
-    "@types/react": "19.3.0",
+    "@types/react": "19.3.1",
     "@types/react-dom": "19.3.0",
-    "bun": "1.4.2",
+    "bun": "1.4.5",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "wrangler": "4.159.0"
+    "wrangler": "4.168.0"
   }
 }
