@@ -164,6 +164,28 @@ okfs --index index.html
 
 The page is shown the way any HTML file is: full width under the thin bar, sandboxed. A link in it to another folder opens that folder's index page too. Closing it shows the folder's listing with the page under the cursor. A folder of that name is not an index page. Neither is a file okfs does not serve: a dotfile without `--hidden`, or a link that leaves the served folder.
 
+## A page that remembers its viewer
+
+A served page runs sandboxed, in an origin of its own, so the browser gives it no `localStorage`. okfs keeps a small value for it instead, such as the boxes ticked in a checklist, in the browser that shows it. This needs no flag. Nothing is written to the served folder, and each browser keeps its own value. To keep what a page's controls show in the file itself, for every machine, see [Pages that keep their own controls](writing.md#pages-that-keep-their-own-controls).
+
+okfs sends the page `{ type: "okfs:state", state }` each time it loads in the preview, with `state` as `null` when none is kept. The page keeps a new value with `{ type: "okfs:state-set", state }`, and `null` forgets it. A checklist does it with this script:
+
+```html
+<script>
+const boxes = [...document.querySelectorAll("input[type=checkbox]")];
+addEventListener("message", (event) => {
+  if (event.source !== parent || event.data?.type !== "okfs:state") return;
+  const ticks = event.data.state ?? [];
+  boxes.forEach((box, i) => (box.checked = !!ticks[i]));
+});
+addEventListener("change", () => {
+  parent.postMessage({ type: "okfs:state-set", state: boxes.map((box) => box.checked) }, "*");
+});
+</script>
+```
+
+The value is any JSON up to 100 KB, and it is kept by the page's path: a page renamed or moved starts with none. A page cannot read or change the value of another page. Only a page in the preview is heard. A page opened at its own address under `/raw/`, a page that went to another by a link and a frame inside a page get no value and keep none. The value is in okfs's own storage in that browser, so a visitor can read and clear it as any site's data.
+
 ## A big folder
 
 `Ctrl K` searches an index of every name in the tree, kept in memory. okfs reads the tree once when it starts, and the search works on what it has found so far while that goes on: the count in its footer climbs until it says the tree is indexed.

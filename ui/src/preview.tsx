@@ -12,7 +12,8 @@ import { LABEL, decodedByServer, hasSource } from "./kinds";
 import { NoAnswer, type Unreached, useDown } from "./reach";
 import { saveControls } from "./saves";
 import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
-import type { Entry } from "./store";
+import { STATE, keepState, loadState, readSet } from "./state";
+import { type Entry, store } from "./store";
 
 /**
  * Frames and players cost a lot to start. Under a held key, which passes a file faster than one can start,
@@ -894,6 +895,26 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
     return () => removeEventListener("message", heard);
   }, []);
 
+  // Any page may ask okfs to keep a small value for this viewer, in this browser: see `state.ts`. It is kept by the
+  // path of the page the frame was sent to, once that page has loaded: not for a page that went elsewhere by a
+  // link, or a frame inside it. A page loaded ahead is heard too, as the value it keeps is its own.
+  useEffect(() => {
+    const told = new Set<string>();
+    const heard = (event: MessageEvent) => {
+      const asked = readSet(event.data);
+      if (!asked || !event.source) return;
+      const slot = slots.current.find((one) => frames.current.get(one.id)?.contentWindow === event.source);
+      if (!slot || slot.pdf || !slot.loaded || slot.away) return;
+      const why = "refused" in asked ? asked.refused : keepState(slot.path, asked.text) ? "" : "this browser's storage is blocked or full";
+      // The page is told why once, not at each tick.
+      if (why && !told.has(slot.path)) store.say(`Not kept: ${why}`);
+      if (why) told.add(slot.path);
+      else told.delete(slot.path);
+    };
+    addEventListener("message", heard);
+    return () => removeEventListener("message", heard);
+  }, []);
+
   // With the draw that moved the cursor, as `useLoaded` asks: a plain effect would wait for the next paint.
   useLayoutEffect(() => {
     const now = performance.now();
@@ -1101,12 +1122,15 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
           // A page in another origin may not write to the clipboard unless its frame lets it: a copy button needs it.
           allow={slot.pdf ? undefined : "clipboard-write"}
           title={slot.path.slice(slot.path.lastIndexOf("/") + 1)}
-          onLoad={() => {
+          onLoad={(event) => {
             // An empty frame reports a load of its own, before it is sent anywhere.
             if (!slot.sent) return;
             // A second load with nothing sent between: the page went to another one by itself.
             if (slot.loaded) slot.away = true;
             slot.loaded = true;
+            // Each page this frame was sent to is given the value it keeps, `null` when none. A sandboxed page has an
+            // origin of its own that no address names, so the message goes to whatever page is in the frame now.
+            if (!slot.pdf && !slot.away) event.currentTarget.contentWindow?.postMessage({ type: STATE, state: loadState(slot.path) }, "*");
             slot.since = performance.now();
             // The picture over a PDF goes once its viewer has had its time: see `SHEET_KEEP`.
             if (slot.pdf) setTimeout(again, SHEET_KEEP + 1);
