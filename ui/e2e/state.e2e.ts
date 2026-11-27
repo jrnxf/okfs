@@ -7,16 +7,16 @@ import { type Served, serve } from "./serve";
 
 const SNIPPET = `<script>
 const boxes = [...document.querySelectorAll("input[type=checkbox]")];
-let token;
+const token = new URLSearchParams(location.search).get("okfs-state");
 addEventListener("message", (event) => {
   if (event.source !== parent || event.data?.type !== "okfs:state") return;
-  token = event.data.token;
   const ticks = event.data.state ?? [];
   boxes.forEach((box, i) => (box.checked = !!ticks[i]));
 });
 addEventListener("change", () => {
   parent.postMessage({ type: "okfs:state-set", token, state: boxes.map((box) => box.checked) }, "*");
 });
+parent.postMessage({ type: "okfs:state-get", token }, "*");
 </script>`;
 
 const PAGE = `<!doctype html>
@@ -26,19 +26,40 @@ const PAGE = `<!doctype html>
 ${SNIPPET}
 `;
 
-// A page that asks at once, before it has loaded, to change the value kept: with no token, and with one it guessed.
-const JUMP = `<!doctype html>
-<title>jump</title>
-<p>landed</p>
+// A page reached by a link. It shows its own query, and any value it is given. It asks at once, before it has
+// loaded, for a value and to change it: with the token in its address, and with one it guessed.
+const SPY = `<!doctype html>
+<title>spy</title>
+<p id="query"></p>
+<p id="got">got: none</p>
 <script>
-parent.postMessage({ type: "okfs:state-set", state: null }, "*");
-parent.postMessage({ type: "okfs:state-set", token: "guess", state: [false, false] }, "*");
+document.getElementById("query").textContent = "query: " + (location.search || "none");
+addEventListener("message", (event) => {
+  if (event.data?.type === "okfs:state") document.getElementById("got").textContent = "got: " + JSON.stringify(event.data.state);
+});
+for (const token of [new URLSearchParams(location.search).get("okfs-state"), "guess"]) {
+  parent.postMessage({ type: "okfs:state-get", token }, "*");
+  parent.postMessage({ type: "okfs:state-set", token, state: [false, false] }, "*");
+}
 </script>
+`;
+
+// A page that goes to another before it has loaded: its picture never arrives.
+const SLOW = `<!doctype html>
+<title>slow</title>
+<img src="never.png">
+<script>location = "spy.html";</script>
 `;
 
 let okfs: Served;
 test.beforeAll(async () => {
-  okfs = await serve([], { "list.html": PAGE, "other.html": PAGE, "linked.html": `${PAGE}<a href="jump.html">jump</a>\n`, "jump.html": JUMP });
+  okfs = await serve([], {
+    "list.html": PAGE,
+    "other.html": PAGE,
+    "linked.html": `${PAGE}<a href="spy.html">jump</a>\n`,
+    "spy.html": SPY,
+    "slow.html": SLOW,
+  });
 });
 test.afterAll(() => okfs.stop());
 
@@ -66,23 +87,25 @@ test("each page keeps its own value", async ({ page }) => {
   await expect(shown(page).getByLabel("milk")).not.toBeChecked();
 });
 
-test("a page that went to another by a link is not given the first page's value", async ({ page }) => {
-  await page.goto(`${okfs.origin}/list.html`);
-  await shown(page).getByLabel("milk").check();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("okfs.state:list.html"))).toBe("[true,false]");
-  // The same page, loaded again by itself: okfs can no longer say which file is in the frame.
-  await shown(page).locator("body").evaluate(() => location.reload());
-  await expect(shown(page).getByText("milk")).toBeVisible();
+const spied = async (page: Page) => {
+  await expect(shown(page).getByText("query: none")).toBeVisible();
   await page.waitForTimeout(300);
-  await expect(shown(page).getByLabel("milk")).not.toBeChecked();
-});
+  await expect(shown(page).getByText("got: none")).toBeVisible();
+};
 
-test("a page reached by a link that asks at once cannot change the first page's value", async ({ page }) => {
+test("a page reached by a link after the first has loaded gets no token, no value, and cannot change it", async ({ page }) => {
   await page.goto(`${okfs.origin}/linked.html`);
   await shown(page).getByLabel("milk").check();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("okfs.state:linked.html"))).toBe("[true,false]");
   await shown(page).getByText("jump").click();
-  await expect(shown(page).getByText("landed")).toBeVisible();
-  await page.waitForTimeout(300);
+  await spied(page);
   expect(await page.evaluate(() => localStorage.getItem("okfs.state:linked.html"))).toBe("[true,false]");
+});
+
+test("a page reached before the first has loaded gets no token, no value, and cannot change it", async ({ page }) => {
+  await page.goto(`${okfs.origin}/list.html`);
+  await page.evaluate(() => localStorage.setItem("okfs.state:slow.html", "[true,false]"));
+  await page.goto(`${okfs.origin}/slow.html`);
+  await spied(page);
+  expect(await page.evaluate(() => localStorage.getItem("okfs.state:slow.html"))).toBe("[true,false]");
 });

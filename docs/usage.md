@@ -168,25 +168,25 @@ The page is shown the way any HTML file is: full width under the thin bar, sandb
 
 A served page runs sandboxed, in an origin of its own, so the browser gives it no `localStorage`. okfs keeps a small value for it instead, such as the boxes ticked in a checklist, in the browser that shows it. This needs no flag. Nothing is written to the served folder, and each browser keeps its own value. To keep what a page's controls show in the file itself, for every machine, see [Pages that keep their own controls](writing.md#pages-that-keep-their-own-controls).
 
-okfs sends the page `{ type: "okfs:state", token, state }` each time it loads in the preview, with `state` as `null` when none is kept. The `token` is new at each load. The page keeps a new value with `{ type: "okfs:state-set", token, state }`, with the token it was given, and `null` forgets it. A message without that token is not heard, so a page sends nothing before its value has come. A checklist does it with this script:
+okfs gives each page in the preview a token in its address, as `?okfs-state=`. The token stays the same while okfs is open in that tab. The page asks for its value with `{ type: "okfs:state-get", token }`, and okfs answers `{ type: "okfs:state", state }`, with `state` as `null` when none is kept. The page keeps a new value with `{ type: "okfs:state-set", token, state }`, and `null` forgets it. okfs hears only a message with the token of the file it showed in that frame. A checklist does it with this script:
 
 ```html
 <script>
 const boxes = [...document.querySelectorAll("input[type=checkbox]")];
-let token;
+const token = new URLSearchParams(location.search).get("okfs-state");
 addEventListener("message", (event) => {
   if (event.source !== parent || event.data?.type !== "okfs:state") return;
-  token = event.data.token;
   const ticks = event.data.state ?? [];
   boxes.forEach((box, i) => (box.checked = !!ticks[i]));
 });
 addEventListener("change", () => {
   parent.postMessage({ type: "okfs:state-set", token, state: boxes.map((box) => box.checked) }, "*");
 });
+parent.postMessage({ type: "okfs:state-get", token }, "*");
 </script>
 ```
 
-The value is any JSON up to 100 KB, and it is kept by the page's path: a page renamed or moved starts with none. A page cannot read or change the value of another page: only the page okfs sent the frame to is given the token. Only a page in the preview is heard. A page opened at its own address under `/raw/`, a page that went to another by a link and a frame inside a page get no value and keep none. The value is in okfs's own storage in that browser, so a visitor can read and clear it as any site's data.
+The value is any JSON up to 100 KB, and it is kept by the page's path: a page renamed or moved starts with none. Only a page in the preview is heard. A page opened at its own address under `/raw/` and a frame inside a page get no value and keep none. A page reached by a link has no token in its address, so it cannot read or change the value of another page. A page that puts its own address, with its query, into a link gives its token away: the page at the other end can then read and change its value. Once the page in a frame has gone to another address by itself, even its own, okfs hears nothing more from that frame until it shows a file there again. The value is in okfs's own storage in that browser, so a visitor can read and clear it as any site's data.
 
 ## A big folder
 
