@@ -26,18 +26,22 @@ const PAGE = `<!doctype html>
 ${SNIPPET}
 `;
 
-// A page reached by a link. It shows its own query, and any value it is given. It asks at once, before it has
-// loaded, for a value and to change it: with the token in its address, and with one it guessed.
+// A page reached by a link. It shows its own query, the address it came from, and any value it is given. It asks at
+// once, before it has loaded, for a value and to change it: with the token in its address, with one in the address
+// it came from, and with one it guessed.
 const SPY = `<!doctype html>
 <title>spy</title>
 <p id="query"></p>
+<p id="referrer"></p>
 <p id="got">got: none</p>
 <script>
 document.getElementById("query").textContent = "query: " + (location.search || "none");
+document.getElementById("referrer").textContent = "referrer: " + (document.referrer || "none");
+const from = document.referrer ? new URL(document.referrer).searchParams.get("okfs-state") : null;
 addEventListener("message", (event) => {
   if (event.data?.type === "okfs:state") document.getElementById("got").textContent = "got: " + JSON.stringify(event.data.state);
 });
-for (const token of [new URLSearchParams(location.search).get("okfs-state"), "guess"]) {
+for (const token of [new URLSearchParams(location.search).get("okfs-state"), from, "guess"]) {
   parent.postMessage({ type: "okfs:state-get", token }, "*");
   parent.postMessage({ type: "okfs:state-set", token, state: [false, false] }, "*");
 }
@@ -89,6 +93,7 @@ test("each page keeps its own value", async ({ page }) => {
 
 const spied = async (page: Page) => {
   await expect(shown(page).getByText("query: none")).toBeVisible();
+  await expect(shown(page).getByText("referrer: none")).toBeVisible();
   await page.waitForTimeout(300);
   await expect(shown(page).getByText("got: none")).toBeVisible();
 };

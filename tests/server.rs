@@ -441,6 +441,8 @@ async fn served_pages_are_sandboxed_and_nothing_is_sniffed() {
         assert!(policy.starts_with("sandbox"), "{uri}: {policy}");
         assert!(!policy.contains("allow-same-origin"), "{uri}: {policy}");
         assert!(!policy.contains("allow-top-navigation"), "{uri}: {policy}");
+        // A page reached by a link is not told the address of the page it came from.
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer", "{uri}");
     }
     for uri in ["/raw/a.txt", "/raw/page.html", "/api/list?path=", "/"] {
         let (response, _) = get(&app, uri).await;
@@ -3164,6 +3166,7 @@ async fn with_a_key_a_page_in_the_preview_reads_its_own_folder_with_a_pass_and_n
                 policy.starts_with("sandbox") && !policy.contains("allow-same-origin"),
                 "{policy}"
             );
+            assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer", "{uri}");
         }
     }
 

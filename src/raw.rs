@@ -154,7 +154,9 @@ pub async fn serve(found: Resolved, request: &HeaderMap) -> std::io::Result<Resp
 
     response = response.header(header::CONTENT_TYPE, mime);
     if active {
-        response = response.header(header::CONTENT_SECURITY_POLICY, SANDBOX);
+        response = response
+            .header(header::CONTENT_SECURITY_POLICY, SANDBOX)
+            .header(header::REFERRER_POLICY, "no-referrer");
     }
 
     // A range only counts while the file is still the one the reader has part of.
