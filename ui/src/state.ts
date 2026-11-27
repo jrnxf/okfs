@@ -3,8 +3,9 @@
 // under okfs's own origin. Each page has one value, by its path.
 // Each page okfs shows in a frame has a token in its address, `?okfs-state=`, made once for its path while okfs is
 // open. okfs answers and hears only a message that carries the token of the file the frame was sent to. A page
-// reached by a link has no token in its address, so it cannot read or change the value of another page, unless
-// a page gives its own token away, as by putting its own address with its query into a link.
+// reached by a link has no token in its address, and the server sends a framed page with no referrer, so it cannot
+// read or change the value of another page, unless a page gives its own token away, as by putting its own address
+// with its query into a link or by setting its own referrer policy.
 // Nothing is written to the served folder, so this works with no write flag, and every browser keeps its own.
 
 /** The query parameter of a framed page's address that holds its token. */
