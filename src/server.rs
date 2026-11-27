@@ -2035,8 +2035,9 @@ async fn raw_file(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Ur
 /// The address a page in the preview is framed at. A page is sandboxed, and a browser sends no
 /// cookie with what it asks for: while a key is on, it goes to an address that carries the pass
 /// to its folder in place of the key, so the images, stylesheets and scripts beside it load. See
-/// `key::Passes`. Without a key it is the file under `/raw/`.
-async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Response {
+/// `key::Passes`. Without a key it is the file under `/raw/`. The query goes with it, as the page
+/// reads its own from its address.
+async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>, uri: Uri) -> Response {
     let Some(found) = app.root.resolve(&path).filter(|found| found.meta.is_file()) else {
         return not_found();
     };
@@ -2046,10 +2047,13 @@ async fn frame(State(app): State<Arc<App>>, Path(path): Path<String>) -> Respons
         return not_found();
     };
     let encoded = encode_path(&place);
-    let to = match app.options.key {
+    let mut to = match app.options.key {
         Some(_) => format!("/api/view/{}/{encoded}", app.passes.of(paths::parent(&place))),
         None => format!("/raw/{encoded}"),
     };
+    if let Some(query) = uri.query() {
+        to = format!("{to}?{query}");
+    }
     (
         StatusCode::TEMPORARY_REDIRECT,
         [(header::LOCATION, to.as_str()), (header::CACHE_CONTROL, "no-store")],

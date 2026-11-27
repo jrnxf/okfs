@@ -57,6 +57,8 @@ function keep() {
 
 Each control to keep needs an `id` of its own. okfs waits until the controls have rested for a moment, then sets the `checked`, `selected`, `open` or `value` attribute, or a textarea's text, of each element with that id, and writes the file over the version it read. Nothing else in the file changes, not even its spacing, and a page whose controls already say the same is not written. An id that two elements share, a control of another kind than the page says, a password field, a file field and a hidden field are left alone. The page is not loaded again for its own write, so the focus and the scroll stay where they are. A write from anywhere else loads it again, as it does any page.
 
+To keep a value for each viewer instead, in their own browser and with no write flag, see [A page that remembers its viewer](usage.md#a-page-that-remembers-its-viewer).
+
 Only the page on screen in the preview is heard, and only about its own file. A page opened at its own address, one loaded ahead of the cursor, one that went to another page by a link, and a frame inside a page are not. A page larger than 2 MB, or one that is not UTF-8 text, keeps nothing, and a note says why.
 
 ## Deleting

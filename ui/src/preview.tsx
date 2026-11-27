@@ -12,7 +12,8 @@ import { LABEL, decodedByServer, hasSource } from "./kinds";
 import { NoAnswer, type Unreached, useDown } from "./reach";
 import { saveControls } from "./saves";
 import { COLUMN_ROWS, type Left, followOf, slots } from "./slots";
-import type { Entry } from "./store";
+import { PARAM, STATE, holds, keepState, loadState, readAsk, tokenOf } from "./state";
+import { type Entry, store } from "./store";
 
 /**
  * Frames and players cost a lot to start. Under a held key, which passes a file faster than one can start,
@@ -804,11 +805,11 @@ const SANDBOX = "allow-scripts allow-popups allow-popups-to-escape-sandbox allow
 /**
  * Where a frame is sent for a file: the file itself, and for a PDF how its viewer opens. A sandboxed page sends
  * no cookie with what it asks for, so while okfs asks for a key a page goes by `urls.frame`, which sends it on
- * to an address that lets in the files beside it.
+ * to an address that lets in the files beside it. A page's address carries its token: see `state.ts`.
  */
 const frameUrl = (entry: { path: string; kind: string }): string => {
   if (entry.kind === "pdf") return `${urls.raw(entry.path)}#navpanes=0&view=FitH`;
-  return config.key ? urls.frame(entry.path) : urls.raw(entry.path);
+  return `${config.key ? urls.frame(entry.path) : urls.raw(entry.path)}?${PARAM}=${tokenOf(entry.path)}`;
 };
 
 /**
@@ -889,6 +890,29 @@ function Frames({ entry, stamp }: { entry: Entry; stamp: string }) {
       const slot = slots.current.find((one) => frames.current.get(one.id)?.contentWindow === event.source);
       if (!slot || slot.pdf || !slot.loaded || slot.away || slot.id !== shown.current) return;
       saveControls(slot.path, controls);
+    };
+    addEventListener("message", heard);
+    return () => removeEventListener("message", heard);
+  }, []);
+
+  // Any page may ask okfs for a small value it keeps for this viewer, in this browser, and keep a new one: see
+  // `state.ts`. It is kept by the path of the page the frame was sent to, and only with the token in that page's
+  // address: not for a page that went elsewhere by a link, or a frame inside it. A page loaded ahead is heard too,
+  // as the value it keeps is its own.
+  useEffect(() => {
+    const told = new Set<string>();
+    const heard = (event: MessageEvent) => {
+      const asked = readAsk(event.data);
+      if (!asked || !event.source) return;
+      const slot = slots.current.find((one) => frames.current.get(one.id)?.contentWindow === event.source);
+      if (!slot || slot.away || !holds(slot.path, asked.token)) return;
+      // A sandboxed page has an origin of its own that no address names, so the answer goes to the window that asked.
+      if ("get" in asked) return void event.source.postMessage({ type: STATE, state: loadState(slot.path) }, { targetOrigin: "*" });
+      const why = "refused" in asked ? asked.refused : keepState(slot.path, asked.text) ? "" : "this browser's storage is blocked or full";
+      // The page is told why once, not at each tick.
+      if (why && !told.has(slot.path)) store.say(`Not kept: ${why}`);
+      if (why) told.add(slot.path);
+      else told.delete(slot.path);
     };
     addEventListener("message", heard);
     return () => removeEventListener("message", heard);
